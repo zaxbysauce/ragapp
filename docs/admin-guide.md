@@ -1,0 +1,677 @@
+# KnowledgeVault Admin Guide
+
+Administrative tasks for maintaining KnowledgeVault.
+
+---
+
+## Table of Contents
+
+1. [Backups](#backups)
+2. [Data Locations](#data-locations)
+3. [Updates](#updates)
+4. [Health Checks](#health-checks)
+5. [Logs](#logs)
+6. [Performance Tuning](#performance-tuning)
+7. [Security](#security)
+8. [Troubleshooting](#troubleshooting)
+
+---
+
+## Backups
+
+### What to Back Up
+
+KnowledgeVault stores data in the following locations:
+
+| Component | Location | Backup Priority |
+|-----------|----------|-----------------|
+| SQLite Database | `{DATA_DIR}/app.db` | Critical |
+| Vector Database | `{DATA_DIR}/lancedb/` | Critical |
+| Documents | `{DATA_DIR}/documents/` | High |
+| Configuration | `.env` file | High |
+| Logs | `{DATA_DIR}/logs/` | Low |
+
+### Automated Backup Script
+
+Create a backup script for regular backups:
+
+**backup.sh (Linux/Mac):**
+```bash
+#!/bin/bash
+
+# Configuration
+BACKUP_DIR="/backups/knowledgevault"
+DATA_DIR="/data/knowledgevault"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_NAME="knowledgevault_backup_${DATE}"
+
+# Create backup directory
+mkdir -p "${BACKUP_DIR}/${BACKUP_NAME}"
+
+# Stop containers to ensure consistency
+docker compose down
+
+# Copy data (run from project root where .env is located)
+cp -r "${DATA_DIR}" "${BACKUP_DIR}/${BACKUP_NAME}/"
+cp ./.env "${BACKUP_DIR}/${BACKUP_NAME}/"
+
+# Create archive
+cd "${BACKUP_DIR}"
+tar -czf "${BACKUP_NAME}.tar.gz" "${BACKUP_NAME}"
+rm -rf "${BACKUP_NAME}"
+
+# Restart containers
+docker compose up -d
+
+# Keep only last 7 backups
+ls -t ${BACKUP_DIR}/*.tar.gz | tail -n +8 | xargs rm -f
+
+echo "Backup complete: ${BACKUP_NAME}.tar.gz"
+```
+
+**backup.ps1 (Windows):**
+```powershell
+# Configuration
+$BackupDir = "C:\Backups\KnowledgeVault"
+$DataDir = "C:\KnowledgeVault\data"
+$Date = Get-Date -Format "yyyyMMdd_HHmmss"
+$BackupName = "knowledgevault_backup_$Date"
+
+# Create backup directory
+New-Item -ItemType Directory -Force -Path "$BackupDir\$BackupName"
+
+# Stop containers
+docker compose down
+
+# Copy data (run from project root where .env is located)
+Copy-Item -Recurse -Path $DataDir -Destination "$BackupDir\$BackupName\data"
+Copy-Item -Path ".\env" -Destination "$BackupDir\$BackupName\"
+
+# Create archive
+Compress-Archive -Path "$BackupDir\$BackupName" -DestinationPath "$BackupDir\$BackupName.zip"
+Remove-Item -Recurse -Path "$BackupDir\$BackupName"
+
+# Restart containers
+docker compose up -d
+
+# Keep only last 7 backups
+Get-ChildItem -Path $BackupDir -Filter "*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 7 | Remove-Item
+
+Write-Host "Backup complete: $BackupName.zip"
+```
+
+### Schedule Backups
+
+**Linux (cron):**
+```bash
+# Edit crontab
+crontab -e
+
+# Add daily backup at 2 AM
+0 2 * * * /path/to/backup.sh
+```
+
+**Windows (Task Scheduler):**
+1. Open Task Scheduler
+2. Create Basic Task
+3. Set trigger to Daily
+4. Set action to Start a Program
+5. Program: `powershell.exe`
+6. Arguments: `-File "C:\path\to\backup.ps1"`
+
+### Restore from Backup
+
+1. Stop KnowledgeVault:
+   ```bash
+   docker compose down
+   ```
+
+2. Extract backup:
+   ```bash
+   # Linux/Mac
+   tar -xzf knowledgevault_backup_20240101_120000.tar.gz
+   
+   # Windows
+   Expand-Archive -Path "knowledgevault_backup_20240101_120000.zip"
+   ```
+
+3. Restore data (from project root):
+   ```bash
+   cp -r knowledgevault_backup_*/data/* /data/knowledgevault/
+   cp knowledgevault_backup_*/.env ./
+   ```
+
+4. Start KnowledgeVault:
+   ```bash
+   docker compose up -d
+   ```
+
+---
+
+## Data Locations
+
+### Default Directory Structure
+
+```
+/data/knowledgevault/
+├── documents/
+│   ├── uploads/              # Web UI uploads
+│   │   └── [file-id]/
+│   │       └── original.ext
+│   └── library/              # Direct file drops
+│       └── *.ext
+├── processing/               # Temporary processing
+│   └── [file-id]/
+├── lancedb/                  # Vector database
+│   └── chunks.lance/
+│       ├── data/
+│       └── _transactions/
+├── app.db                    # SQLite database
+└── logs/
+    └── knowledgevault.log
+```
+
+### Changing Data Location
+
+1. Stop KnowledgeVault:
+   ```bash
+   docker compose down
+   ```
+
+2. Move existing data (optional):
+   ```bash
+   mv /old/data/path /new/data/path
+   ```
+
+3. Update `.env`:
+   ```bash
+   HOST_DATA_DIR=/new/data/path
+   ```
+
+4. Start KnowledgeVault:
+   ```bash
+   docker compose up -d
+   ```
+
+### Disk Space Monitoring
+
+Monitor disk usage:
+
+```bash
+# Check overall usage
+df -h
+
+# Check KnowledgeVault data usage
+du -sh /data/knowledgevault/*
+
+# Find largest files
+find /data/knowledgevault -type f -exec ls -lh {} \; | sort -k5 -hr | head -20
+```
+
+**Recommended minimums:**
+- Documents: 5GB+ (depends on your files)
+- Vector DB: 2GB+ (scales with document count)
+- SQLite: 500MB
+- Logs: 1GB
+
+---
+
+## Updates
+
+### Updating KnowledgeVault
+
+1. Backup current data (see Backups section)
+
+2. Pull latest code:
+   ```bash
+   git pull
+   ```
+
+3. Rebuild containers:
+   ```bash
+   docker compose down
+   docker compose build --no-cache
+   docker compose up -d
+   ```
+
+4. Verify health:
+   ```bash
+   curl http://localhost:8080/health
+   ```
+
+### Updating Ollama Models
+
+List available updates:
+```bash
+ollama list
+```
+
+Update a model:
+```bash
+ollama pull nomic-embed-text
+ollama pull qwen2.5:32b
+```
+
+Remove old model versions:
+```bash
+# List all models
+ollama list
+
+# Remove specific model
+ollama rm old-model:tag
+```
+
+### Docker Image Updates
+
+Update base images:
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Clean up old images:
+```bash
+docker image prune -a
+```
+
+---
+
+## Health Checks
+
+### Built-in Health Endpoint
+
+Check service health:
+```bash
+curl http://localhost:8080/health
+```
+
+Expected response:
+```json
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "components": {
+    "database": "ok",
+    "vector_store": "ok",
+    "llm": "ok"
+  }
+}
+```
+
+### Component Health Checks
+
+**Database:**
+```bash
+# Check SQLite
+docker compose exec knowledgevault sqlite3 /data/knowledgevault/app.db ".tables"
+```
+
+**Vector Store:**
+```bash
+# Check LanceDB
+docker compose exec knowledgevault python -c "import lancedb; db = lancedb.connect('/data/knowledgevault/lancedb'); print(db.table_names())"
+```
+
+**LLM Connection:**
+```bash
+# Check Ollama
+curl http://localhost:11434/api/tags
+```
+
+### Automated Health Monitoring
+
+**health_check.sh:**
+```bash
+#!/bin/bash
+
+HEALTH_URL="http://localhost:8080/health"
+WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+response=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_URL)
+
+if [ $response -ne 200 ]; then
+    message="KnowledgeVault health check failed (HTTP $response)"
+    curl -X POST -H 'Content-type: application/json' \
+        --data "{\"text\":\"$message\"}" \
+        $WEBHOOK_URL
+fi
+```
+
+---
+
+## Logs
+
+### Viewing Logs
+
+**Docker Compose:**
+```bash
+# View all logs
+docker compose logs
+
+# Follow logs in real-time
+docker compose logs -f
+
+# View last 100 lines
+docker compose logs --tail 100
+
+# View logs since specific time
+docker compose logs --since 10m
+```
+
+**Docker:**
+```bash
+# View specific container
+docker logs knowledgevault
+
+# Follow logs
+docker logs -f knowledgevault
+```
+
+### Log Files
+
+Application logs are stored in:
+```
+/data/knowledgevault/logs/knowledgevault.log
+```
+
+View from host:
+```bash
+docker compose exec knowledgevault tail -f /data/knowledgevault/logs/knowledgevault.log
+```
+
+### Log Levels
+
+Configure in `.env`:
+```bash
+LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+```
+
+### Log Rotation
+
+Docker automatically rotates logs. Configure in `docker-compose.yml`:
+```yaml
+services:
+  knowledgevault:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+### Common Log Messages
+
+| Message | Meaning | Action |
+|---------|---------|--------|
+| `Processing file: ...` | Document being processed | Normal |
+| `Embedding generation failed` | Ollama embedding error | Check Ollama |
+| `LLM unavailable` | Cannot connect to chat model | Check Ollama |
+| `Vector search returned N results` | Search completed | Normal |
+| `Memory saved: ...` | Memory stored successfully | Normal |
+
+---
+
+## Performance Tuning
+
+### System Requirements
+
+| Usage Level | RAM | CPU | Disk | GPU |
+|-------------|-----|-----|------|-----|
+| Light (<1000 docs) | 8GB | 4 cores | 50GB | Optional |
+| Medium (1000-5000) | 16GB | 8 cores | 100GB | Recommended |
+| Heavy (>5000 docs) | 32GB+ | 16 cores | 500GB+ | Strongly recommended |
+
+### Optimization Settings
+
+**In `.env`:**
+
+```bash
+# Reduce memory usage
+CHUNK_SIZE=256
+MAX_CONTEXT_CHUNKS=5
+
+# Improve response quality
+RAG_RELEVANCE_THRESHOLD=0.2
+
+# Faster processing (less accurate)
+CHUNK_OVERLAP=25
+
+# Slower processing (more accurate)
+CHUNK_OVERLAP=100
+```
+
+### Database Optimization
+
+**SQLite:**
+```bash
+# Optimize database
+docker compose exec knowledgevault sqlite3 /data/knowledgevault/app.db "VACUUM;"
+
+# Analyze for query optimization
+docker compose exec knowledgevault sqlite3 /data/knowledgevault/app.db "ANALYZE;"
+```
+
+**LanceDB:**
+```bash
+# Compact vector database
+docker compose exec knowledgevault python -c "
+import lancedb
+db = lancedb.connect('/data/knowledgevault/lancedb')
+table = db.open_table('chunks')
+table.compact_files()
+"
+```
+
+### Monitoring Performance
+
+**Resource Usage:**
+```bash
+# Container stats
+docker stats knowledgevault
+
+# System resources
+htop  # Linux/Mac
+Task Manager  # Windows
+```
+
+**Response Times:**
+```bash
+# Time API response
+time curl http://localhost:8080/health
+
+# Load test
+ab -n 100 -c 10 http://localhost:8080/health
+```
+
+---
+
+## Security
+
+### Network Security
+
+KnowledgeVault has no built-in authentication. Secure it at the network level:
+
+**Option 1: Localhost Only (Safest)**
+- Keep default configuration
+- Access only from the same machine
+
+**Option 2: Reverse Proxy with Auth**
+```nginx
+# nginx.conf
+server {
+    listen 80;
+    server_name knowledgevault.example.com;
+    
+    auth_basic "KnowledgeVault";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+    
+    location / {
+        proxy_pass http://localhost:8080;
+    }
+}
+```
+
+**Option 3: VPN/Private Network**
+- Deploy behind corporate VPN
+- Use private subnet access controls
+
+### File Upload Security
+
+Upload restrictions are configured in the application. Monitor for:
+- Large file uploads (>100MB)
+- Executable file uploads
+- Path traversal attempts
+
+### Data Encryption
+
+**At Rest:**
+- Encrypt data directory at OS level
+- Use LUKS (Linux), BitLocker (Windows), or FileVault (Mac)
+
+**In Transit:**
+- Use HTTPS with reverse proxy
+- Example with Caddy:
+```
+knowledgevault.example.com {
+    reverse_proxy localhost:8080
+}
+```
+
+### Regular Security Tasks
+
+- [ ] Review access logs monthly
+- [ ] Update Docker images quarterly
+- [ ] Rotate backup encryption keys annually
+- [ ] Audit user access (if using reverse proxy auth)
+
+---
+
+## Troubleshooting
+
+### Container Won't Start
+
+**Check logs:**
+```bash
+docker compose logs --tail 50
+```
+
+**Common causes:**
+1. Port conflict - Change PORT in .env
+2. Permission denied - Fix data directory permissions
+3. Out of disk space - Clean up old files
+
+### Database Corruption
+
+**Symptoms:** SQLite errors, missing data
+
+**Recovery:**
+1. Stop KnowledgeVault
+2. Backup corrupted database
+3. Attempt recovery:
+   ```bash
+   sqlite3 knowledgevault.db ".recover" | sqlite3 knowledgevault_recovered.db
+   ```
+4. Replace database:
+   ```bash
+   mv knowledgevault_recovered.db knowledgevault.db
+   ```
+5. Start KnowledgeVault
+
+### Vector Search Not Working
+
+**Check LanceDB:**
+```bash
+docker compose exec knowledgevault python -c "
+import lancedb
+db = lancedb.connect('/data/knowledgevault/lancedb')
+print('Tables:', db.table_names())
+table = db.open_table('chunks')
+print('Rows:', len(table))
+"
+```
+
+**Rebuild if corrupted:**
+1. Stop KnowledgeVault
+2. Backup and remove lancedb directory
+3. Restart - documents will be re-indexed
+
+### Ollama Connection Issues
+
+**Test connection:**
+```bash
+curl http://localhost:11434/api/tags
+```
+
+**Docker network issues (Linux):**
+```bash
+# Use host IP instead of host.docker.internal
+OLLAMA_CHAT_URL=http://192.168.1.100:11434
+```
+
+### Performance Degradation
+
+**Check for:**
+- Large log files (rotate logs)
+- Fragmented database (run VACUUM)
+- Memory leaks (restart container)
+- Too many documents (increase RAM or reduce MAX_CONTEXT_CHUNKS)
+
+### Reset to Clean State
+
+**WARNING: This deletes all data!**
+
+```bash
+# Stop and remove containers
+docker compose down
+
+# Remove all data
+rm -rf /data/knowledgevault/*
+
+# Start fresh
+docker compose up -d
+```
+
+---
+
+## Quick Reference
+
+### Essential Commands
+
+```bash
+# Start
+docker compose up -d
+
+# Stop
+docker compose down
+
+# Restart
+docker compose restart
+
+# View logs
+docker compose logs -f
+
+# Check health
+curl http://localhost:8080/health
+
+# Backup
+tar -czf backup.tar.gz /data/knowledgevault .env
+
+# Update
+docker compose pull && docker compose up -d
+```
+
+### File Locations
+
+| File | Path |
+|------|------|
+| Config | `./.env` (at project root) |
+| Database | `{DATA_DIR}/app.db` |
+| Vectors | `{DATA_DIR}/lancedb/` |
+| Documents | `{DATA_DIR}/documents/` |
+| Logs | `{DATA_DIR}/logs/app.log` |
+
+### Support Resources
+
+- Main README: `README.md`
+- Setup Guide: `docs/non-technical-setup.md`
+- API Docs: `http://localhost:8080/docs`

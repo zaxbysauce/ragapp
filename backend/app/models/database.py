@@ -1,0 +1,372 @@
+"""
+SQLite database initialization and schema for RAGAPPv2.
+
+This module provides the database schema and initialization helper for the application.
+"""
+
+import sqlite3
+import threading
+from pathlib import Path
+from queue import Queue, Empty, Full
+from contextlib import contextmanager
+
+# Database schema definition
+SCHEMA = """
+-- Files table: stores uploaded file metadata
+CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_hash TEXT,
+    file_size INTEGER NOT NULL,
+    file_type TEXT,
+    chunk_count INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'indexed', 'error')),
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    processed_at TIMESTAMP,
+    modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Memories table: stores processed document chunks with embeddings
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    category TEXT,
+    tags TEXT,       -- JSON array of tags
+    source TEXT,     -- Source reference
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Full-text search virtual table for memories content
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    content,
+    category,
+    content='memories',
+    content_rowid='id'
+);
+
+-- Trigger to keep FTS index in sync with memories table (insert)
+CREATE TRIGGER IF NOT EXISTS memories_fts_insert AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, content, category) VALUES (new.id, new.content, new.category);
+END;
+
+-- Trigger to keep FTS index in sync with memories table (delete)
+CREATE TRIGGER IF NOT EXISTS memories_fts_delete AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, content, category) VALUES ('delete', old.id, old.content, old.category);
+END;
+
+-- Trigger to keep FTS index in sync with memories table (update)
+CREATE TRIGGER IF NOT EXISTS memories_fts_update AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, content, category) VALUES ('delete', old.id, old.content, old.category);
+    INSERT INTO memories_fts(rowid, content, category) VALUES (new.id, new.content, new.category);
+END;
+
+-- Chat sessions table: stores conversation sessions
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Chat messages table: stores individual messages within sessions
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+    content TEXT NOT NULL,
+    sources TEXT,    -- JSON array of source references
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+);
+
+-- Index for faster lookups
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
+"""
+
+
+def init_db(sqlite_path: str) -> None:
+    """
+    Initialize the SQLite database with the schema.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+
+    Raises:
+        sqlite3.Error: If database initialization fails.
+    """
+    # Ensure parent directory exists
+    db_path = Path(sqlite_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Connect and execute schema
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.executescript(SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def run_migrations(sqlite_path: str) -> None:
+    """
+    Run database migrations to initialize the schema.
+
+    This function calls init_db to create the database and apply the schema.
+    It is intended to be called during application startup to ensure the
+    database is properly initialized.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+
+    Returns:
+        None
+    """
+    init_db(sqlite_path)
+
+
+def get_db_connection(sqlite_path: str) -> sqlite3.Connection:
+    """
+    Get a connection to the SQLite database.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+
+    Returns:
+        sqlite3.Connection: Database connection with row factory set.
+    """
+    conn = sqlite3.connect(sqlite_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+class SQLiteConnectionPool:
+    """
+    A connection pool for SQLite databases.
+
+    Manages a pool of reusable SQLite connections to improve performance
+    in multi-threaded environments.
+    """
+
+    def __init__(self, sqlite_path: str, max_size: int = 5):
+        """
+        Initialize the connection pool.
+
+        Args:
+            sqlite_path: Path to the SQLite database file.
+            max_size: Maximum number of connections in the pool.
+        """
+        self.sqlite_path = sqlite_path
+        self.max_size = max_size
+        self._pool = Queue(maxsize=max_size)
+        self._lock = threading.Lock()
+        self._created_count = 0
+        self._closed = False
+
+    def _create_connection(self) -> sqlite3.Connection:
+        """
+        Create a new SQLite connection with proper settings.
+
+        Returns:
+            sqlite3.Connection: A new database connection.
+
+        Raises:
+            sqlite3.Error: If connection creation fails.
+        """
+        try:
+            conn = sqlite3.connect(self.sqlite_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON;")
+            return conn
+        except Exception:
+            # Decrement created count on any failure
+            with self._lock:
+                self._created_count -= 1
+            raise
+
+    def _validate_connection(self, conn: sqlite3.Connection) -> bool:
+        """
+        Validate that a connection is still alive and usable.
+
+        Args:
+            conn: The connection to validate.
+
+        Returns:
+            bool: True if the connection is valid, False otherwise.
+        """
+        try:
+            conn.execute("SELECT 1")
+            return True
+        except (sqlite3.DatabaseError, sqlite3.OperationalError):
+            # Rollback any failed transaction state
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            return False
+        except sqlite3.Error:
+            return False
+
+    def get_connection(self, max_wait_attempts: int = 3) -> sqlite3.Connection:
+        """
+        Get a connection from the pool.
+
+        If the pool has available connections, returns one from the pool.
+        Otherwise, creates a new connection if under max_size limit.
+        Validates connections before returning them.
+
+        Args:
+            max_wait_attempts: Maximum number of wait attempts when pool is at capacity.
+
+        Returns:
+            sqlite3.Connection: A database connection.
+
+        Raises:
+            RuntimeError: If the pool has been closed or max wait attempts exhausted.
+        """
+        if self._closed:
+            raise RuntimeError("Connection pool has been closed")
+
+        attempts = 0
+        while attempts < max_wait_attempts:
+            # Try to get an existing connection from the pool
+            try:
+                conn = self._pool.get_nowait()
+                # Validate the connection before returning it
+                if self._validate_connection(conn):
+                    return conn
+                else:
+                    # Connection is invalid, decrement count and try again
+                    with self._lock:
+                        self._created_count -= 1
+                    try:
+                        conn.close()
+                    except sqlite3.Error:
+                        pass
+                    continue
+            except Empty:
+                pass
+
+            # No available connections, try to create a new one if under limit
+            with self._lock:
+                if self._created_count < self.max_size:
+                    self._created_count += 1
+                    try:
+                        return self._create_connection()
+                    except sqlite3.Error:
+                        self._created_count -= 1
+                        raise
+
+            # If at max capacity, block until a connection is available
+            try:
+                conn = self._pool.get(timeout=5)
+                # Validate the connection before returning it
+                if self._validate_connection(conn):
+                    return conn
+                else:
+                    # Connection is invalid, decrement count and try again
+                    with self._lock:
+                        self._created_count -= 1
+                    try:
+                        conn.close()
+                    except sqlite3.Error:
+                        pass
+                    continue
+            except Empty:
+                # Timeout occurred, increment attempts and retry
+                attempts += 1
+                continue
+
+        # Max attempts exhausted
+        raise RuntimeError(f"Could not obtain a connection from the pool after {max_wait_attempts} attempts")
+
+    def release_connection(self, conn: sqlite3.Connection) -> None:
+        """
+        Release a connection back to the pool.
+
+        Args:
+            conn: The connection to release back to the pool.
+
+        Raises:
+            RuntimeError: If the pool has been closed.
+        """
+        if self._closed:
+            raise RuntimeError("Connection pool has been closed")
+
+        try:
+            self._pool.put_nowait(conn)
+        except Full:
+            # Pool is full, close the connection
+            conn.close()
+
+    def close_all(self) -> None:
+        """
+        Close all connections in the pool.
+
+        This closes all pooled connections and prevents further use of the pool.
+        """
+        with self._lock:
+            self._closed = True
+            # Close all connections in the pool using while True/except Empty pattern
+            while True:
+                try:
+                    conn = self._pool.get_nowait()
+                    conn.close()
+                except Empty:
+                    break
+
+    @contextmanager
+    def connection(self):
+        """
+        Context manager for getting and releasing a connection.
+
+        Automatically releases the connection back to the pool when done.
+
+        Example:
+            with pool.connection() as conn:
+                cursor = conn.execute("SELECT * FROM table")
+                results = cursor.fetchall()
+        """
+        conn = None
+        try:
+            conn = self.get_connection()
+            yield conn
+        finally:
+            if conn is not None:
+                try:
+                    self.release_connection(conn)
+                except Exception:
+                    # Ignore release errors to avoid masking original exception
+                    pass
+
+
+# Global pool cache for singleton pattern
+_pool_cache: dict[str, SQLiteConnectionPool] = {}
+_pool_cache_lock = threading.Lock()
+
+
+def get_pool(sqlite_path: str, max_size: int = 5) -> SQLiteConnectionPool:
+    """
+    Get or create a connection pool for the given SQLite path.
+
+    This function implements a singleton pattern, returning the same
+    pool instance for the same sqlite_path.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+        max_size: Maximum number of connections in the pool.
+
+    Returns:
+        SQLiteConnectionPool: A connection pool instance.
+    """
+    global _pool_cache
+
+    with _pool_cache_lock:
+        if sqlite_path not in _pool_cache:
+            _pool_cache[sqlite_path] = SQLiteConnectionPool(sqlite_path, max_size)
+        return _pool_cache[sqlite_path]

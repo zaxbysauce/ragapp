@@ -1,0 +1,177 @@
+"""Tests for memory_store module."""
+
+import unittest
+import tempfile
+import os
+from pathlib import Path
+
+from app.models.database import init_db
+from app.services.memory_store import MemoryStore, MemoryStoreError, MemoryRecord
+
+
+class TestMemoryStore(unittest.TestCase):
+    """Test cases for MemoryStore class."""
+
+    def setUp(self):
+        """Set up test database."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test.db"
+        init_db(str(self.db_path))
+        self.store = MemoryStore(sqlite_path=self.db_path)
+
+    def tearDown(self):
+        """Clean up test database."""
+        if self.db_path.exists():
+            os.remove(self.db_path)
+        os.rmdir(self.temp_dir)
+
+    def test_add_memory_empty_string_raises_error(self):
+        """Test that empty string raises MemoryStoreError."""
+        with self.assertRaises(MemoryStoreError) as ctx:
+            self.store.add_memory("")
+        self.assertIn("cannot be empty", str(ctx.exception))
+
+    def test_add_memory_whitespace_only_raises_error(self):
+        """Test that whitespace-only string raises MemoryStoreError."""
+        with self.assertRaises(MemoryStoreError) as ctx:
+            self.store.add_memory("   \t\n  ")
+        self.assertIn("cannot be empty", str(ctx.exception))
+
+    def test_add_memory_none_raises_error(self):
+        """Test that None input raises MemoryStoreError."""
+        with self.assertRaises(MemoryStoreError) as ctx:
+            self.store.add_memory(None)
+        self.assertIn("cannot be empty", str(ctx.exception))
+
+    def test_add_memory_content_only(self):
+        """Test that add_memory works with only content provided."""
+        result = self.store.add_memory(content="Simple memory content")
+
+        self.assertIsInstance(result, MemoryRecord)
+        self.assertEqual(result.content, "Simple memory content")
+        self.assertIsNone(result.category)
+        self.assertIsNone(result.tags)
+        self.assertIsNone(result.source)
+        self.assertIsNotNone(result.id)
+        self.assertIsNotNone(result.created_at)
+
+    def test_add_memory_with_category_tags_source(self):
+        """Test that add_memory stores category, tags, and source correctly."""
+        result = self.store.add_memory(
+            content="Test memory content",
+            category="test_category",
+            tags="[\"tag1\", \"tag2\"]",
+            source="test_source"
+        )
+
+        self.assertIsInstance(result, MemoryRecord)
+        self.assertEqual(result.content, "Test memory content")
+        self.assertEqual(result.category, "test_category")
+        self.assertEqual(result.tags, "[\"tag1\", \"tag2\"]")
+        self.assertEqual(result.source, "test_source")
+        self.assertIsNotNone(result.id)
+        self.assertIsNotNone(result.created_at)
+
+    def test_search_memories_empty_string_returns_empty_list(self):
+        """Test that empty query returns empty list."""
+        result = self.store.search_memories("")
+        self.assertEqual(result, [])
+
+    def test_search_memories_whitespace_only_returns_empty_list(self):
+        """Test that whitespace-only query returns empty list."""
+        result = self.store.search_memories("   \t\n  ")
+        self.assertEqual(result, [])
+
+    def test_search_memories_none_returns_empty_list(self):
+        """Test that None query returns empty list."""
+        result = self.store.search_memories(None)
+        self.assertEqual(result, [])
+
+    def test_search_memories_returns_actual_results(self):
+        """Test that search_memories finds memories that were added."""
+        # Add some memories
+        self.store.add_memory(content="Meeting scheduled for Monday at 10am")
+        self.store.add_memory(content="Project deadline is next Friday")
+        self.store.add_memory(content="Team lunch on Wednesday")
+
+        # Search for a term that should match
+        results = self.store.search_memories("meeting")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].content, "Meeting scheduled for Monday at 10am")
+
+        # Search for another term
+        results = self.store.search_memories("deadline")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].content, "Project deadline is next Friday")
+
+    def test_search_memories_respects_limit(self):
+        """Test that search_memories respects the limit parameter."""
+        # Add multiple memories with similar content
+        self.store.add_memory(content="Important task number one")
+        self.store.add_memory(content="Important task number two")
+        self.store.add_memory(content="Important task number three")
+        self.store.add_memory(content="Important task number four")
+        self.store.add_memory(content="Important task number five")
+
+        # Search with limit of 2
+        results = self.store.search_memories("important", limit=2)
+        self.assertEqual(len(results), 2)
+
+        # Search with limit of 3
+        results = self.store.search_memories("important", limit=3)
+        self.assertEqual(len(results), 3)
+
+        # Search with default limit (5)
+        results = self.store.search_memories("important")
+        self.assertEqual(len(results), 5)
+
+    def test_detect_memory_intent_remember_that_pattern(self):
+        """Test 'remember that' pattern detection."""
+        text = "Please remember that the meeting is at 3pm."
+        result = self.store.detect_memory_intent(text)
+        self.assertEqual(result, "the meeting is at 3pm")
+
+    def test_detect_memory_intent_dont_forget_pattern(self):
+        """Test 'don't forget' pattern detection."""
+        text = "Don't forget to buy milk"
+        result = self.store.detect_memory_intent(text)
+        self.assertEqual(result, "to buy milk")
+
+    def test_detect_memory_intent_keep_in_mind_pattern(self):
+        """Test 'keep in mind' pattern detection."""
+        text = "Keep in mind that the deadline is Friday."
+        result = self.store.detect_memory_intent(text)
+        self.assertEqual(result, "that the deadline is Friday")
+
+    def test_detect_memory_intent_note_that_pattern(self):
+        """Test 'note that' pattern detection."""
+        text = "Note that the server will be down for maintenance."
+        result = self.store.detect_memory_intent(text)
+        self.assertEqual(result, "the server will be down for maintenance")
+
+    def test_detect_memory_intent_case_insensitive(self):
+        """Test that patterns are case-insensitive."""
+        text = "REMEMBER THAT this is important"
+        result = self.store.detect_memory_intent(text)
+        self.assertEqual(result, "this is important")
+
+    def test_detect_memory_intent_no_match_returns_none(self):
+        """Test that text with no pattern returns None."""
+        text = "What is the weather today?"
+        result = self.store.detect_memory_intent(text)
+        self.assertIsNone(result)
+
+    def test_detect_memory_intent_empty_text_returns_none(self):
+        """Test that empty text returns None."""
+        result = self.store.detect_memory_intent("")
+        self.assertIsNone(result)
+
+    def test_detect_memory_intent_whitespace_only_returns_none(self):
+        """Test that whitespace-only text returns None."""
+        result = self.store.detect_memory_intent("   \t\n  ")
+        self.assertIsNone(result)
+
+
+if __name__ == "__main__":
+    unittest.main()

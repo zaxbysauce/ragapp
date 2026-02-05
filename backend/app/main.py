@@ -1,0 +1,68 @@
+"""
+FastAPI application with lifespan context manager.
+"""
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from app.api.routes.chat import router as chat_router
+from app.api.routes.documents import router as documents_router
+from app.api.routes.health import router as health_router
+from app.api.routes.memories import router as memories_router
+from app.api.routes.search import router as search_router
+from app.api.routes.settings import router as settings_router
+from app.config import settings
+from app.models.database import init_db
+from app.services.llm_client import LLMClient
+from app.services.vector_store import VectorStore
+from app.services.memory_store import MemoryStore
+from app.services.embeddings import EmbeddingService
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events."""
+    # Startup: Initialize database and services
+    init_db(str(settings.sqlite_path))
+    app.state.llm_client = LLMClient()
+    await app.state.llm_client.start()
+    app.state.embedding_service = EmbeddingService()
+    app.state.vector_store = VectorStore()
+    app.state.vector_store.connect()
+    app.state.memory_store = MemoryStore()
+    yield
+    # Shutdown: Close services
+    await app.state.llm_client.close()
+    app.state.vector_store.close()
+
+
+app = FastAPI(
+    title="KnowledgeVault API",
+    version="0.1.0",
+    description="Self-hosted RAG Knowledge Base API",
+    lifespan=lifespan
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.backend_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(health_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
+app.include_router(search_router, prefix="/api")
+app.include_router(memories_router, prefix="/api")
+app.include_router(documents_router, prefix="/api")
+app.include_router(settings_router, prefix="/api")
+
+# Serve frontend static files
+from pathlib import Path
+static_dir = Path("/app/static")
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
