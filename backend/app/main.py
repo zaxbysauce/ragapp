@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database and services
     init_db(str(settings.sqlite_path))
     app.state.llm_client = LLMClient()
-    await app.state.llm_client.start()
+    app.state.llm_client.start()
     app.state.embedding_service = EmbeddingService()
     app.state.vector_store = VectorStore()
     app.state.vector_store.connect()
