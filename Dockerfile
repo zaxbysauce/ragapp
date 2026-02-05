@@ -2,7 +2,7 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm ci --force && npm rebuild esbuild
+RUN npm install
 COPY frontend/ ./
 RUN npm run build
 

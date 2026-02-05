@@ -1,0 +1,47 @@
+# Node
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.Python
+**/*.egg-info
+
+# Data
+data/
+*.db
+*.db-journal
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs
+*.md
+docs/
+
+# Tests
+backend/tests/
+test_*.py
+
+# Env
+.env
+*.env
+!.env.example
+
+# Other
+.swarm/
+nul
+*.zip
