@@ -109,7 +109,7 @@ class MemorySearchResponse(BaseModel):
 
 
 class MemorySearchRequest(BaseModel):
-    query: str = Field(..., min_length=1, description="Search query string")
+    query: str = Field(..., description="Search query string")
     limit: int = Field(5, ge=1, le=100, description="Maximum number of results")
 
 
@@ -360,5 +360,8 @@ async def search_memories(
 
 @router.post("/memories/search", response_model=MemorySearchResponse)
 async def search_memories_post(request: MemorySearchRequest):
+    # Handle empty or whitespace-only queries gracefully
+    if not request.query or not request.query.strip():
+        return MemorySearchResponse(results=[], total=0)
     results = _perform_memory_search(request.query, request.limit)
     return MemorySearchResponse(results=results, total=len(results))

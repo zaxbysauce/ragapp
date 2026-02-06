@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
 from app.config import settings
 
@@ -49,14 +49,13 @@ class SettingsUpdate(BaseModel):
             raise ValueError("rag_relevance_threshold must be between 0 and 1")
         return v
 
-    @field_validator("chunk_overlap")
-    @classmethod
-    def validate_chunk_overlap_size(cls, v, info):
-        if v is not None:
-            chunk_size = info.data.get("chunk_size")
-            if chunk_size is not None and v >= chunk_size:
-                raise ValueError("chunk_overlap must be less than chunk_size")
-        return v
+    @model_validator(mode="after")
+    def validate_chunk_overlap_less_than_size(self):
+        chunk_overlap = self.chunk_overlap
+        chunk_size = self.chunk_size
+        if chunk_overlap is not None and chunk_size is not None and chunk_overlap >= chunk_size:
+            raise ValueError("chunk_overlap must be less than chunk_size")
+        return self
 
 
 ALLOWED_FIELDS = [
@@ -69,13 +68,8 @@ ALLOWED_FIELDS = [
 ]
 
 
-@router.get("/settings")
-def get_settings():
-    return settings.model_dump()
-
-
-@router.post("/settings")
-def update_settings(update: SettingsUpdate):
+def _apply_settings_update(update: SettingsUpdate) -> dict:
+    """Shared logic to apply settings update and return updated settings."""
     updated = False
     for field in ALLOWED_FIELDS:
         value = getattr(update, field)
@@ -85,6 +79,21 @@ def update_settings(update: SettingsUpdate):
     if not updated:
         raise HTTPException(status_code=400, detail="No valid fields provided for update")
     return settings.model_dump()
+
+
+@router.get("/settings")
+def get_settings():
+    return settings.model_dump()
+
+
+@router.post("/settings")
+def update_settings(update: SettingsUpdate):
+    return _apply_settings_update(update)
+
+
+@router.put("/settings")
+def update_settings_put(update: SettingsUpdate):
+    return _apply_settings_update(update)
 
 
 

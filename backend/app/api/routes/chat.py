@@ -4,6 +4,7 @@ Chat API routes for RAG-based conversational interface.
 Provides streaming and non-streaming chat endpoints that leverage
 the RAG engine for context-aware responses.
 """
+import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -57,21 +58,24 @@ async def stream_chat_response(
         sources = []
         memories_used = []
         
-        async for chunk in rag_engine.query(message, history, stream=True):
-            chunk_type = chunk.get("type")
-            
-            if chunk_type == "content":
-                content = chunk.get("content", "")
-                collected_content.append(content)
-                # Yield content chunk as SSE event
-                import json
-                yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-            elif chunk_type == "done":
-                sources = chunk.get("sources", [])
-                memories_used = chunk.get("memories_used", [])
+        try:
+            async for chunk in rag_engine.query(message, history, stream=True):
+                chunk_type = chunk.get("type")
+                
+                if chunk_type == "content":
+                    content = chunk.get("content", "")
+                    collected_content.append(content)
+                    # Yield content chunk as SSE event
+                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                elif chunk_type == "done":
+                    sources = chunk.get("sources", [])
+                    memories_used = chunk.get("memories_used", [])
+        except Exception as e:
+            # Emit error event and terminate immediately to avoid additional events
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'code': 'INTERNAL_ERROR'})}\n\n"
+            return
         
         # Yield final done event with sources and memories
-        import json
         yield f"data: {json.dumps({'type': 'done', 'sources': sources, 'memories_used': memories_used})}\n\n"
     
     return StreamingResponse(
