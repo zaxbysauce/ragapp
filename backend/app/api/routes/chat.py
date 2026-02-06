@@ -5,6 +5,7 @@ Provides streaming and non-streaming chat endpoints that leverage
 the RAG engine for context-aware responses.
 """
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,6 +17,8 @@ from app.services.rag_engine import RAGEngine
 
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -80,8 +83,17 @@ def stream_chat_response(
                     sources = chunk.get("sources", [])
                     memories_used = chunk.get("memories_used", [])
         except Exception as e:
+            # Log error with sanitized context (no traceback to avoid data leakage)
+            logger.error(
+                "Chat stream failed: message_len=%d, history_len=%d, exception=%s, error=%s",
+                len(message),
+                len(history),
+                type(e).__name__,
+                str(e),
+                exc_info=False
+            )
             # Emit error event and terminate immediately to avoid additional events
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'code': 'INTERNAL_ERROR'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': 'An error occurred while processing your request', 'code': 'INTERNAL_ERROR'})}\n\n"
             return
         
         # Yield final done event with sources and memories

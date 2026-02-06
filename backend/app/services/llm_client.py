@@ -140,10 +140,15 @@ class LLMClient:
                 # Validate content-type for SSE
                 content_type = response.headers.get("content-type", "")
                 if "text/event-stream" not in content_type:
-                    raise LLMError(
-                        f"Invalid content-type for streaming: {content_type}. "
-                        f"Expected 'text/event-stream'"
+                    # Fall back to non-stream completion for providers that don't return SSE
+                    content = await self.chat_completion(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens
                     )
+                    if content:
+                        yield content
+                    return
                 
                 try:
                     async for line in response.aiter_lines():
