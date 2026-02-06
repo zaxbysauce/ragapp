@@ -285,14 +285,20 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
                     raise HTTPException(status_code=413, detail=f"File too large. Max size: {settings.max_file_size_mb}MB")
                 await f.write(chunk)
         
-        # Process file in thread pool to avoid blocking
-        processor = DocumentProcessor(
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap
-        )
-        
+        # Process file with app-state dependencies when available
+        processor_kwargs = {
+            "chunk_size": settings.chunk_size,
+            "chunk_overlap": settings.chunk_overlap
+        }
+        # Wire app-state dependencies for indexing pipeline
+        if hasattr(request.app.state, "vector_store"):
+            processor_kwargs["vector_store"] = request.app.state.vector_store
+        if hasattr(request.app.state, "embedding_service"):
+            processor_kwargs["embedding_service"] = request.app.state.embedding_service
+        processor = DocumentProcessor(**processor_kwargs)
+
         try:
-            result = await asyncio.to_thread(processor.process_file, str(file_path))
+            result = await processor.process_file(str(file_path))
             
             return UploadResponse(
                 file_id=result.file_id,

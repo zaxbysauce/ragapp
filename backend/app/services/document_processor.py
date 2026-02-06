@@ -332,25 +332,39 @@ class DocumentProcessor:
 
                 # Generate embeddings and store in vector store
                 if self.embedding_service is not None and self.vector_store is not None:
-                    # Extract texts from chunks
-                    texts = [c.text for c in chunks]
-                    # Generate embeddings
-                    embeddings = await self.embedding_service.embed_batch(texts)
-                    # Map chunks to records for vector store
-                    records = []
-                    for chunk, embedding in zip(chunks, embeddings):
-                        records.append({
-                            "id": f"{file_id}_{chunk.chunk_index}",
-                            "text": chunk.text,
-                            "file_id": str(file_id),
-                            "chunk_index": chunk.chunk_index,
-                            "metadata": json.dumps(chunk.metadata),
-                            "embedding": embedding
-                        })
-                    # Add to vector store
-                    await self.vector_store.add_chunks(records)
+                    # Skip embedding/indexing if no chunks (status indexed with 0 chunks is acceptable)
+                    if chunks:
+                        # Extract texts from chunks
+                        texts = [c.text for c in chunks]
+                        # Generate embeddings
+                        embeddings = await self.embedding_service.embed_batch(texts)
+                        # Validate embeddings count matches chunks count
+                        if len(embeddings) != len(chunks):
+                            raise DocumentProcessingError(
+                                f"Embedding count mismatch: expected {len(chunks)}, got {len(embeddings)}"
+                            )
+                        # Validate first embedding is a non-empty list
+                        if not embeddings[0] or not isinstance(embeddings[0], list):
+                            raise DocumentProcessingError(
+                                "First embedding is empty or not a list"
+                            )
+                        # Map chunks to records for vector store
+                        records = []
+                        for chunk, embedding in zip(chunks, embeddings):
+                            records.append({
+                                "id": f"{file_id}_{chunk.chunk_index}",
+                                "text": chunk.text,
+                                "file_id": str(file_id),
+                                "chunk_index": chunk.chunk_index,
+                                "metadata": json.dumps(chunk.metadata),
+                                "embedding": embedding
+                            })
+                        # Initialize vector table with embedding dimension and add chunks
+                        embedding_dim = len(embeddings[0])
+                        await asyncio.to_thread(self.vector_store.init_table, embedding_dim)
+                        await asyncio.to_thread(self.vector_store.add_chunks, records)
 
-                # Update status to indexed
+                # Update status to indexed only after successful vector operations
                 self._update_status(file_id, 'indexed', conn, chunk_count=len(chunks))
                 conn.commit()
 
