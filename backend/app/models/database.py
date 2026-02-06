@@ -86,6 +86,17 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
 
+-- Document actions for auditing admin operations
+CREATE TABLE IF NOT EXISTS document_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL,
+    user_id TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    hmac_sha256 TEXT NOT NULL
+);
+
 -- Admin feature toggles
 CREATE TABLE IF NOT EXISTS admin_toggles (
     feature TEXT PRIMARY KEY,

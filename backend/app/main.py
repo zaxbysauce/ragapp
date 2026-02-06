@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.routes.admin import router as admin_router
 from app.api.routes.chat import router as chat_router
@@ -22,6 +23,8 @@ from app.services.memory_store import MemoryStore
 from app.services.embeddings import EmbeddingService
 from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
+from app.limiter import limiter
+from app.security import CSRFManager
 
 
 @asynccontextmanager
@@ -37,6 +40,11 @@ async def lifespan(app: FastAPI):
     app.state.memory_store = MemoryStore()
     app.state.secret_manager = SecretManager()
     app.state.toggle_manager = ToggleManager(str(settings.sqlite_path))
+    app.state.csrf_manager = CSRFManager(settings.redis_url, settings.csrf_token_ttl)
+    app.state.model_validation = (
+        settings.enable_model_validation
+        or app.state.toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
+    )
     app.state.model_validation = (
         settings.enable_model_validation
         or app.state.toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
@@ -62,6 +70,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SlowAPIMiddleware, limiter=limiter)
 
 app.include_router(health_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")

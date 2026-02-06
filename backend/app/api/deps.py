@@ -10,6 +10,7 @@ from app.services.memory_store import MemoryStore
 from app.services.rag_engine import RAGEngine
 from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
+from app.security import get_csrf_manager
 
 
 def get_settings() -> Settings:
@@ -58,3 +59,7 @@ def get_toggle_manager(request: Request) -> ToggleManager:
 
 def get_secret_manager(request: Request) -> SecretManager:
     return request.app.state.secret_manager
+
+
+def get_csrf_manager(request: Request):
+    return request.app.state.csrf_manager

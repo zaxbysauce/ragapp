@@ -5,21 +5,28 @@ Provides endpoints for listing documents, uploading files, scanning directories,
 and managing document processing status.
 """
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
 import re
 import sqlite3
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import aiofiles
-from fastapi import APIRouter, HTTPException, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel, Field
 
 from app.models.database import get_db_connection
 from app.config import settings
 from app.services.document_processor import DocumentProcessor, DocumentProcessingError, DuplicateFileError
 from app.services.vector_store import VectorStore
+from app.services.secret_manager import SecretManager
+from app.api.deps import get_secret_manager
+from app.security import csrf_protect, require_scope
+from app.limiter import limiter
+from app.services.background_tasks import BackgroundProcessor
 
 
 def secure_filename(filename: str) -> str:
@@ -50,6 +57,96 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _sanitize_metadata(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    sanitized: Dict[str, Any] = {}
+    for key, value in metadata.items():
+        if not isinstance(key, str):
+            continue
+        if key.lower() in {"password", "ssn", "secret", "token"}:
+            continue
+        if isinstance(value, str) and len(value) > 256:
+            sanitized[key] = value[:256]
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def _record_document_action(
+    file_id: int,
+    action: str,
+    status: str,
+    user_id: str,
+    secret_manager: SecretManager,
+) -> None:
+    key, key_version = secret_manager.get_hmac_key()
+    message = f"{file_id}|{action}|{status}|{user_id}"
+    digest = hmac.new(key, message.encode("utf-8"), hashlib.sha256).hexdigest()
+    conn = get_db_connection(str(settings.sqlite_path))
+    try:
+        conn.execute(
+            """
+            INSERT INTO document_actions(file_id, action, status, user_id, hmac_sha256)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (file_id, action, status, user_id, digest),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@router.post("/admin/retry/{file_id}")
+@limiter.limit(settings.admin_rate_limit)
+async def retry_document(
+    file_id: int,
+    request: Request,
+    auth: dict = Depends(require_scope("documents:manage")),
+    csrf_token: str = Depends(csrf_protect),
+    secret_manager: SecretManager = Depends(get_secret_manager),
+) -> dict:
+    conn = get_db_connection(str(settings.sqlite_path))
+    try:
+        cursor = conn.execute("SELECT file_path FROM files WHERE id = ?", (file_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+        processor = BackgroundProcessor(
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+            vector_store=getattr(request.app.state, "vector_store", None),
+            embedding_service=getattr(request.app.state, "embedding_service", None),
+        )
+        await processor.start()
+        try:
+            await processor.enqueue(row["file_path"])
+        finally:
+            await processor.stop()
+        _record_document_action(
+            file_id,
+            "retry",
+            "scheduled",
+            auth.get("user_id", "unknown"),
+            secret_manager,
+        )
+        return {"file_id": file_id, "status": "scheduled"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error reprocessing document %d", file_id)
+        _record_document_action(
+            file_id,
+            "retry",
+            "error",
+            auth.get("user_id", "unknown"),
+            secret_manager,
+        )
+        raise HTTPException(status_code=500, detail=f"Retry failed: {exc}")
+    finally:
+        conn.close()
 
 
 class DocumentResponse(BaseModel):
@@ -286,16 +383,12 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
                 await f.write(chunk)
         
         # Process file with app-state dependencies when available
-        processor_kwargs = {
-            "chunk_size": settings.chunk_size,
-            "chunk_overlap": settings.chunk_overlap
-        }
-        # Wire app-state dependencies for indexing pipeline
-        if hasattr(request.app.state, "vector_store"):
-            processor_kwargs["vector_store"] = request.app.state.vector_store
-        if hasattr(request.app.state, "embedding_service"):
-            processor_kwargs["embedding_service"] = request.app.state.embedding_service
-        processor = DocumentProcessor(**processor_kwargs)
+        processor = DocumentProcessor(
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+            vector_store=getattr(request.app.state, "vector_store", None),
+            embedding_service=getattr(request.app.state, "embedding_service", None),
+        )
 
         try:
             result = await processor.process_file(str(file_path))
@@ -372,7 +465,14 @@ async def scan_directories():
 
 
 @router.delete("/{file_id}", response_model=DeleteResponse)
-async def delete_document(file_id: int):
+@limiter.limit(settings.admin_rate_limit)
+async def delete_document(
+    file_id: int,
+    request: Request,
+    auth: dict = Depends(require_scope("documents:manage")),
+    csrf_token: str = Depends(csrf_protect),
+    secret_manager: SecretManager = Depends(get_secret_manager),
+):
     """
     Delete a document by ID.
     
@@ -411,6 +511,13 @@ async def delete_document(file_id: int):
             
             # Delete from database
             conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            _record_document_action(
+                file_id,
+                "delete",
+                "success",
+                auth.get("user_id", "unknown"),
+                secret_manager,
+            )
             conn.commit()
             
             return DeleteResponse(

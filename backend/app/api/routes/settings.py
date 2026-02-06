@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
 from app.config import settings
+from app.api.deps import get_csrf_manager
+from app.security import CSRFManager, issue_csrf_token
 
 router = APIRouter()
 
@@ -95,5 +97,13 @@ def update_settings(update: SettingsUpdate):
 def update_settings_put(update: SettingsUpdate):
     return _apply_settings_update(update)
 
+
+@router.get("/csrf-token")
+def get_csrf_token(
+    response: Response,
+    csrf_manager: CSRFManager = Depends(get_csrf_manager),
+):
+    token = issue_csrf_token(response, csrf_manager)
+    return {"csrf_token": token}
 
 

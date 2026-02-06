@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     rag_relevance_threshold: float = 0.1
     vector_top_k: int = 10
     maintenance_mode: bool = False
+    redis_url: str = "redis://localhost:6379/0"
+    csrf_token_ttl: int = 900
+    admin_rate_limit: str = "10/minute"
+    health_check_api_key: str = "health-api-key"
     
     # Auto-scan configuration
     auto_scan_enabled: bool = True
