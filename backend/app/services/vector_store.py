@@ -162,10 +162,40 @@ class VectorStore:
             filter_expr: Optional filter expression (LanceDB syntax).
             
         Returns:
-            List of matching records with similarity scores.
+            List of matching records with similarity scores. Empty list if no table exists.
         """
+        # Ensure DB connection exists
+        if self.db is None:
+            self.connect()
+        
+        # Try to open existing table if not already loaded
         if self.table is None:
-            raise RuntimeError("Table not initialized. Call init_table() first.")
+            try:
+                table_names = self.db.table_names()
+            except Exception as e:
+                raise VectorStoreConnectionError(f"Failed to list table names: {e}") from e
+            
+            if "chunks" not in table_names:
+                # No table exists yet - graceful no-docs behavior
+                return []
+            
+            # Table exists, try to open it
+            try:
+                self.table = self.db.open_table("chunks")
+            except Exception as e:
+                raise VectorStoreConnectionError(f"Failed to open 'chunks' table: {e}") from e
+            
+            # Set embedding_dim from table schema if available
+            if self._embedding_dim is None:
+                try:
+                    schema = self.table.schema
+                    embedding_field = schema.field("embedding")
+                    # Extract dimension from fixed size list type
+                    if hasattr(embedding_field.type, 'list_size'):
+                        self._embedding_dim = embedding_field.type.list_size
+                except Exception:
+                    # If we can't determine embedding_dim, leave it as None
+                    pass
         
         query = self.table.search(embedding)
         
@@ -185,18 +215,45 @@ class VectorStore:
         Returns:
             Number of records deleted.
         """
+        # Ensure DB connection exists
+        if self.db is None:
+            self.connect()
+        
+        # Try to open existing table if not already loaded
         if self.table is None:
-            raise RuntimeError("Table not initialized. Call init_table() first.")
+            try:
+                table_names = self.db.table_names()
+            except Exception as e:
+                raise VectorStoreConnectionError(f"Failed to list table names: {e}") from e
+            
+            if "chunks" not in table_names:
+                # No table exists yet - nothing to delete
+                return 0
+            
+            # Table exists, try to open it
+            try:
+                self.table = self.db.open_table("chunks")
+            except Exception as e:
+                raise VectorStoreConnectionError(f"Failed to open 'chunks' table: {e}") from e
+            
+            # Set embedding_dim from table schema if available
+            if self._embedding_dim is None:
+                try:
+                    schema = self.table.schema
+                    embedding_field = schema.field("embedding")
+                    # Extract dimension from fixed size list type
+                    if hasattr(embedding_field.type, 'list_size'):
+                        self._embedding_dim = embedding_field.type.list_size
+                except Exception:
+                    # If we can't determine embedding_dim, leave it as None
+                    pass
         
         # Query count before delete to return accurate deletion count
         try:
             count_before = self.table.count_rows(f'file_id = "{file_id}"')
         except Exception:
-            # Fallback: search for records to count them
-            results = self.table.search([0.0] * (self._embedding_dim or 1)).where(
-                f'file_id = "{file_id}"'
-            ).limit(100000).to_list()
-            count_before = len(results)
+            # If count_rows fails, safely default to 0
+            count_before = 0
         
         # LanceDB delete using filter expression
         self.table.delete(f'file_id = "{file_id}"')
