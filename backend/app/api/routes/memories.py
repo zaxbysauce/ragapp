@@ -109,8 +109,8 @@ class MemorySearchResponse(BaseModel):
 
 
 class MemorySearchRequest(BaseModel):
-    query: str = Field(..., description="Search query string")
-    limit: int = Field(5, ge=1, le=100, description="Maximum number of results")
+    query: Optional[str] = Field(default="", description="Search query string")
+    limit: int = Field(default=5, ge=1, le=100, description="Maximum number of results")
 
 
 def _parse_tags_to_list(tags: Optional[str]) -> Optional[List[str]]:

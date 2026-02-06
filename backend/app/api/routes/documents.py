@@ -96,10 +96,13 @@ class UploadResponse(BaseModel):
 
 
 class ScanResponse(BaseModel):
-    """Response model for directory scan."""
+    """Response model for directory scan - frontend compatible."""
     files_enqueued: int
     status: str
     message: str
+    added: int  # Frontend alias for files_enqueued
+    scanned: int  # Frontend expects this field (total files scanned)
+    errors: List[str] = Field(default_factory=list)  # Frontend expects this field
 
 
 class DeleteResponse(BaseModel):
@@ -351,6 +354,9 @@ async def scan_directories():
             files_enqueued=files_enqueued,
             status="success",
             message=message,
+            added=files_enqueued,  # Frontend alias
+            scanned=files_enqueued,  # Frontend expects this (at least files_enqueued)
+            errors=[],  # Frontend expects this field
         )
     except Exception as e:
         logger.exception("Error during directory scan")
