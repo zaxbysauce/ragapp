@@ -77,15 +77,21 @@ class MemoryUpdateRequest(BaseModel):
         return _normalize_tags_input(v)
 
 
+class MemoryMetadata(BaseModel):
+    """Metadata object for memory responses (frontend compatibility)."""
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    source: Optional[str] = None
+
+
 class MemoryResponse(BaseModel):
-    """Response model for a memory record."""
-    id: int
+    """Response model for a memory record (frontend compatible)."""
+    id: str
     content: str
-    category: Optional[str]
-    tags: Optional[str]
-    source: Optional[str]
-    created_at: Optional[str]
-    updated_at: Optional[str]
+    metadata: Optional[MemoryMetadata] = None
+    score: Optional[float] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -97,8 +103,9 @@ class MemoryListResponse(BaseModel):
 
 
 class MemorySearchResponse(BaseModel):
-    """Response model for memory search results."""
+    """Response model for memory search results (frontend compatible)."""
     results: List[MemoryResponse]
+    total: int
 
 
 class MemorySearchRequest(BaseModel):
@@ -106,14 +113,33 @@ class MemorySearchRequest(BaseModel):
     limit: int = Field(5, ge=1, le=100, description="Maximum number of results")
 
 
-def _memory_record_to_response(record: MemoryRecord) -> MemoryResponse:
-    """Convert a MemoryRecord to a MemoryResponse."""
-    return MemoryResponse(
-        id=record.id,
-        content=record.content,
+def _parse_tags_to_list(tags: Optional[str]) -> Optional[List[str]]:
+    """Parse tags JSON string to list."""
+    if not tags:
+        return None
+    try:
+        parsed = json.loads(tags)
+        if isinstance(parsed, list):
+            return parsed
+    except json.JSONDecodeError:
+        # Try comma-separated fallback
+        return [t.strip() for t in tags.split(',') if t.strip()]
+    return None
+
+
+def _memory_record_to_response(record: MemoryRecord, score: Optional[float] = None) -> MemoryResponse:
+    """Convert a MemoryRecord to a MemoryResponse (frontend compatible format)."""
+    metadata = MemoryMetadata(
         category=record.category,
-        tags=record.tags,
+        tags=_parse_tags_to_list(record.tags),
         source=record.source,
+    ) if any([record.category, record.tags, record.source]) else None
+    
+    return MemoryResponse(
+        id=str(record.id),
+        content=record.content,
+        metadata=metadata,
+        score=score,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -150,12 +176,15 @@ async def list_memories():
         
         memories = []
         for row in rows:
-            memories.append(MemoryResponse(
-                id=row[0],
-                content=row[1],
+            metadata = MemoryMetadata(
                 category=row[2],
-                tags=row[3],
+                tags=_parse_tags_to_list(row[3]),
                 source=row[4],
+            ) if any([row[2], row[3], row[4]]) else None
+            memories.append(MemoryResponse(
+                id=str(row[0]),
+                content=row[1],
+                metadata=metadata,
                 created_at=row[5],
                 updated_at=row[6],
             ))
@@ -236,12 +265,15 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
                     (memory_id,)
                 )
                 row = cursor.fetchone()
-                return MemoryResponse(
-                    id=row[0],
-                    content=row[1],
+                metadata = MemoryMetadata(
                     category=row[2],
-                    tags=row[3],
+                    tags=_parse_tags_to_list(row[3]),
                     source=row[4],
+                ) if any([row[2], row[3], row[4]]) else None
+                return MemoryResponse(
+                    id=str(row[0]),
+                    content=row[1],
+                    metadata=metadata,
                     created_at=row[5],
                     updated_at=row[6],
                 )
@@ -268,12 +300,15 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
             )
             row = cursor.fetchone()
             
-            return MemoryResponse(
-                id=row[0],
-                content=row[1],
+            metadata = MemoryMetadata(
                 category=row[2],
-                tags=row[3],
+                tags=_parse_tags_to_list(row[3]),
                 source=row[4],
+            ) if any([row[2], row[3], row[4]]) else None
+            return MemoryResponse(
+                id=str(row[0]),
+                content=row[1],
+                metadata=metadata,
                 created_at=row[5],
                 updated_at=row[6],
             )
@@ -320,10 +355,10 @@ async def search_memories(
     Returns matching memories ordered by relevance.
     """
     results = _perform_memory_search(query, limit)
-    return MemorySearchResponse(results=results)
+    return MemorySearchResponse(results=results, total=len(results))
 
 
 @router.post("/memories/search", response_model=MemorySearchResponse)
 async def search_memories_post(request: MemorySearchRequest):
     results = _perform_memory_search(request.query, request.limit)
-    return MemorySearchResponse(results=results)
+    return MemorySearchResponse(results=results, total=len(results))

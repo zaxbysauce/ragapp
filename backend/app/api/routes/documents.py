@@ -53,35 +53,44 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 class DocumentResponse(BaseModel):
-    """Response model for a document record."""
+    """Response model for a document record - frontend compatible."""
     id: int
     file_name: str
+    filename: str  # Frontend alias
     file_path: str
     status: str
     chunk_count: int
+    size: Optional[int] = None  # Frontend expects size
     created_at: Optional[str]
     processed_at: Optional[str]
+    metadata: Optional[dict] = None  # Frontend expects metadata
 
     class Config:
         from_attributes = True
 
 
 class DocumentListResponse(BaseModel):
-    """Response model for listing documents."""
+    """Response model for listing documents - frontend compatible with total."""
     documents: List[DocumentResponse]
+    total: int
 
 
 class DocumentStatsResponse(BaseModel):
-    """Response model for document statistics."""
-    total_files: int
+    """Response model for document statistics - frontend compatible."""
+    total_documents: int  # Frontend expects this field
     total_chunks: int
+    total_size_bytes: int = 0  # Frontend expects this field
+    documents_by_status: dict = Field(default_factory=dict)  # Frontend expects this field
+    total_files: int = 0  # Backward compatibility alias
     status: str = "success"
 
 
 class UploadResponse(BaseModel):
-    """Response model for file upload."""
+    """Response model for file upload - frontend compatible."""
     file_id: int
     file_name: str
+    id: int  # Frontend alias for file_id
+    filename: str  # Frontend alias for file_name
     status: str
     message: str
 
@@ -102,14 +111,24 @@ class DeleteResponse(BaseModel):
 
 def _row_to_document_response(row: sqlite3.Row) -> DocumentResponse:
     """Convert a database row to a DocumentResponse."""
+    file_name = row["file_name"]
+    chunk_count = row["chunk_count"] or 0
+    status = row["status"]
     return DocumentResponse(
         id=row["id"],
-        file_name=row["file_name"],
+        file_name=file_name,
+        filename=file_name,  # Frontend alias
         file_path=row["file_path"],
-        status=row["status"],
-        chunk_count=row["chunk_count"] or 0,
+        status=status,
+        chunk_count=chunk_count,
+        size=row["file_size"] if "file_size" in row.keys() and row["file_size"] is not None else None,
         created_at=row["created_at"],
         processed_at=row["processed_at"],
+        metadata={
+            "status": status,
+            "chunk_count": chunk_count,
+            "chunks": chunk_count,  # Backward compatibility
+        },
     )
 
 
@@ -135,7 +154,7 @@ async def list_documents():
         
         documents = [_row_to_document_response(row) for row in rows]
         
-        return DocumentListResponse(documents=documents)
+        return DocumentListResponse(documents=documents, total=len(documents))
     finally:
         conn.close()
 
@@ -145,8 +164,8 @@ async def get_document_stats():
     """
     Get counts of files and chunks.
     
-    Returns total number of files in the database and total chunks
-    across all indexed files.
+    Returns total number of files in the database, total chunks,
+    total size in bytes, and documents grouped by status.
     """
     conn = get_db_connection(str(settings.sqlite_path))
     try:
@@ -158,12 +177,36 @@ async def get_document_stats():
         cursor = conn.execute("SELECT COALESCE(SUM(chunk_count), 0) as total_chunks FROM files")
         total_chunks = cursor.fetchone()["total_chunks"]
         
+        # Get total size (sum of file_size if column exists, otherwise 0)
+        try:
+            cursor = conn.execute("SELECT COALESCE(SUM(file_size), 0) as total_size FROM files")
+            total_size_bytes = cursor.fetchone()["total_size"] or 0
+        except sqlite3.OperationalError:
+            total_size_bytes = 0
+        
+        # Get documents grouped by status
+        cursor = conn.execute("SELECT status, COUNT(*) as count FROM files GROUP BY status")
+        documents_by_status = {row["status"]: row["count"] for row in cursor.fetchall()}
+        
         return DocumentStatsResponse(
-            total_files=total_files,
+            total_documents=total_files,  # Frontend field
             total_chunks=total_chunks,
+            total_size_bytes=total_size_bytes,
+            documents_by_status=documents_by_status,
+            total_files=total_files,  # Backward compatibility
         )
     finally:
         conn.close()
+
+
+@router.post("", response_model=UploadResponse)
+@router.post("/", response_model=UploadResponse)
+async def upload_document_root(request: Request, file: UploadFile = File(...)):
+    """
+    Upload endpoint at root /documents for frontend compatibility.
+    Delegates to the main upload handler.
+    """
+    return await upload_document(request, file)
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -251,6 +294,8 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
             return UploadResponse(
                 file_id=result.file_id,
                 file_name=file_name,
+                id=result.file_id,  # Frontend alias
+                filename=file_name,  # Frontend alias
                 status="indexed",
                 message=f"File '{file_name}' uploaded and processed successfully with {len(result.chunks)} chunks",
             )

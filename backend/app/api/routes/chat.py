@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.services.rag_engine import RAGEngine
 
@@ -19,15 +19,15 @@ router = APIRouter()
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
     message: str
-    history: List[Dict[str, Any]] = []
+    history: List[Dict[str, Any]] = Field(default_factory=list)
     stream: bool = False
 
 
 class ChatResponse(BaseModel):
     """Response model for non-streaming chat endpoint."""
     content: str
-    sources: List[Dict[str, Any]]
-    memories_used: List[str]
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    memories_used: List[str] = Field(default_factory=list)
 
 
 class ChatMessage(BaseModel):
@@ -122,13 +122,17 @@ async def chat(request: ChatRequest):
         request: ChatRequest containing message, optional history, and stream flag
         
     Returns:
-        If stream=True: StreamingResponse with SSE events (data: {json})
-        If stream=False: ChatResponse with content, sources, memories_used
+        ChatResponse with content, sources, memories_used
+        
+    Raises:
+        HTTPException: If stream=True is requested (use /chat/stream instead)
     """
     if request.stream:
-        return await stream_chat_response(request.message, request.history)
-    else:
-        return await non_stream_chat_response(request.message, request.history)
+        raise HTTPException(
+            status_code=400,
+            detail="Streaming is not supported on this endpoint. Use /chat/stream for streaming responses."
+        )
+    return await non_stream_chat_response(request.message, request.history)
 
 
 @router.post("/chat/stream")
@@ -141,5 +145,5 @@ async def chat_stream(request: ChatStreamRequest):
     if last_message.role.lower() != "user":
         raise HTTPException(status_code=400, detail="The last message must be from the user")
 
-    history = [msg.dict(exclude_none=True) for msg in request.messages[:-1]]
+    history = [msg.model_dump(exclude_none=True) for msg in request.messages[:-1]]
     return await stream_chat_response(last_message.content, history)

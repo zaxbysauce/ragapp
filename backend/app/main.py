@@ -61,6 +61,13 @@ app.include_router(memories_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 
+
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint for Docker/tooling."""
+    return {"status": "ok"}
+
+
 # Serve frontend static files
 from pathlib import Path
 static_dir = Path("/app/static")
