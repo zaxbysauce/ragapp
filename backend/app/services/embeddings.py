@@ -1,8 +1,9 @@
 """
-Ollama embedding client service.
+Dual-provider embedding client service supporting Ollama and OpenAI-compatible APIs.
 """
 import httpx
 from typing import List
+from urllib.parse import urlparse
 from app.config import settings
 
 
@@ -12,10 +13,10 @@ class EmbeddingError(Exception):
 
 
 class EmbeddingService:
-    """Service for generating text embeddings via Ollama API."""
+    """Service for generating text embeddings via Ollama or OpenAI-compatible APIs."""
     
     def __init__(self):
-        """Initialize the embedding service with HTTP client."""
+        """Initialize the embedding service with HTTP client and provider detection."""
         base_url = settings.ollama_embedding_url
 
         # Validate base_url
@@ -24,11 +25,99 @@ class EmbeddingService:
         if not base_url.startswith(('http://', 'https://')):
             raise EmbeddingError(f"Invalid OLLAMA_EMBEDDING_URL: {base_url}. Must start with http:// or https://")
 
-        # Ensure URL ends with /api/embeddings
-        if not base_url.endswith('/api/embeddings'):
-            base_url = base_url.rstrip('/') + '/api/embeddings'
-        self.embeddings_url = base_url
+        # Detect provider mode based on URL path
+        self.provider_mode, self.embeddings_url = self._detect_provider_mode(base_url)
         self.timeout = 30.0
+    
+    def _detect_provider_mode(self, base_url: str) -> tuple:
+        """
+        Detect which embedding provider mode to use based on URL path.
+        
+        Detection strategy:
+        - If URL path includes '/api/embeddings' -> Ollama mode
+        - If URL path includes '/v1/embeddings' -> OpenAI mode
+        - If no explicit embeddings path:
+          - Port 1234 -> OpenAI mode (LM Studio default)
+          - Otherwise -> Ollama mode
+        
+        Args:
+            base_url: The configured embedding URL
+            
+        Returns:
+            Tuple of (provider_mode, embeddings_url)
+        """
+        parsed = urlparse(base_url)
+        path = parsed.path
+        
+        # Check for explicit paths
+        if '/api/embeddings' in path:
+            # Already has Ollama path, use as-is
+            return ('ollama', base_url)
+        elif '/v1/embeddings' in path:
+            # Already has OpenAI path, use as-is
+            return ('openai', base_url)
+        
+        # No explicit path - determine by port
+        port = parsed.port
+        if port == 1234:
+            # LM Studio default port - use OpenAI mode
+            base_url = base_url.rstrip('/') + '/v1/embeddings'
+            return ('openai', base_url)
+        else:
+            # Default to Ollama mode
+            base_url = base_url.rstrip('/') + '/api/embeddings'
+            return ('ollama', base_url)
+    
+    def _build_payload(self, text: str) -> dict:
+        """
+        Build the API request payload based on provider mode.
+        
+        Args:
+            text: The text to embed
+            
+        Returns:
+            Dictionary payload for the API request
+        """
+        if self.provider_mode == 'openai':
+            return {
+                "model": settings.embedding_model,
+                "input": text
+            }
+        else:  # ollama mode
+            return {
+                "model": settings.embedding_model,
+                "prompt": text
+            }
+    
+    def _extract_embedding(self, data: dict) -> List[float]:
+        """
+        Extract embedding vector from API response based on provider mode.
+        
+        Args:
+            data: Parsed JSON response from the API
+            
+        Returns:
+            List of float values representing the embedding vector
+            
+        Raises:
+            EmbeddingError: If embedding cannot be extracted
+        """
+        if self.provider_mode == 'openai':
+            # OpenAI format: data[0].embedding
+            if "data" not in data:
+                raise EmbeddingError(f"[OpenAI mode] Embedding API response missing 'data' field")
+            if not isinstance(data["data"], list) or len(data["data"]) == 0:
+                raise EmbeddingError(f"[OpenAI mode] Embedding API response 'data' field is empty or invalid")
+            embedding = data["data"][0].get("embedding")
+            if embedding is None:
+                raise EmbeddingError(f"[OpenAI mode] Embedding API response missing 'data[0].embedding' field")
+        else:  # ollama mode
+            # Ollama format: embedding
+            embedding = data.get("embedding")
+            if embedding is None:
+                raise EmbeddingError(f"[Ollama mode] Embedding API response missing 'embedding' field")
+        
+        return embedding
     
     async def embed_single(self, text: str) -> List[float]:
         """
@@ -53,33 +142,25 @@ class EmbeddingService:
             try:
                 response = await client.post(
                     self.embeddings_url,
-                    json={
-                        "model": settings.embedding_model,
-                        "prompt": text
-                    }
+                    json=self._build_payload(text)
                 )
                 
                 if response.status_code != 200:
                     raise EmbeddingError(
-                        f"Embedding API returned status {response.status_code}: {response.text}"
+                        f"[{self.provider_mode.upper()} mode] Embedding API returned status {response.status_code}: {response.text}"
                     )
 
                 try:
                     data = response.json()
                 except ValueError as e:
-                    raise EmbeddingError(f"Invalid JSON response from embedding API: {e}")
+                    raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Invalid JSON response from embedding API: {e}")
 
-                embedding = data.get("embedding")
-                
-                if embedding is None:
-                    raise EmbeddingError("Embedding API response missing 'embedding' field")
-                
-                return embedding
+                return self._extract_embedding(data)
                 
             except httpx.TimeoutException as e:
-                raise EmbeddingError(f"Embedding request timed out: {e}")
+                raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Embedding request timed out: {e}")
             except httpx.HTTPError as e:
-                raise EmbeddingError(f"Embedding HTTP error: {e}")
+                raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Embedding HTTP error: {e}")
     
     async def validate_embedding_dimension(self, expected_dim: int) -> bool:
         """
@@ -106,7 +187,7 @@ class EmbeddingService:
         actual_dim = len(embedding)
         if actual_dim != expected_dim:
             raise EmbeddingError(
-                f"Embedding dimension mismatch: expected {expected_dim}, got {actual_dim}"
+                f"[{self.provider_mode.upper()} mode] Embedding dimension mismatch: expected {expected_dim}, got {actual_dim}"
             )
         return True
 
