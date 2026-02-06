@@ -8,6 +8,8 @@ from app.services.embeddings import EmbeddingService
 from app.services.vector_store import VectorStore
 from app.services.memory_store import MemoryStore
 from app.services.rag_engine import RAGEngine
+from app.services.secret_manager import SecretManager
+from app.services.toggle_manager import ToggleManager
 
 
 def get_settings() -> Settings:
@@ -48,3 +50,11 @@ def get_rag_engine(
         memory_store=memory_store,
         llm_client=llm_client,
     )
+
+
+def get_toggle_manager(request: Request) -> ToggleManager:
+    return request.app.state.toggle_manager
+
+
+def get_secret_manager(request: Request) -> SecretManager:
+    return request.app.state.secret_manager

@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     
     # RAG configuration
     rag_relevance_threshold: float = 0.1
+    vector_top_k: int = 10
+    maintenance_mode: bool = False
     
     # Auto-scan configuration
     auto_scan_enabled: bool = True
@@ -42,6 +44,13 @@ class Settings(BaseSettings):
     
     # Logging configuration
     log_level: str = "INFO"
+
+    # Feature flags
+    enable_model_validation: bool = False
+
+    # Admin security
+    admin_secret_token: str = "admin-secret-token"
+    audit_hmac_key_version: str = "v1"
 
     # Security settings
     max_file_size_mb: int = 50

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes.admin import router as admin_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.documents import router as documents_router
 from app.api.routes.health import router as health_router
@@ -19,6 +20,8 @@ from app.services.llm_client import LLMClient
 from app.services.vector_store import VectorStore
 from app.services.memory_store import MemoryStore
 from app.services.embeddings import EmbeddingService
+from app.services.secret_manager import SecretManager
+from app.services.toggle_manager import ToggleManager
 
 
 @asynccontextmanager
@@ -32,6 +35,12 @@ async def lifespan(app: FastAPI):
     app.state.vector_store = VectorStore()
     app.state.vector_store.connect()
     app.state.memory_store = MemoryStore()
+    app.state.secret_manager = SecretManager()
+    app.state.toggle_manager = ToggleManager(str(settings.sqlite_path))
+    app.state.model_validation = (
+        settings.enable_model_validation
+        or app.state.toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
+    )
     yield
     # Shutdown: Close services
     await app.state.llm_client.close()
@@ -60,6 +69,7 @@ app.include_router(search_router, prefix="/api")
 app.include_router(memories_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 
 
 @app.get("/health")

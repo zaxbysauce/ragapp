@@ -85,6 +85,32 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 -- Index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
+
+-- Admin feature toggles
+CREATE TABLE IF NOT EXISTS admin_toggles (
+    feature TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Audit log for toggle changes
+CREATE TABLE IF NOT EXISTS audit_toggle_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    user_id TEXT,
+    ip TEXT,
+    timestamp TEXT NOT NULL,
+    key_version TEXT,
+    hmac_sha256 TEXT NOT NULL
+);
+
+-- Secret key metadata for audit hashing
+CREATE TABLE IF NOT EXISTS secret_keys (
+    version TEXT PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    description TEXT
+);
 """
 
 

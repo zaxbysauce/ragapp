@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -39,6 +40,9 @@ class RAGEngine:
         self.memory_store = memory_store or MemoryStore()
         self.llm_client = llm_client or LLMClient()
         self.relevance_threshold = settings.rag_relevance_threshold
+        self.top_k = settings.vector_top_k
+        self.maintenance_mode = settings.maintenance_mode
+        self.logger = logging.getLogger(__name__)
 
     async def query(
         self,
@@ -61,16 +65,32 @@ class RAGEngine:
         except EmbeddingError as exc:
             raise RAGEngineError(f"Unable to encode query: {exc}") from exc
 
-        try:
-            vector_results = await asyncio.to_thread(
-                self.vector_store.search,
-                query_embedding,
-                settings.max_context_chunks,
-            )
-        except Exception as exc:
-            raise RAGEngineError(f"Vector search failed: {exc}") from exc
+        fallback_reason: Optional[str] = None
+        vector_results: List[Dict[str, Any]]
+        if self.maintenance_mode:
+            fallback_reason = "RAG index is under maintenance"
+            vector_results = []
+        else:
+            try:
+                vector_results = await asyncio.to_thread(
+                    self.vector_store.search,
+                    query_embedding,
+                    self.top_k,
+                )
+            except Exception as exc:
+                fallback_reason = str(exc)
+                vector_results = []
 
         relevant_chunks = self._filter_relevant(vector_results)
+        if fallback_reason:
+            self.logger.warning("Vector search fallback triggered: %s", fallback_reason)
+            yield {
+                "type": "fallback",
+                "reason": fallback_reason,
+                "results": [],
+                "total": 0,
+                "fallback": True,
+            }
         memories = await asyncio.to_thread(
             self.memory_store.search_memories,
             user_input,
