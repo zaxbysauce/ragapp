@@ -6,7 +6,7 @@ Provides endpoints for listing, creating, updating, deleting, and searching memo
 import json
 import logging
 import sqlite3
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, validator
@@ -43,6 +43,16 @@ def _normalize_tags(tags: Optional[str]) -> Optional[str]:
     return json.dumps(tag_list) if tag_list else None
 
 
+def _normalize_tags_input(tags: Optional[Union[str, List[str]]]) -> Optional[str]:
+    """Normalize tags from strings or lists into a JSON array string."""
+    if tags is None:
+        return None
+    if isinstance(tags, list):
+        cleaned = [str(tag).strip() for tag in tags if isinstance(tag, str) and tag.strip()]
+        return json.dumps(cleaned) if cleaned else None
+    return _normalize_tags(tags)
+
+
 class MemoryCreateRequest(BaseModel):
     """Request model for creating a new memory."""
     content: str = Field(..., min_length=1, max_length=10000, description="Memory content")
@@ -50,11 +60,9 @@ class MemoryCreateRequest(BaseModel):
     tags: Optional[str] = Field(None, max_length=1000, description="Optional tags (JSON array or comma-separated)")
     source: Optional[str] = Field(None, max_length=500, description="Optional source reference")
 
-    @validator('tags')
+    @validator('tags', pre=True)
     def validate_tags(cls, v):
-        if v is None:
-            return v
-        return _normalize_tags(v)
+        return _normalize_tags_input(v)
 
 
 class MemoryUpdateRequest(BaseModel):
@@ -64,11 +72,9 @@ class MemoryUpdateRequest(BaseModel):
     tags: Optional[str] = Field(None, max_length=1000, description="Optional tags")
     source: Optional[str] = Field(None, max_length=500, description="Optional source reference")
 
-    @validator('tags')
+    @validator('tags', pre=True)
     def validate_tags(cls, v):
-        if v is None:
-            return v
-        return _normalize_tags(v)
+        return _normalize_tags_input(v)
 
 
 class MemoryResponse(BaseModel):
@@ -95,6 +101,11 @@ class MemorySearchResponse(BaseModel):
     results: List[MemoryResponse]
 
 
+class MemorySearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Search query string")
+    limit: int = Field(5, ge=1, le=100, description="Maximum number of results")
+
+
 def _memory_record_to_response(record: MemoryRecord) -> MemoryResponse:
     """Convert a MemoryRecord to a MemoryResponse."""
     return MemoryResponse(
@@ -106,6 +117,16 @@ def _memory_record_to_response(record: MemoryRecord) -> MemoryResponse:
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
+
+
+def _perform_memory_search(query: str, limit: int) -> List[MemoryResponse]:
+    store = MemoryStore()
+    try:
+        records = store.search_memories(query=query, limit=limit)
+    except MemoryStoreError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return [_memory_record_to_response(record) for record in records]
 
 
 @router.get("/memories", response_model=MemoryListResponse)
@@ -298,11 +319,11 @@ async def search_memories(
     Uses MemoryStore.search_memories to search memories via FTS5.
     Returns matching memories ordered by relevance.
     """
-    store = MemoryStore()
-    try:
-        records = store.search_memories(query=query, limit=limit)
-    except MemoryStoreError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    results = [_memory_record_to_response(record) for record in records]
+    results = _perform_memory_search(query, limit)
+    return MemorySearchResponse(results=results)
+
+
+@router.post("/memories/search", response_model=MemorySearchResponse)
+async def search_memories_post(request: MemorySearchRequest):
+    results = _perform_memory_search(request.query, request.limit)
     return MemorySearchResponse(results=results)

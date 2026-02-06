@@ -4,9 +4,9 @@ Chat API routes for RAG-based conversational interface.
 Provides streaming and non-streaming chat endpoints that leverage
 the RAG engine for context-aware responses.
 """
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -28,6 +28,16 @@ class ChatResponse(BaseModel):
     content: str
     sources: List[Dict[str, Any]]
     memories_used: List[str]
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+    name: Optional[str] = None
+
+
+class ChatStreamRequest(BaseModel):
+    messages: List[ChatMessage]
 
 
 async def stream_chat_response(
@@ -119,3 +129,17 @@ async def chat(request: ChatRequest):
         return await stream_chat_response(request.message, request.history)
     else:
         return await non_stream_chat_response(request.message, request.history)
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: ChatStreamRequest):
+    """Streaming chat endpoint that accepts a sequence of chat messages."""
+    if not request.messages:
+        raise HTTPException(status_code=400, detail="At least one message is required")
+
+    last_message = request.messages[-1]
+    if last_message.role.lower() != "user":
+        raise HTTPException(status_code=400, detail="The last message must be from the user")
+
+    history = [msg.dict(exclude_none=True) for msg in request.messages[:-1]]
+    return await stream_chat_response(last_message.content, history)

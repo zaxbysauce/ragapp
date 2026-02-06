@@ -113,6 +113,7 @@ def _row_to_document_response(row: sqlite3.Row) -> DocumentResponse:
     )
 
 
+@router.get("", response_model=DocumentListResponse)
 @router.get("/", response_model=DocumentListResponse)
 async def list_documents():
     """
