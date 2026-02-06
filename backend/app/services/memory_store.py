@@ -91,9 +91,7 @@ class MemoryStore:
             return []
 
         # Sanitize query to prevent FTS5 syntax injection
-        # Keep alphanumeric, spaces, and basic punctuation; strip FTS5 special chars
-        sanitized_query = re.sub(r'[*:"^()]+', '', query)
-        sanitized_query = re.sub(r'[^\w\s.,?]+', '', sanitized_query)
+        sanitized_query = ' '.join(re.findall(r'\w+', query))
 
         if not sanitized_query.strip():
             return []

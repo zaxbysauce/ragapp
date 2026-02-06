@@ -23,7 +23,9 @@ from app.services.memory_store import MemoryStore
 from app.services.embeddings import EmbeddingService
 from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
+from app.services.maintenance import MaintenanceService
 from app.limiter import limiter
+from app.middleware.maintenance import MaintenanceMiddleware
 from app.security import CSRFManager
 
 
@@ -41,6 +43,7 @@ async def lifespan(app: FastAPI):
     app.state.secret_manager = SecretManager()
     app.state.toggle_manager = ToggleManager(str(settings.sqlite_path))
     app.state.csrf_manager = CSRFManager(settings.redis_url, settings.csrf_token_ttl)
+    app.state.maintenance_service = MaintenanceService(str(settings.sqlite_path))
     app.state.model_validation = (
         settings.enable_model_validation
         or app.state.toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
@@ -71,6 +74,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(SlowAPIMiddleware, limiter=limiter)
+app.add_middleware(MaintenanceMiddleware, service=app.state.maintenance_service)
 
 app.include_router(health_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")

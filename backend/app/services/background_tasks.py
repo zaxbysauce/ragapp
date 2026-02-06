@@ -13,6 +13,7 @@ from typing import Optional
 from .document_processor import DocumentProcessor, DocumentProcessingError
 from .vector_store import VectorStore
 from .embeddings import EmbeddingService
+from .maintenance import MaintenanceService
 
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,8 @@ class BackgroundProcessor:
         chunk_size: int = 512,
         chunk_overlap: int = 50,
         vector_store: Optional[VectorStore] = None,
-        embedding_service: Optional[EmbeddingService] = None
+        embedding_service: Optional[EmbeddingService] = None,
+        maintenance_service: Optional[MaintenanceService] = None,
     ):
         """
         Initialize the background processor.
@@ -81,6 +83,7 @@ class BackgroundProcessor:
         )
         self._worker_task: Optional[asyncio.Task] = None
         self._running = False
+        self.maintenance_service = maintenance_service
 
     async def start(self) -> None:
         """
@@ -137,6 +140,8 @@ class BackgroundProcessor:
             If the processor is not running, the item will still be queued
             and processed when start() is called.
         """
+        if self.maintenance_service and self.maintenance_service.get_flag().enabled:
+            raise DocumentProcessingError("Maintenance mode prevents enqueueing")
         task = TaskItem(file_path=file_path, attempt=1)
         await self.queue.put(task)
         logger.debug(f"Enqueued file: {file_path}")
