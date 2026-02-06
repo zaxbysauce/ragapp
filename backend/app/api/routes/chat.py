@@ -7,10 +7,11 @@ the RAG engine for context-aware responses.
 import json
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.api.deps import get_rag_engine
 from app.services.rag_engine import RAGEngine
 
 
@@ -41,19 +42,27 @@ class ChatStreamRequest(BaseModel):
     messages: List[ChatMessage]
 
 
-async def stream_chat_response(
+def stream_chat_response(
     message: str,
     history: List[Dict[str, Any]],
+    rag_engine: Optional[RAGEngine],
 ) -> StreamingResponse:
     """
     Generate a streaming chat response using SSE format.
-    
+
     Yields SSE events with JSON data chunks from the RAG engine.
     Each event is formatted as: data: {json}\n\n
     Ends with a done event containing sources and memories_used.
     """
+    if rag_engine is None:
+        async def error_generator():
+            yield f"data: {json.dumps({'type': 'error', 'message': 'RAG engine not available', 'code': 'SERVICE_UNAVAILABLE'})}\n\n"
+        return StreamingResponse(
+            error_generator(),
+            media_type="text/event-stream",
+        )
+
     async def event_generator():
-        rag_engine = RAGEngine()
         collected_content = []
         sources = []
         memories_used = []
@@ -87,18 +96,24 @@ async def stream_chat_response(
 async def non_stream_chat_response(
     message: str,
     history: List[Dict[str, Any]],
+    rag_engine: Optional[RAGEngine],
 ) -> ChatResponse:
     """
     Generate a non-streaming chat response.
-    
+
     Collects all chunks from the RAG engine and returns a complete
     response with content, sources, and memories used.
     """
-    rag_engine = RAGEngine()
+    if rag_engine is None:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG engine not available"
+        )
+
     collected_content = []
     sources = []
     memories_used = []
-    
+
     async for chunk in rag_engine.query(message, history, stream=False):
         chunk_type = chunk.get("type")
         
@@ -118,7 +133,10 @@ async def non_stream_chat_response(
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    rag_engine: RAGEngine = Depends(get_rag_engine),
+):
     """
     Chat endpoint for RAG-based conversational interface.
     
@@ -136,11 +154,14 @@ async def chat(request: ChatRequest):
             status_code=400,
             detail="Streaming is not supported on this endpoint. Use /chat/stream for streaming responses."
         )
-    return await non_stream_chat_response(request.message, request.history)
+    return await non_stream_chat_response(request.message, request.history, rag_engine)
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatStreamRequest):
+async def chat_stream(
+    request: ChatStreamRequest,
+    rag_engine: RAGEngine = Depends(get_rag_engine),
+):
     """Streaming chat endpoint that accepts a sequence of chat messages."""
     if not request.messages:
         raise HTTPException(status_code=400, detail="At least one message is required")
@@ -150,4 +171,4 @@ async def chat_stream(request: ChatStreamRequest):
         raise HTTPException(status_code=400, detail="The last message must be from the user")
 
     history = [msg.model_dump(exclude_none=True) for msg in request.messages[:-1]]
-    return await stream_chat_response(last_message.content, history)
+    return stream_chat_response(last_message.content, history, rag_engine)
