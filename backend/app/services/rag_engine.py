@@ -1,6 +1,7 @@
 """Retrieval-augmented generation engine orchestration."""
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -94,6 +95,19 @@ class RAGEngine:
             "memories_used": [mem.content for mem in memories],
         }
 
+    def _normalize_metadata(self, metadata: Any) -> Dict[str, Any]:
+        """Ensure metadata is a dict, parsing JSON string if needed."""
+        if isinstance(metadata, dict):
+            return metadata
+        if isinstance(metadata, str):
+            try:
+                parsed = json.loads(metadata)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return {}
+
     def _filter_relevant(self, results: List[Dict[str, Any]]) -> List[RAGSource]:
         sources: List[RAGSource] = []
         for record in results:
@@ -107,7 +121,7 @@ class RAGEngine:
                     text=record.get("text", ""),
                     file_id=record.get("file_id", ""),
                     score=score,
-                    metadata=record.get("metadata", {}),
+                    metadata=self._normalize_metadata(record.get("metadata")),
                 )
             )
         return sources
