@@ -195,7 +195,7 @@ async def list_memories():
         
         return MemoryListResponse(memories=memories)
     finally:
-        await asyncio.to_thread(conn.close)
+        await asyncio.to_thread(lambda: conn.close())
 
 
 @router.post("/memories", response_model=MemoryResponse)
@@ -299,7 +299,7 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
                 WHERE id = ?
             """
             await asyncio.to_thread(conn.execute, sql, params)
-            await asyncio.to_thread(conn.commit)
+            await asyncio.to_thread(lambda: conn.commit())
             
             # Fetch updated record
             cursor = await asyncio.to_thread(
@@ -329,10 +329,10 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
                 updated_at=row[6],
             )
         except Exception:
-            await asyncio.to_thread(conn.rollback)
+            await asyncio.to_thread(lambda: conn.rollback())
             raise
     finally:
-        await asyncio.to_thread(conn.close)
+        await asyncio.to_thread(lambda: conn.close())
 
 
 @router.delete("/memories/{memory_id}")
@@ -355,11 +355,11 @@ async def delete_memory(memory_id: int):
         
         # Delete the memory
         await asyncio.to_thread(conn.execute, "DELETE FROM memories WHERE id = ?", (memory_id,))
-        await asyncio.to_thread(conn.commit)
-        
+        await asyncio.to_thread(lambda: conn.commit())
+
         return {"message": f"Memory {memory_id} deleted successfully"}
     finally:
-        await asyncio.to_thread(conn.close)
+        await asyncio.to_thread(lambda: conn.close())
 
 
 @router.get("/memories/search", response_model=MemorySearchResponse)
