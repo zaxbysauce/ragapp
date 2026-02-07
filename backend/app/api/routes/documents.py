@@ -115,17 +115,22 @@ async def retry_document(
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Document not found")
-        processor = BackgroundProcessor(
+
+        # Use the singleton BackgroundProcessor instance
+        from app.services.background_tasks import get_background_processor
+        processor = get_background_processor(
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap,
             vector_store=getattr(request.app.state, "vector_store", None),
             embedding_service=getattr(request.app.state, "embedding_service", None),
         )
-        await processor.start()
-        try:
-            await processor.enqueue(row["file_path"])
-        finally:
-            await processor.stop()
+
+        # Ensure processor is running
+        if not processor.is_running:
+            await processor.start()
+
+        await processor.enqueue(row["file_path"])
+
         _record_document_action(
             file_id,
             "retry",
@@ -441,32 +446,39 @@ async def upload_document(request: Request, file: Optional[UploadFile] = None):
 async def scan_directories(request: Request):
     """
     Trigger a scan of configured directories for new files.
-    
+
     Calls FileWatcher.scan_once() to find and enqueue new files
     from uploads_dir and library_dir that are not in the database.
+
+    Uses the singleton BackgroundProcessor that runs continuously in the background.
     """
     from app.services.file_watcher import FileWatcher
-    from app.services.background_tasks import BackgroundProcessor
-    
-    processor = BackgroundProcessor(
+    from app.services.background_tasks import get_background_processor
+
+    # Use the singleton BackgroundProcessor instance
+    processor = get_background_processor(
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
         vector_store=getattr(request.app.state, "vector_store", None),
         embedding_service=getattr(request.app.state, "embedding_service", None),
         maintenance_service=getattr(request.app.state, "maintenance_service", None),
     )
-    try:
+
+    # Ensure processor is running (it should be from lifespan, but double-check)
+    if not processor.is_running:
         await processor.start()
+
+    try:
         watcher = FileWatcher(processor)
-        
+
         # Perform scan
         files_enqueued = await watcher.scan_once()
-        
+
         if files_enqueued > 0:
             message = f"Scan complete: {files_enqueued} new files enqueued for processing"
         else:
             message = "Scan complete: no new files found"
-        
+
         return ScanResponse(
             files_enqueued=files_enqueued,
             status="success",
@@ -478,8 +490,7 @@ async def scan_directories(request: Request):
     except Exception as e:
         logger.exception("Error during directory scan")
         raise HTTPException(status_code=500, detail=f"Scan failed: {e}")
-    finally:
-        await processor.stop()
+    # Note: No finally block to stop processor - it runs continuously
 
 
 @router.delete("/{file_id}", response_model=DeleteResponse)

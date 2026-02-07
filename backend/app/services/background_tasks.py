@@ -18,6 +18,61 @@ from .maintenance import MaintenanceService
 
 logger = logging.getLogger(__name__)
 
+# Singleton instance
+_processor_instance: Optional["BackgroundProcessor"] = None
+
+
+def get_background_processor(
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    chunk_size: int = 512,
+    chunk_overlap: int = 50,
+    vector_store: Optional[VectorStore] = None,
+    embedding_service: Optional[EmbeddingService] = None,
+    maintenance_service: Optional[MaintenanceService] = None,
+) -> "BackgroundProcessor":
+    """
+    Get or create the singleton BackgroundProcessor instance.
+
+    This factory function ensures that only one BackgroundProcessor exists
+    across the entire application lifecycle, preventing the issue where
+    local instances are created and destroyed in request handlers.
+
+    Args:
+        max_retries: Maximum retry attempts for failed tasks (default: 3)
+        retry_delay: Base delay in seconds between retries (default: 1.0)
+        chunk_size: Target chunk size for DocumentProcessor
+        chunk_overlap: Overlap between chunks for DocumentProcessor
+        vector_store: VectorStore instance for document storage
+        embedding_service: EmbeddingService instance for generating embeddings
+        maintenance_service: MaintenanceService instance for maintenance mode checks
+
+    Returns:
+        The singleton BackgroundProcessor instance
+    """
+    global _processor_instance
+    if _processor_instance is None:
+        _processor_instance = BackgroundProcessor(
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            vector_store=vector_store,
+            embedding_service=embedding_service,
+            maintenance_service=maintenance_service,
+        )
+        logger.info("Created singleton BackgroundProcessor instance")
+    return _processor_instance
+
+
+def reset_background_processor() -> None:
+    """Reset the singleton instance (for testing purposes)."""
+    global _processor_instance
+    if _processor_instance is not None and _processor_instance.is_running:
+        import asyncio
+        asyncio.create_task(_processor_instance.stop())
+    _processor_instance = None
+
 
 @dataclass
 class TaskItem:
@@ -101,12 +156,15 @@ class BackgroundProcessor:
         self._worker_task = asyncio.create_task(self._worker_loop())
         logger.info("Background processor started")
 
-    async def stop(self) -> None:
+    async def stop(self, timeout: float = 60.0) -> None:
         """
         Stop the background processor gracefully.
 
         Signals the worker to shut down and waits for it to complete.
-        Pending queue items are not processed after shutdown is initiated.
+        Pending queue items ARE processed before shutdown (up to timeout).
+
+        Args:
+            timeout: Maximum time to wait for graceful shutdown (default: 60 seconds)
         """
         if not self._running:
             logger.warning("Background processor is not running")
@@ -117,9 +175,9 @@ class BackgroundProcessor:
 
         if self._worker_task:
             try:
-                await asyncio.wait_for(self._worker_task, timeout=5.0)
+                await asyncio.wait_for(self._worker_task, timeout=timeout)
             except asyncio.TimeoutError:
-                logger.warning("Worker task did not stop gracefully, cancelling...")
+                logger.warning("Worker task did not stop gracefully within timeout, cancelling...")
                 self._worker_task.cancel()
                 try:
                     await self._worker_task
@@ -152,10 +210,15 @@ class BackgroundProcessor:
         """
         Main worker loop that processes items from the queue.
 
-        Continuously processes tasks until shutdown_event is set.
+        Continuously processes tasks until shutdown_event is set AND queue is empty.
+        Ensures all pending tasks are processed before shutdown.
         Handles retries with exponential backoff on failure.
         """
-        while not self.shutdown_event.is_set():
+        while True:
+            # Check if we should shutdown: shutdown_event is set AND queue is empty
+            if self.shutdown_event.is_set() and self.queue.empty():
+                break
+
             try:
                 # Wait for task with timeout to check shutdown periodically
                 task = await asyncio.wait_for(

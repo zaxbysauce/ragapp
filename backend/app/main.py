@@ -25,6 +25,7 @@ from app.services.embeddings import EmbeddingService
 from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
 from app.services.maintenance import MaintenanceService
+from app.services.background_tasks import get_background_processor
 from app.limiter import limiter
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.maintenance import MaintenanceMiddleware
@@ -52,8 +53,20 @@ async def lifespan(app: FastAPI):
         settings.enable_model_validation
         or app.state.toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
     )
+    # Initialize background processor as singleton (runs continuously)
+    app.state.background_processor = get_background_processor(
+        max_retries=3,
+        retry_delay=1.0,
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+        vector_store=app.state.vector_store,
+        embedding_service=app.state.embedding_service,
+        maintenance_service=app.state.maintenance_service,
+    )
+    await app.state.background_processor.start()
     yield
     # Shutdown: Close services
+    await app.state.background_processor.stop()
     await app.state.llm_client.close()
     app.state.vector_store.close()
 

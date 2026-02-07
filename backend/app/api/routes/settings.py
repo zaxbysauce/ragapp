@@ -124,13 +124,55 @@ def _apply_settings_update(update: SettingsUpdate) -> SettingsResponse:
             updated = True
     if not updated:
         raise HTTPException(status_code=400, detail="No valid fields provided for update")
-    return SettingsResponse.model_validate(settings)
+    # Convert settings object to dict for validation
+    settings_dict = {
+        "port": settings.port,
+        "data_dir": str(settings.data_dir),
+        "ollama_embedding_url": settings.ollama_embedding_url,
+        "ollama_chat_url": settings.ollama_chat_url,
+        "embedding_model": settings.embedding_model,
+        "chat_model": settings.chat_model,
+        "chunk_size": settings.chunk_size,
+        "chunk_overlap": settings.chunk_overlap,
+        "max_context_chunks": settings.max_context_chunks,
+        "rag_relevance_threshold": settings.rag_relevance_threshold,
+        "vector_top_k": settings.vector_top_k,
+        "maintenance_mode": settings.maintenance_mode,
+        "auto_scan_enabled": settings.auto_scan_enabled,
+        "auto_scan_interval_minutes": settings.auto_scan_interval_minutes,
+        "enable_model_validation": settings.enable_model_validation,
+        "max_file_size_mb": settings.max_file_size_mb,
+        "allowed_extensions": settings.allowed_extensions,
+        "backend_cors_origins": settings.backend_cors_origins,
+    }
+    return SettingsResponse.model_validate(settings_dict)
 
 
 @router.get("/settings", response_model=SettingsResponse)
 def get_settings():
     """Get public settings - excludes secrets like admin_secret_token."""
-    return SettingsResponse.model_validate(settings)
+    # Convert settings object to dict for validation
+    settings_dict = {
+        "port": settings.port,
+        "data_dir": str(settings.data_dir),
+        "ollama_embedding_url": settings.ollama_embedding_url,
+        "ollama_chat_url": settings.ollama_chat_url,
+        "embedding_model": settings.embedding_model,
+        "chat_model": settings.chat_model,
+        "chunk_size": settings.chunk_size,
+        "chunk_overlap": settings.chunk_overlap,
+        "max_context_chunks": settings.max_context_chunks,
+        "rag_relevance_threshold": settings.rag_relevance_threshold,
+        "vector_top_k": settings.vector_top_k,
+        "maintenance_mode": settings.maintenance_mode,
+        "auto_scan_enabled": settings.auto_scan_enabled,
+        "auto_scan_interval_minutes": settings.auto_scan_interval_minutes,
+        "enable_model_validation": settings.enable_model_validation,
+        "max_file_size_mb": settings.max_file_size_mb,
+        "allowed_extensions": settings.allowed_extensions,
+        "backend_cors_origins": settings.backend_cors_origins,
+    }
+    return SettingsResponse.model_validate(settings_dict)
 
 
 @router.post("/settings")
