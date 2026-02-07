@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Any, Optional, Union
+from typing import List, Any, Optional
 
 from unstructured.partition.auto import partition
 
@@ -280,15 +280,20 @@ class DocumentProcessor:
         elements = await asyncio.to_thread(self.parser.parse, file_path)
         return await asyncio.to_thread(self.chunker.chunk_elements, elements)
 
-    async def _process_file_async(self, file_path: str) -> ProcessedDocument:
+    async def process_file(self, file_path: str) -> ProcessedDocument:
         """
-        Internal async implementation of file processing.
+        Process a file with status tracking and deduplication.
 
         Args:
             file_path: Path to the file to process
 
         Returns:
             ProcessedDocument containing file_id and chunks
+
+        Raises:
+            FileNotFoundError: If the file does not exist
+            DuplicateFileError: If a file with the same hash is already indexed
+            DocumentParseError: If parsing fails
         """
         # Validate file exists
         path = Path(file_path)
@@ -374,39 +379,6 @@ class DocumentProcessor:
 
         finally:
             conn.close()
-
-    def process_file(self, file_path: str):
-        """
-        Process a file with status tracking and deduplication.
-
-        This method can be called from both sync and async contexts.
-        When called from a sync context (like unit tests), it will run
-        the async operations using asyncio.run().
-        When called from an async context, it returns a coroutine that
-        should be awaited.
-
-        Args:
-            file_path: Path to the file to process
-
-        Returns:
-            ProcessedDocument when called from sync context, or a coroutine
-            that resolves to ProcessedDocument when called from async context.
-
-        Raises:
-            FileNotFoundError: If the file does not exist
-            DuplicateFileError: If a file with the same hash is already indexed
-            DocumentParseError: If parsing fails
-        """
-        try:
-            # Check if we're in an async context (event loop is running)
-            loop = asyncio.get_running_loop()
-            # We're in an async context - return the coroutine
-            # The caller must await this
-            return self._process_file_async(file_path)
-        except RuntimeError:
-            # No event loop running - we're in a sync context
-            # Use asyncio.run() to execute the async code synchronously
-            return asyncio.run(self._process_file_async(file_path))
 
 
 class DocumentParser:

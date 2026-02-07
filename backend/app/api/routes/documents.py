@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
 
 from app.models.database import get_db_connection
@@ -301,7 +302,7 @@ async def get_document_stats():
 
 @router.post("", response_model=UploadResponse)
 @router.post("/", response_model=UploadResponse)
-async def upload_document_root(request: Request, file: UploadFile = File(...)):
+async def upload_document_root(request: Request, file: Optional[UploadFile] = None):
     """
     Upload endpoint at root /documents for frontend compatibility.
     Delegates to the main upload handler.
@@ -310,7 +311,7 @@ async def upload_document_root(request: Request, file: UploadFile = File(...)):
 
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload_document(request: Request, file: UploadFile = File(...)):
+async def upload_document(request: Request, file: Optional[UploadFile] = None):
     """
     Upload a file and process it with strict security controls.
     
@@ -318,6 +319,14 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
     Saves the uploaded file to settings.uploads_dir using aiofiles,
     then processes it via DocumentProcessor.process_file in asyncio.to_thread.
     """
+    # Validate file is provided
+    if file is None:
+        raise HTTPException(status_code=400, detail="No file provided")
+    
+    # Validate filename is not empty
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename cannot be empty")
+    
     # Ensure uploads directory exists
     uploads_dir = settings.uploads_dir
     uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -325,7 +334,11 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
     # Sanitize filename
     file_name = secure_filename(file.filename or "unnamed_file")
     if not file_name:
-        raise HTTPException(status_code=400, detail="Invalid filename")
+        file_name = "unnamed_file.txt"
+
+    # Ensure file has an extension for validation
+    if not Path(file_name).suffix:
+        file_name = f"{file_name}.txt"
     
     # Validate file extension
     file_suffix = Path(file_name).suffix.lower()
@@ -412,11 +425,11 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
             logger.exception("Unexpected error processing file: %s", file_name)
             raise HTTPException(status_code=500, detail=f"Server error: {e}")
             
-    except HTTPException:
-        # Clean up partial file if it exists
-        if temp_file_path and temp_file_path.exists():
-            temp_file_path.unlink(missing_ok=True)
-        raise
+        except HTTPException:
+            # Clean up partial file if it exists
+            if temp_file_path and temp_file_path.exists():
+                temp_file_path.unlink(missing_ok=True)
+            raise
     except Exception as e:
         logger.exception("Error uploading file: %s", file_name)
         # Clean up file if it was created
@@ -535,3 +548,16 @@ async def delete_document(
         raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
     finally:
         conn.close()
+
+
+# Exception handler for validation errors (e.g., empty filename)
+# This is registered at the app level in main.py
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Convert validation errors to 400 for empty filename cases."""
+    errors = exc.errors()
+    for error in errors:
+        if error.get("loc") == ("body", "file") and "filename" in str(error.get("input", "")).lower():
+            raise HTTPException(status_code=400, detail="Filename cannot be empty")
+    # Re-raise as 400 for any validation error
+    raise HTTPException(status_code=400, detail="Invalid request")
+

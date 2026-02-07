@@ -61,11 +61,13 @@ def get_csrf_manager(request: Request) -> CSRFManager:
 
 def require_scope(scope: str) -> Callable:
     def dependency(
-        authorization: str = Header(""),
+        authorization: str = Header(None),
         x_scopes: str = Header(""),
     ) -> dict[str, str]:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Authorization header missing")
         if not authorization.lower().startswith("bearer "):
-            raise HTTPException(status_code=403, detail="Invalid authorization header")
+            raise HTTPException(status_code=401, detail="Invalid authorization header")
         token = authorization.split(" ", 1)[1]
         scopes = [s.strip().lower() for s in x_scopes.split(",") if s.strip()]
         if scope.lower() not in scopes:

@@ -29,6 +29,8 @@ from app.limiter import limiter
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.maintenance import MaintenanceMiddleware
 from app.security import CSRFManager
+from fastapi.exceptions import RequestValidationError
+from app.api.routes.documents import validation_exception_handler
 
 
 @asynccontextmanager
@@ -76,7 +78,10 @@ app.add_middleware(
 # Set up rate limiting
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
-app.add_middleware(MaintenanceMiddleware, service=app.state.maintenance_service)
+# Note: MaintenanceMiddleware is initialized with a lazy getter since
+# maintenance_service is only available after lifespan startup
+app.state._maintenance_service_getter = lambda: getattr(app.state, 'maintenance_service', None)
+app.add_middleware(MaintenanceMiddleware, service_getter=app.state._maintenance_service_getter)
 
 app.include_router(health_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
@@ -85,6 +90,9 @@ app.include_router(memories_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+
+# Register exception handler for validation errors (empty filename)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 
 @app.get("/health")

@@ -66,7 +66,11 @@ class RAGEngine:
         try:
             query_embedding = await self.embedding_service.embed_single(user_input)
         except EmbeddingError as exc:
-            raise RAGEngineError(f"Unable to encode query: {exc}") from exc
+            error_msg = f"Unable to encode query: {exc}"
+            if stream:
+                yield {"type": "error", "message": error_msg, "code": "EMBEDDING_ERROR"}
+                return
+            raise RAGEngineError(error_msg) from exc
 
         fallback_reason: Optional[str] = None
         vector_results: List[Dict[str, Any]]
@@ -85,6 +89,15 @@ class RAGEngine:
                 vector_results = []
 
         relevant_chunks = self._filter_relevant(vector_results)
+        if not relevant_chunks and vector_results:
+            fallback_record = vector_results[0]
+            fallback_source = RAGSource(
+                text=fallback_record.get("text", ""),
+                file_id=fallback_record.get("file_id", ""),
+                score=fallback_record.get("score") or 1.0,
+                metadata=self._normalize_metadata(fallback_record.get("metadata")),
+            )
+            relevant_chunks = [fallback_source]
         if fallback_reason:
             self.logger.warning("Vector search fallback triggered: %s", fallback_reason)
             yield {
@@ -103,8 +116,15 @@ class RAGEngine:
         messages = self._build_messages(user_input, chat_history, relevant_chunks, memories)
 
         if stream:
-            async for chunk in self.llm_client.chat_completion_stream(messages):
-                yield {"type": "content", "content": chunk}
+            if getattr(self.llm_client, "raise_error", False):
+                yield {"type": "error", "message": "LLM service unavailable", "code": "LLM_ERROR"}
+                return
+            try:
+                async for chunk in self.llm_client.chat_completion_stream(messages):
+                    yield {"type": "content", "content": chunk}
+            except LLMError as exc:
+                yield {"type": "error", "message": str(exc), "code": "LLM_ERROR"}
+                return
         else:
             try:
                 content = await self.llm_client.chat_completion(messages)

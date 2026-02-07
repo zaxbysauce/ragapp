@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_rag_engine
-from app.services.rag_engine import RAGEngine
+from app.services.rag_engine import RAGEngine, RAGEngineError
 
 
 router = APIRouter()
@@ -77,13 +77,14 @@ def stream_chat_response(
                 if chunk_type == "content":
                     content = chunk.get("content", "")
                     collected_content.append(content)
-                    # Yield content chunk as SSE event
                     yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                elif chunk_type == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'message': chunk.get('message', 'Chat stream failed'), 'code': chunk.get('code', 'UNKNOWN_ERROR')})}\n\n"
+                    return
                 elif chunk_type == "done":
                     sources = chunk.get("sources", [])
                     memories_used = chunk.get("memories_used", [])
         except Exception as e:
-            # Log error with sanitized context (no traceback to avoid data leakage)
             logger.error(
                 "Chat stream failed: message_len=%d, history_len=%d, exception=%s, error=%s",
                 len(message),
@@ -92,7 +93,6 @@ def stream_chat_response(
                 str(e),
                 exc_info=False
             )
-            # Emit error event and terminate immediately to avoid additional events
             yield f"data: {json.dumps({'type': 'error', 'message': 'An error occurred while processing your request', 'code': 'INTERNAL_ERROR'})}\n\n"
             return
         
@@ -126,14 +126,17 @@ async def non_stream_chat_response(
     sources = []
     memories_used = []
 
-    async for chunk in rag_engine.query(message, history, stream=False):
-        chunk_type = chunk.get("type")
-        
-        if chunk_type == "content":
-            collected_content.append(chunk.get("content", ""))
-        elif chunk_type == "done":
-            sources = chunk.get("sources", [])
-            memories_used = chunk.get("memories_used", [])
+    try:
+        async for chunk in rag_engine.query(message, history, stream=False):
+            chunk_type = chunk.get("type")
+            
+            if chunk_type == "content":
+                collected_content.append(chunk.get("content", ""))
+            elif chunk_type == "done":
+                sources = chunk.get("sources", [])
+                memories_used = chunk.get("memories_used", [])
+    except RAGEngineError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     
     full_content = "".join(collected_content)
     
