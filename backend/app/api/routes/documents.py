@@ -418,18 +418,17 @@ async def upload_document(request: Request, file: Optional[UploadFile] = None):
             # File is a duplicate, remove the uploaded file
             file_path.unlink(missing_ok=True)
             raise HTTPException(status_code=409, detail=f"{e} (uploaded file was cleaned up)")
+        except HTTPException:
+            # Clean up partial file if it exists
+            if temp_file_path and temp_file_path.exists():
+                temp_file_path.unlink(missing_ok=True)
+            raise
         except DocumentProcessingError as e:
             logger.exception("Document processing error for file: %s", file_name)
             raise HTTPException(status_code=500, detail=f"Processing error: {e}")
         except Exception as e:
             logger.exception("Unexpected error processing file: %s", file_name)
             raise HTTPException(status_code=500, detail=f"Server error: {e}")
-            
-        except HTTPException:
-            # Clean up partial file if it exists
-            if temp_file_path and temp_file_path.exists():
-                temp_file_path.unlink(missing_ok=True)
-            raise
     except Exception as e:
         logger.exception("Error uploading file: %s", file_name)
         # Clean up file if it was created
@@ -510,15 +509,15 @@ async def delete_document(
         file_name = row["file_name"]
         
         try:
-            # Delete from vector store first
+            # Delete from vector store first (wrapped in to_thread to avoid blocking)
             vector_store = VectorStore()
             try:
-                vector_store.connect()
+                await asyncio.to_thread(vector_store.connect)
                 # Check if chunks table exists before attempting deletion
                 db = vector_store.db
                 if db is not None and "chunks" in db.table_names():
                     vector_store.table = db.open_table("chunks")
-                    deleted_chunks = vector_store.delete_by_file(str(file_id))
+                    deleted_chunks = await asyncio.to_thread(vector_store.delete_by_file, str(file_id))
                     logger.info("Deleted %d chunks from vector store for file_id %s", deleted_chunks, file_id)
                 else:
                     logger.debug("Chunks table not found, skipping vector store deletion for file_id %s", file_id)
@@ -526,10 +525,10 @@ async def delete_document(
                 logger.warning("Error deleting chunks from vector store: %s", e)
                 # Continue with database deletion even if vector store fails
             finally:
-                vector_store.close()
+                await asyncio.to_thread(vector_store.close)
             
-            # Delete from database
-            conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            # Delete from database (wrapped in to_thread to avoid blocking)
+            await asyncio.to_thread(conn.execute, "DELETE FROM files WHERE id = ?", (file_id,))
             _record_document_action(
                 file_id,
                 "delete",
@@ -537,7 +536,7 @@ async def delete_document(
                 auth.get("user_id", "unknown"),
                 secret_manager,
             )
-            conn.commit()
+            await asyncio.to_thread(conn.commit)
             
             return DeleteResponse(
                 file_id=file_id,
@@ -545,7 +544,7 @@ async def delete_document(
                 message=f"Document '{file_name}' (id: {file_id}) deleted successfully",
             )
         except Exception:
-            conn.rollback()
+            await asyncio.to_thread(conn.rollback)
             raise
     except HTTPException:
         raise

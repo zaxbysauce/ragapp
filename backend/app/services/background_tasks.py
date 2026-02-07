@@ -168,7 +168,18 @@ class BackgroundProcessor:
             if task is None:
                 continue
 
+            await self._process_task_wrapper(task)
+
+    async def _process_task_wrapper(self, task: TaskItem) -> None:
+        """
+        Wrapper for _process_task that ensures task_done() is always called.
+        
+        This wrapper guarantees queue.task_done() is called even if _process_task
+        raises an exception or continues early.
+        """
+        try:
             await self._process_task(task)
+        finally:
             self.queue.task_done()
 
     async def _process_task(self, task: TaskItem) -> None:
