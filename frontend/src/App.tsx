@@ -1568,24 +1568,30 @@ function SettingsPageContent() {
             <Card>
               <CardHeader>
                 <CardTitle>AI Configuration</CardTitle>
-                <CardDescription>Configure AI model and behavior</CardDescription>
+                <CardDescription>Configure AI model and behavior (read-only, set via environment variables)</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Model</label>
+                  <label className="text-sm font-medium">Chat Model</label>
                   <Input
-                    value={settings?.model || "gpt-4"}
+                    value={settings?.chat_model || "Not configured"}
                     readOnly
                     className="bg-muted"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    LLM model used for chat responses (set via CHAT_MODEL env var)
+                  </p>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Temperature</label>
+                  <label className="text-sm font-medium">Embedding Model</label>
                   <Input
-                    value={String(settings?.temperature ?? "0.7")}
+                    value={settings?.embedding_model || "Not configured"}
                     readOnly
                     className="bg-muted"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Model used for document embeddings (set via EMBEDDING_MODEL env var)
+                  </p>
                 </div>
               </CardContent>
             </Card>
