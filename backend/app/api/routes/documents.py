@@ -439,7 +439,7 @@ async def upload_document(request: Request, file: Optional[UploadFile] = None):
 
 
 @router.post("/scan", response_model=ScanResponse)
-async def scan_directories():
+async def scan_directories(request: Request):
     """
     Trigger a scan of configured directories for new files.
     
@@ -449,7 +449,13 @@ async def scan_directories():
     from app.services.file_watcher import FileWatcher
     from app.services.background_tasks import BackgroundProcessor
     
-    processor = BackgroundProcessor()
+    processor = BackgroundProcessor(
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+        vector_store=getattr(request.app.state, "vector_store", None),
+        embedding_service=getattr(request.app.state, "embedding_service", None),
+        maintenance_service=getattr(request.app.state, "maintenance_service", None),
+    )
     try:
         await processor.start()
         watcher = FileWatcher(processor)
