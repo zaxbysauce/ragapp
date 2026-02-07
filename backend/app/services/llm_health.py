@@ -76,6 +76,7 @@ class LLMHealthChecker:
         try:
             # Create LLM client with short timeout for health check
             client = LLMClient(timeout=self.timeout)
+            await client.start()
             
             try:
                 # Attempt a simple chat completion

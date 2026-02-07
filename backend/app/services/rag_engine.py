@@ -54,14 +54,17 @@ class RAGEngine:
         stream: bool = False,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Execute a RAG query: embed, search, build prompt, call LLM."""
-        memory_content = self.memory_store.detect_memory_intent(user_input)
-        if memory_content:
-            memory = self.memory_store.add_memory(memory_content, source="chat")
-            yield {
-                "type": "content",
-                "content": f"Memory stored: {memory.content}",
-            }
-            return
+        try:
+            memory_content = self.memory_store.detect_memory_intent(user_input)
+            if memory_content:
+                memory = self.memory_store.add_memory(memory_content, source="chat")
+                yield {
+                    "type": "content",
+                    "content": f"Memory stored: {memory.content}",
+                }
+                return
+        except Exception as exc:
+            self.logger.error("Memory intent detection/add failed: %s", exc)
 
         try:
             query_embedding = await self.embedding_service.embed_single(user_input)
@@ -107,11 +110,15 @@ class RAGEngine:
                 "total": 0,
                 "fallback": True,
             }
-        memories = await asyncio.to_thread(
-            self.memory_store.search_memories,
-            user_input,
-            settings.max_context_chunks,
-        )
+        try:
+            memories = await asyncio.to_thread(
+                self.memory_store.search_memories,
+                user_input,
+                settings.max_context_chunks,
+            )
+        except Exception as exc:
+            self.logger.error("Memory search failed: %s", exc)
+            memories = []
 
         messages = self._build_messages(user_input, chat_history, relevant_chunks, memories)
 
@@ -147,7 +154,8 @@ class RAGEngine:
                 parsed = json.loads(metadata)
                 if isinstance(parsed, dict):
                     return parsed
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as exc:
+                self.logger.warning("Failed to parse metadata JSON: %s", exc)
                 pass
         return {}
 

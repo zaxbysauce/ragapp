@@ -59,7 +59,3 @@ def get_toggle_manager(request: Request) -> ToggleManager:
 
 def get_secret_manager(request: Request) -> SecretManager:
     return request.app.state.secret_manager
-
-
-def get_csrf_manager(request: Request):
-    return request.app.state.csrf_manager

@@ -59,6 +59,7 @@ class CSRFManager:
         self._redis: redis.Redis | None = None
         self._fallback_store: _InMemoryCSRFStore | None = None
         self._use_fallback = False
+        self._lock = threading.Lock()
 
         try:
             self._redis = redis.from_url(redis_url, decode_responses=True)
@@ -79,16 +80,17 @@ class CSRFManager:
 
     def _check_redis_available(self) -> bool:
         """Check if Redis is available, switch back from fallback if recovered."""
-        if self._use_fallback and self._redis:
-            try:
-                self._redis.ping()
-                logger.info("Redis recovered, switching from in-memory fallback to Redis")
-                self._use_fallback = False
-                self._fallback_store = None
-                return True
-            except redis.RedisError:
-                pass
-        return not self._use_fallback
+        with self._lock:
+            if self._use_fallback and self._redis:
+                try:
+                    self._redis.ping()
+                    logger.info("Redis recovered, switching from in-memory fallback to Redis")
+                    self._use_fallback = False
+                    self._fallback_store = None
+                    return True
+                except redis.RedisError:
+                    pass
+            return not self._use_fallback
 
     def generate_token(self) -> str:
         self._check_redis_available()
@@ -97,8 +99,8 @@ class CSRFManager:
         key = f"csrf:{token}"
         try:
             store.setex(key, self.ttl, "1")
-        except redis.RedisError as exc:
-            logger.error("Redis error during token generation: %s", exc)
+        except Exception as exc:
+            logger.error("Storage error during token generation: %s", exc)
             raise HTTPException(status_code=503, detail="CSRF storage unavailable")
         return token
 
@@ -110,13 +112,13 @@ class CSRFManager:
         key = f"csrf:{token}"
         try:
             exists = store.get(key)
-        except redis.RedisError as exc:
-            logger.error("Redis error during token validation: %s", exc)
+        except Exception as exc:
+            logger.error("Storage error during token validation: %s", exc)
             raise HTTPException(status_code=503, detail="CSRF storage unavailable")
         if exists:
             try:
                 store.expire(key, self.ttl)
-            except redis.RedisError:
+            except Exception:
                 logger.warning("Failed to extend CSRF token TTL")
             return True
         return False
@@ -125,7 +127,7 @@ class CSRFManager:
         store = self._get_store()
         try:
             store.delete(f"csrf:{token}")
-        except redis.RedisError:
+        except Exception:
             logger.warning("Failed to revoke CSRF token (storage error)")
 
 
