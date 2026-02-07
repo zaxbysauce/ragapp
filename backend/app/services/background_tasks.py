@@ -140,8 +140,10 @@ class BackgroundProcessor:
             If the processor is not running, the item will still be queued
             and processed when start() is called.
         """
-        if self.maintenance_service and self.maintenance_service.get_flag().enabled:
-            raise DocumentProcessingError("Maintenance mode prevents enqueueing")
+        if self.maintenance_service:
+            flag = self.maintenance_service.get_flag()
+            if flag and flag.enabled:
+                raise DocumentProcessingError("Maintenance mode prevents enqueueing")
         task = TaskItem(file_path=file_path, attempt=1)
         await self.queue.put(task)
         logger.debug(f"Enqueued file: {file_path}")
