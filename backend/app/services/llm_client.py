@@ -17,12 +17,12 @@ class LLMError(Exception):
 class LLMClient:
     """OpenAI-compatible LLM chat client."""
     
-    def __init__(self, timeout: float = 60.0):
+    def __init__(self, timeout: float = 300.0):
         """
         Initialize the LLM client.
         
         Args:
-            timeout: Request timeout in seconds (default: 60.0)
+            timeout: Request timeout in seconds (default: 300.0 for model loading)
         """
         self.base_url = settings.ollama_chat_url.rstrip("/")
         self.model = settings.chat_model
