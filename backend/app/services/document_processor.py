@@ -48,6 +48,55 @@ class DocumentProcessingError(Exception):
     pass
 
 
+class DocumentParseError(Exception):
+    """Exception raised when document parsing fails."""
+    pass
+
+
+class DocumentParser:
+    """
+    Parser for extracting text elements from documents using unstructured.io.
+    
+    Supports various formats: PDF, DOCX, TXT, HTML, and more.
+    Uses hi_res strategy for optimal extraction quality.
+    """
+    
+    def parse(self, file_path: str) -> List[Any]:
+        """
+        Parse a document and extract text elements.
+        
+        Args:
+            file_path: Path to the document file to parse.
+            
+        Returns:
+            List of extracted text elements from the document.
+            
+        Raises:
+            FileNotFoundError: If the specified file does not exist.
+            DocumentParseError: If parsing fails for any reason.
+        """
+        # Validate file exists
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Document file not found: {file_path}")
+        
+        if not path.is_file():
+            raise FileNotFoundError(f"Path is not a file: {file_path}")
+        
+        try:
+            # Use unstructured with hi_res strategy for best extraction quality
+            elements = partition(
+                filename=str(path),
+                strategy="hi_res"
+            )
+            return elements
+        except Exception as e:
+            # Wrap exceptions with clear, actionable message
+            raise DocumentParseError(
+                f"Failed to parse document '{file_path}': {str(e)}"
+            ) from e
+
+
 class DocumentProcessor:
     """
     Orchestrates document processing with status tracking and deduplication.
@@ -379,52 +428,3 @@ class DocumentProcessor:
 
         finally:
             conn.close()
-
-
-class DocumentParser:
-    """
-    Parser for extracting text elements from documents using unstructured.io.
-    
-    Supports various formats: PDF, DOCX, TXT, HTML, and more.
-    Uses hi_res strategy for optimal extraction quality.
-    """
-    
-    def parse(self, file_path: str) -> List[Any]:
-        """
-        Parse a document and extract text elements.
-        
-        Args:
-            file_path: Path to the document file to parse.
-            
-        Returns:
-            List of extracted text elements from the document.
-            
-        Raises:
-            FileNotFoundError: If the specified file does not exist.
-            DocumentParseError: If parsing fails for any reason.
-        """
-        # Validate file exists
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Document file not found: {file_path}")
-        
-        if not path.is_file():
-            raise FileNotFoundError(f"Path is not a file: {file_path}")
-        
-        try:
-            # Use unstructured with hi_res strategy for best extraction quality
-            elements = partition(
-                filename=str(path),
-                strategy="hi_res"
-            )
-            return elements
-        except Exception as e:
-            # Wrap exceptions with clear, actionable message
-            raise DocumentParseError(
-                f"Failed to parse document '{file_path}': {str(e)}"
-            ) from e
-
-
-class DocumentParseError(Exception):
-    """Exception raised when document parsing fails."""
-    pass
