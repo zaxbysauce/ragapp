@@ -1591,19 +1591,15 @@ function SettingsPageContent() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="appearance">
-            <Card>
-              <CardHeader>
-                <CardTitle>Appearance</CardTitle>
-                <CardDescription>Customize the look and feel</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground text-sm">Appearance settings coming soon.</p>
-              </CardContent>
-            </Card>
-          </TabsContent>
+
 
           <TabsContent value="advanced" className="space-y-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-3 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <p className="text-sm text-amber-800 dark:text-amber-200">
+                Note: Settings updates apply to the running session only.
+              </p>
+            </div>
             <Card>
               <CardHeader>
                 <CardTitle>Advanced Settings</CardTitle>

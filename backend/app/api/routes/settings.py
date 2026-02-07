@@ -135,11 +135,21 @@ def get_settings():
 
 @router.post("/settings")
 def update_settings(update: SettingsUpdate):
+    """Update runtime settings.
+
+    NOTE: Changes are applied in-memory only and will be lost on server restart.
+    DB persistence is not yet implemented.
+    """
     return _apply_settings_update(update)
 
 
 @router.put("/settings")
 def update_settings_put(update: SettingsUpdate):
+    """Update runtime settings (PUT method).
+
+    NOTE: Changes are applied in-memory only and will be lost on server restart.
+    DB persistence is not yet implemented.
+    """
     return _apply_settings_update(update)
 
 
