@@ -101,7 +101,7 @@ class MemoryStore:
             try:
                 cursor = conn.execute(
                     """
-                    SELECT m.id, m.content, m.category, m.tags, m.source, m.created_at, m.updated_at
+                    SELECT m.id, m.content, m.category, m.tags, m.source, m.created_at, m.updated_at, f.rank
                     FROM memories_fts f
                     JOIN memories m ON f.rowid = m.id
                     WHERE memories_fts MATCH ?
@@ -118,17 +118,18 @@ class MemoryStore:
 
         records: List[MemoryRecord] = []
         for row in rows:
-            records.append(
-                MemoryRecord(
-                    id=row[0],
-                    content=row[1],
-                    category=row[2],
-                    tags=row[3],
-                    source=row[4],
-                    created_at=row[5],
-                    updated_at=row[6],
-                )
+            record = MemoryRecord(
+                id=row[0],
+                content=row[1],
+                category=row[2],
+                tags=row[3],
+                source=row[4],
+                created_at=row[5],
+                updated_at=row[6],
             )
+            # Attach score as an attribute (not part of dataclass but accessible)
+            record.score = row[7]
+            records.append(record)
         return records
 
     def detect_memory_intent(self, text: str) -> Optional[str]:
