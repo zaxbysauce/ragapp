@@ -33,17 +33,39 @@ export interface ConnectionTestResult {
 }
 
 export interface SettingsResponse {
-  app_name?: string;
-  default_language?: string;
-  model?: string;
-  temperature?: number;
-  chunk_size?: number;
-  chunk_overlap?: number;
-  max_context_chunks?: number;
-  auto_scan_enabled?: boolean;
-  auto_scan_interval_minutes?: number;
-  rag_relevance_threshold?: number;
-  [key: string]: unknown;
+  // Server config
+  port: number;
+  data_dir: string;
+
+  // Ollama config
+  ollama_embedding_url: string;
+  ollama_chat_url: string;
+
+  // Model config
+  embedding_model: string;
+  chat_model: string;
+
+  // Document processing (user-configurable)
+  chunk_size: number;
+  chunk_overlap: number;
+  max_context_chunks: number;
+
+  // RAG config (user-configurable)
+  rag_relevance_threshold: number;
+  vector_top_k: number;
+
+  // Feature flags
+  maintenance_mode: boolean;
+  auto_scan_enabled: boolean;
+  auto_scan_interval_minutes: number;
+  enable_model_validation: boolean;
+
+  // Limits
+  max_file_size_mb: number;
+  allowed_extensions: string[];
+
+  // CORS
+  backend_cors_origins: string[];
 }
 
 export interface UpdateSettingsRequest {

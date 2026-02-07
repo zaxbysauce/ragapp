@@ -71,7 +71,50 @@ ALLOWED_FIELDS = [
 ]
 
 
-def _apply_settings_update(update: SettingsUpdate) -> dict:
+class SettingsResponse(BaseModel):
+    """Public settings response - excludes secrets."""
+
+    # Server config (safe to expose)
+    port: int
+    data_dir: str
+
+    # Ollama config
+    ollama_embedding_url: str
+    ollama_chat_url: str
+
+    # Model config
+    embedding_model: str
+    chat_model: str
+
+    # Document processing (user-configurable)
+    chunk_size: int
+    chunk_overlap: int
+    max_context_chunks: int
+
+    # RAG config (user-configurable)
+    rag_relevance_threshold: float
+    vector_top_k: int
+
+    # Feature flags
+    maintenance_mode: bool
+    auto_scan_enabled: bool
+    auto_scan_interval_minutes: int
+    enable_model_validation: bool
+
+    # Limits (safe to expose)
+    max_file_size_mb: int
+    allowed_extensions: list[str]
+
+    # CORS (safe to expose)
+    backend_cors_origins: list[str]
+
+    @field_validator("data_dir", mode="before")
+    @classmethod
+    def convert_path_to_str(cls, v):
+        return str(v)
+
+
+def _apply_settings_update(update: SettingsUpdate) -> SettingsResponse:
     """Shared logic to apply settings update and return updated settings."""
     updated = False
     for field in ALLOWED_FIELDS:
@@ -81,12 +124,13 @@ def _apply_settings_update(update: SettingsUpdate) -> dict:
             updated = True
     if not updated:
         raise HTTPException(status_code=400, detail="No valid fields provided for update")
-    return settings.model_dump()
+    return SettingsResponse.model_validate(settings)
 
 
-@router.get("/settings")
+@router.get("/settings", response_model=SettingsResponse)
 def get_settings():
-    return settings.model_dump()
+    """Get public settings - excludes secrets like admin_secret_token."""
+    return SettingsResponse.model_validate(settings)
 
 
 @router.post("/settings")
