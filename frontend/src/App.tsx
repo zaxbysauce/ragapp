@@ -1529,40 +1529,11 @@ function SettingsPageContent() {
       )}
 
       {!loading && !error && (
-        <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full max-w-lg grid-cols-4">
-            <TabsTrigger value="general">General</TabsTrigger>
+        <Tabs defaultValue="ai" className="w-full">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
             <TabsTrigger value="ai">AI</TabsTrigger>
-            <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="advanced">Advanced</TabsTrigger>
           </TabsList>
-
-          <TabsContent value="general" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>General Settings</CardTitle>
-                <CardDescription>Basic application configuration</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Application Name</label>
-                  <Input
-                    value={settings?.app_name || "KnowledgeVault"}
-                    readOnly
-                    className="bg-muted"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Default Language</label>
-                  <Input
-                    value={settings?.default_language || "English"}
-                    readOnly
-                    className="bg-muted"
-                  />
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
 
           <TabsContent value="ai">
             <Card>
