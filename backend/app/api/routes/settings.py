@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
@@ -106,4 +107,29 @@ def get_csrf_token(
     token = issue_csrf_token(response, csrf_manager)
     return {"csrf_token": token}
 
+
+@router.get("/settings/connection")
+async def test_connection():
+    targets = {
+        "embeddings": settings.ollama_embedding_url,
+        "chat": settings.ollama_chat_url,
+    }
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        results = {}
+        for name, url in targets.items():
+            try:
+                response = await client.get(url)
+                results[name] = {
+                    "url": url,
+                    "status": response.status_code,
+                    "ok": response.status_code < 300,
+                }
+            except Exception as exc:
+                results[name] = {
+                    "url": url,
+                    "status": None,
+                    "ok": False,
+                    "error": str(exc),
+                }
+    return results
 

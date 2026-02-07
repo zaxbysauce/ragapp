@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { MessageSquare, FileText, Brain, Plus, Upload, Search, Trash2, ChevronDown, ChevronRight, ScanLine, AlertCircle, CheckCircle, Clock, Loader2, Server, Cpu, MessageCircle } from "lucide-react";
-import { getSettings, updateSettings, chatStream, listDocuments, uploadDocument, scanDocuments, getDocumentStats, searchMemories, addMemory, deleteMemory, getHealth, getChatHistory, type ChatMessage, type Source, type Document, type DocumentStatsResponse, type MemoryResult, type ChatHistoryItem } from "@/lib/api";
+import { getSettings, updateSettings, chatStream, listDocuments, uploadDocument, scanDocuments, getDocumentStats, searchMemories, addMemory, deleteMemory, getHealth, testConnections, getChatHistory, type ChatMessage, type Source, type Document, type DocumentStatsResponse, type MemoryResult, type ChatHistoryItem, type ConnectionTestResult } from "@/lib/api";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useChatStore, type Message } from "@/stores/useChatStore";
 import { useSettingsStore } from "@/stores/useSettingsStore";
@@ -1342,6 +1342,24 @@ function SettingsPageWithStatus({ health }: { health: HealthStatus }) {
     return `Last checked: ${date.toLocaleTimeString()}`;
   };
 
+  const [connectionResult, setConnectionResult] = useState<ConnectionTestResult | null>(null);
+  const [isTestingConnections, setIsTestingConnections] = useState(false);
+
+  const handleConnectionTest = async () => {
+    setIsTestingConnections(true);
+    try {
+      const result = await testConnections();
+      setConnectionResult(result);
+      toast.success("Connection test completed");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Connection test failed";
+      toast.error(message);
+      setConnectionResult(null);
+    } finally {
+      setIsTestingConnections(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <div className="flex items-center justify-between">
@@ -1352,6 +1370,22 @@ function SettingsPageWithStatus({ health }: { health: HealthStatus }) {
         <div className="flex flex-col items-end gap-1">
           <ConnectionStatusBadges health={health} />
           <span className="text-xs text-muted-foreground">{formatLastChecked(health.lastChecked)}</span>
+          <Button size="sm" variant="outline" onClick={handleConnectionTest} disabled={isTestingConnections}>
+            {isTestingConnections ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              "Test Connections"
+            )}
+          </Button>
+          {connectionResult && (
+            <div className="flex gap-2">
+              {Object.entries(connectionResult).map(([service, info]) => (
+                <Badge key={service} variant={info.ok ? "outline" : "destructive"} className="text-xs">
+                  {service}: {info.ok ? "OK" : "Fail"}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <SettingsPageContent />

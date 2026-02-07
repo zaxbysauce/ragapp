@@ -1,9 +1,14 @@
 """Unit tests for config Settings defaults."""
 
 import os
+import sys
 import unittest
 from pathlib import Path
-from backend.app.config import Settings
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from app.config import Settings
 
 
 class TestSettingsDefaults(unittest.TestCase):

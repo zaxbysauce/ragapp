@@ -34,10 +34,13 @@ class RAGEngine:
         vector_store: Optional[VectorStore] = None,
         memory_store: Optional[MemoryStore] = None,
         llm_client: Optional[LLMClient] = None,
+        vector_store_instance: Optional[VectorStore] = None,
+        memory_store_instance: Optional[MemoryStore] = None,
     ) -> None:
         self.embedding_service = embedding_service or EmbeddingService()
-        self.vector_store = vector_store or VectorStore()
-        self.memory_store = memory_store or MemoryStore()
+        # Support both naming conventions for backward compatibility with tests
+        self.vector_store = vector_store or vector_store_instance or VectorStore()
+        self.memory_store = memory_store or memory_store_instance or MemoryStore()
         self.llm_client = llm_client or LLMClient()
         self.relevance_threshold = settings.rag_relevance_threshold
         self.top_k = settings.vector_top_k

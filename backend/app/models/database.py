@@ -122,6 +122,15 @@ CREATE TABLE IF NOT EXISTS secret_keys (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     description TEXT
 );
+
+-- System flags for maintenance mode and feature toggles
+CREATE TABLE IF NOT EXISTS system_flags (
+    name TEXT PRIMARY KEY,
+    value INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 0,
+    reason TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 

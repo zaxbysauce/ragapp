@@ -3,10 +3,11 @@ FastAPI application with lifespan context manager.
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi.middleware import SlowAPIMiddleware
+from starlette.responses import Response
 
 from app.api.routes.admin import router as admin_router
 from app.api.routes.chat import router as chat_router
@@ -25,6 +26,7 @@ from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
 from app.services.maintenance import MaintenanceService
 from app.limiter import limiter
+from app.middleware.logging import LoggingMiddleware
 from app.middleware.maintenance import MaintenanceMiddleware
 from app.security import CSRFManager
 
@@ -48,10 +50,6 @@ async def lifespan(app: FastAPI):
         settings.enable_model_validation
         or app.state.toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
     )
-    app.state.model_validation = (
-        settings.enable_model_validation
-        or app.state.toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
-    )
     yield
     # Shutdown: Close services
     await app.state.llm_client.close()
@@ -66,6 +64,7 @@ app = FastAPI(
 )
 
 # Configure CORS
+app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.backend_cors_origins,
@@ -73,7 +72,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(SlowAPIMiddleware, limiter=limiter)
+
+# Set up rate limiting
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(MaintenanceMiddleware, service=app.state.maintenance_service)
 
 app.include_router(health_router, prefix="/api")
