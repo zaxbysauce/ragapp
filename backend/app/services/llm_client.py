@@ -31,7 +31,22 @@ class LLMClient:
     
     def start(self):
         """Start the HTTP client. Must be called before using the client."""
-        self._client = httpx.AsyncClient(timeout=self.timeout)
+        # Configure limits for connection pooling with keep-alive
+        limits = httpx.Limits(
+            max_keepalive_connections=5,
+            max_connections=10,
+            keepalive_expiry=300.0  # Keep connections alive for 5 minutes
+        )
+        # Add keep-alive headers to prevent LM Studio from unloading
+        headers = {
+            "Connection": "keep-alive",
+            "Keep-Alive": "timeout=300, max=1000"
+        }
+        self._client = httpx.AsyncClient(
+            timeout=self.timeout,
+            limits=limits,
+            headers=headers
+        )
     
     async def __aenter__(self):
         """Async context manager entry."""

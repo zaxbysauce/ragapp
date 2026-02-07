@@ -1,6 +1,7 @@
 """
 FastAPI application with lifespan context manager.
 """
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -34,6 +35,36 @@ from fastapi.exceptions import RequestValidationError
 from app.api.routes.documents import validation_exception_handler
 
 
+async def _llm_keepalive_task(llm_client: LLMClient, interval: int = 30):
+    """
+    Background task to keep LLM model loaded in LM Studio.
+    
+    LM Studio unloads models when clients disconnect. This task periodically
+    sends a ping request to keep the model in memory.
+    
+    Args:
+        llm_client: The LLM client instance
+        interval: Seconds between keep-alive pings (default: 30)
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("Starting LLM keep-alive task (interval: %ds)", interval)
+    
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            # Send a simple completion to keep model loaded
+            messages = [{"role": "user", "content": "ping"}]
+            await llm_client.chat_completion(messages, max_tokens=1)
+            logger.debug("LLM keep-alive ping sent successfully")
+        except asyncio.CancelledError:
+            logger.info("LLM keep-alive task cancelled")
+            break
+        except Exception as e:
+            # Log but don't crash - model might just be unloaded
+            logger.debug("LLM keep-alive ping failed (model may be unloaded): %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
@@ -64,8 +95,18 @@ async def lifespan(app: FastAPI):
         maintenance_service=app.state.maintenance_service,
     )
     await app.state.background_processor.start()
+    
+    # Start LLM keep-alive task to prevent LM Studio from unloading model
+    keepalive_task = asyncio.create_task(_llm_keepalive_task(app.state.llm_client))
+    
     yield
-    # Shutdown: Close services
+    
+    # Shutdown: Cancel keepalive and close services
+    keepalive_task.cancel()
+    try:
+        await keepalive_task
+    except asyncio.CancelledError:
+        pass
     await app.state.background_processor.stop()
     await app.state.llm_client.close()
     app.state.vector_store.close()

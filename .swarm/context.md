@@ -286,3 +286,17 @@ Phase 7 Tasks COMPLETED:
 - **OS:** Linux (Docker host)
 - **External Dependencies:** Ollama (user-managed)
 - **Target Port:** 8080
+
+## Agent Activity
+
+| Tool | Calls | Success | Failed | Avg Duration |
+|------|-------|---------|--------|--------------|
+| read | 267 | 267 | 0 | 16ms |
+| bash | 196 | 196 | 0 | 1902ms |
+| edit | 152 | 152 | 0 | 1140ms |
+| glob | 84 | 84 | 0 | 58ms |
+| write | 76 | 76 | 0 | 1846ms |
+| task | 33 | 33 | 0 | 169482ms |
+| apply_patch | 26 | 26 | 0 | 1896ms |
+| grep | 22 | 22 | 0 | 45ms |
+| todowrite | 4 | 4 | 0 | 3ms |
