@@ -236,8 +236,17 @@ class RAGEngine:
         return f"Source {source_title} (score: {chunk.score:.2f}):\n{chunk.text}"
 
     def _source_metadata(self, chunk: RAGSource) -> Dict[str, Any]:
+        filename = (
+            chunk.metadata.get("source_file")
+            or chunk.metadata.get("filename")
+            or chunk.metadata.get("section_title")
+            or "Unknown document"
+        )
         return {
+            "id": chunk.file_id,
             "file_id": chunk.file_id,
+            "filename": filename,
+            "snippet": chunk.text[:300] if chunk.text else "",
             "score": chunk.score,
             "metadata": chunk.metadata,
         }
