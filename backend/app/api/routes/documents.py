@@ -340,7 +340,7 @@ async def upload_document_root(
     Upload endpoint at root /documents for frontend compatibility.
     Delegates to the main upload handler.
     """
-    return await upload_document(request, file, settings_dep, vector_store, embedding_service, vault_id=vault_id)
+    return await _do_upload(request, file, settings_dep, vector_store, embedding_service, vault_id)
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -360,6 +360,17 @@ async def upload_document(
     Saves the uploaded file to settings.uploads_dir using aiofiles,
     then processes it via DocumentProcessor.process_file in asyncio.to_thread.
     """
+    return await _do_upload(request, file, settings_dep, vector_store, embedding_service, vault_id)
+
+
+async def _do_upload(
+    request: Request,
+    file: Optional[UploadFile],
+    settings_dep: Settings,
+    vector_store: VectorStore,
+    embedding_service: EmbeddingService,
+    vault_id: int,
+) -> UploadResponse:
     # Validate file is provided
     if file is None:
         raise HTTPException(status_code=400, detail="No file provided")
