@@ -232,7 +232,7 @@ def migrate_add_vaults(sqlite_path: str) -> None:
             return any(row[1] == column for row in cursor.fetchall())
         
         if not _column_exists("files", "vault_id"):
-            conn.execute("ALTER TABLE files ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1 REFERENCES vaults(id)")
+            conn.execute("ALTER TABLE files ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_vault_id ON files(vault_id)")
         
         if not _column_exists("memories", "vault_id"):
@@ -240,7 +240,7 @@ def migrate_add_vaults(sqlite_path: str) -> None:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_vault_id ON memories(vault_id)")
         
         if not _column_exists("chat_sessions", "vault_id"):
-            conn.execute("ALTER TABLE chat_sessions ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1 REFERENCES vaults(id)")
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_vault_id ON chat_sessions(vault_id)")
         
         # 4. Backfill existing rows with default vault
