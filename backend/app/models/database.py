@@ -99,9 +99,6 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 -- Index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
-CREATE INDEX IF NOT EXISTS idx_files_vault_id ON files(vault_id);
-CREATE INDEX IF NOT EXISTS idx_memories_vault_id ON memories(vault_id);
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_vault_id ON chat_sessions(vault_id);
 
 -- Document actions for auditing admin operations
 CREATE TABLE IF NOT EXISTS document_actions (

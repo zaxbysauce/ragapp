@@ -19,7 +19,7 @@ from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.vaults import router as vaults_router
 from app.config import settings
-from app.models.database import init_db, get_pool
+from app.models.database import run_migrations, get_pool
 from app.services.llm_client import LLMClient
 from app.services.vector_store import VectorStore
 from app.services.memory_store import MemoryStore
@@ -70,7 +70,7 @@ async def _llm_keepalive_task(llm_client: LLMClient, interval: int = 30):
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     # Startup: Initialize database and services
-    init_db(str(settings.sqlite_path))
+    run_migrations(str(settings.sqlite_path))
     app.state.db_pool = get_pool(str(settings.sqlite_path), max_size=10)
     app.state.llm_client = LLMClient()
     app.state.llm_client.start()
