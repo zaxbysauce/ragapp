@@ -90,7 +90,15 @@ class VectorStore:
         # Create or open table with error handling
         try:
             if "chunks" in self.db.table_names():
-                self.table = self.db.open_table("chunks")
+                try:
+                    self.table = self.db.open_table("chunks")
+                except Exception:
+                    # Stale table reference — drop and recreate
+                    try:
+                        self.db.drop_table("chunks")
+                    except Exception:
+                        pass
+                    self.table = self.db.create_table("chunks", schema=schema)
             else:
                 self.table = self.db.create_table("chunks", schema=schema)
         except Exception as e:
