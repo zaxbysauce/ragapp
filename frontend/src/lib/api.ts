@@ -173,6 +173,7 @@ export interface ChatHistoryItem {
   title: string;
   lastActive: string;
   messageCount: number;
+  messages: Array<{ id: string; role: string; content: string; sources?: Source[] }>;
 }
 
 export interface Vault {

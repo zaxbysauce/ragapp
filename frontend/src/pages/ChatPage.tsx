@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MessageSquare, FileText, Plus, ChevronDown, ChevronRight, AlertCircle } from "lucide-react";
 import { chatStream, getChatHistory, saveChatHistory, type ChatMessage, type Source, type ChatHistoryItem } from "@/lib/api";
-import { useChatStore } from "@/stores/useChatStore";
+import { useChatStore, type Message } from "@/stores/useChatStore";
 import { MessageContent } from "@/components/shared/MessageContent";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
@@ -37,6 +37,7 @@ export default function ChatPage() {
   const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(true);
   const [chatHistoryError, setChatHistoryError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("active");
 
   useEffect(() => {
     // Load chat history from localStorage
@@ -59,6 +60,13 @@ export default function ChatPage() {
     if (input.length > MAX_INPUT_LENGTH) {
       setInputError(`Input exceeds maximum length of ${MAX_INPUT_LENGTH} characters`);
       return;
+    }
+
+    // Use existing chat ID or create new one
+    const currentState = useChatStore.getState();
+    const chatId = currentState.activeChatId || Date.now().toString();
+    if (!currentState.activeChatId) {
+      useChatStore.setState({ activeChatId: chatId });
     }
 
     const userMessage = {
@@ -99,22 +107,30 @@ export default function ChatPage() {
       onComplete: () => {
         setIsStreaming(false);
         setAbortFn(null);
-        // Save to chat history
-        const currentMessages = useChatStore.getState().messages;
-        if (currentMessages.length > 0) {
-          const firstUserMsg = currentMessages.find(m => m.role === "user");
+        // Save/update chat history
+        const allMessages = useChatStore.getState().messages;
+        if (allMessages.length > 0) {
+          const firstUserMsg = allMessages.find(m => m.role === "user");
           const title = firstUserMsg
-            ? firstUserMsg.content.slice(0, 50) + (firstUserMsg.content.length > 50 ? "..." : "")
+            ? firstUserMsg.content.slice(0, 60) + (firstUserMsg.content.length > 60 ? "..." : "")
             : "New Chat";
           const existingHistory = getChatHistory();
-          const newEntry: ChatHistoryItem = {
-            id: Date.now().toString(),
+          // Remove existing entry for this chatId if updating
+          const filteredHistory = existingHistory.filter(h => h.id !== chatId);
+          const entry: ChatHistoryItem = {
+            id: chatId,
             title,
             lastActive: new Date().toLocaleString(),
-            messageCount: currentMessages.length,
+            messageCount: allMessages.length,
+            messages: allMessages.map(m => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              ...(m.sources && { sources: m.sources }),
+            })),
           };
-          // Prepend new entry, keep max 50 items
-          const updatedHistory = [newEntry, ...existingHistory].slice(0, 50);
+          // Prepend updated/new entry, keep max 50
+          const updatedHistory = [entry, ...filteredHistory].slice(0, 50);
           saveChatHistory(updatedHistory);
           setChatHistory(updatedHistory);
         }
@@ -154,6 +170,18 @@ export default function ChatPage() {
     toggleSource(sourceId);
   };
 
+  const handleLoadChat = (chat: ChatHistoryItem) => {
+    if (isStreaming) return;
+    const loadedMessages: Message[] = chat.messages.map(m => ({
+      id: m.id,
+      role: m.role as "user" | "assistant",
+      content: m.content,
+      sources: m.sources,
+    }));
+    useChatStore.getState().loadChat(chat.id, loadedMessages);
+    setActiveTab("active");
+  };
+
   const { latestAssistantMessage, hasSources } = useMemo(() => {
     const latest = messages.filter((m) => m.role === "assistant").pop();
     return {
@@ -171,7 +199,7 @@ export default function ChatPage() {
         </div>
         <div className="flex items-center gap-2">
           <VaultSelector />
-          <Button variant="outline" size="sm" onClick={() => useChatStore.getState().clearMessages()}>
+          <Button variant="outline" size="sm" onClick={() => useChatStore.getState().newChat()}>
             <Plus className="w-4 h-4 mr-2" />
             New Chat
           </Button>
@@ -180,7 +208,7 @@ export default function ChatPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <Tabs defaultValue="active" className="w-full">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full max-w-md grid-cols-2">
           <TabsTrigger value="active">Active Chats</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
@@ -283,22 +311,6 @@ export default function ChatPage() {
               </div>
             </CardContent>
           </Card>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            {["Previous Chat 1", "Previous Chat 2"].map((chat, i) => (
-              <Card key={i} className="cursor-pointer hover:border-primary/50 transition-colors">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4 text-muted-foreground" />
-                    <CardTitle className="text-sm font-medium">{chat}</CardTitle>
-                  </div>
-                  <CardDescription className="text-xs">
-                    Last active 2 hours ago
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            ))}
-          </div>
         </TabsContent>
 
         <TabsContent value="history">
@@ -340,7 +352,7 @@ export default function ChatPage() {
               ) : (
                 <div className="space-y-4">
                   {chatHistory.map((chat) => (
-                    <div key={chat.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors">
+                    <div key={chat.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors" onClick={() => handleLoadChat(chat)}>
                       <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
                         <MessageSquare className="h-5 w-5 text-primary" />
                       </div>

@@ -18,6 +18,7 @@ export interface ChatState {
   abortFn: (() => void) | null;
   inputError: string | null;
   expandedSources: Set<string>;
+  activeChatId: string | null;
 
   // Actions
   setMessages: (messages: Message[] | ((prev: Message[]) => Message[])) => void;
@@ -31,6 +32,8 @@ export interface ChatState {
   toggleSource: (sourceId: string) => void;
   clearExpandedSources: () => void;
   stopStreaming: () => void;
+  loadChat: (chatId: string, messages: Message[]) => void;
+  newChat: () => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -41,6 +44,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   abortFn: null,
   inputError: null,
   expandedSources: new Set(),
+  activeChatId: null,
 
   // Actions
   setMessages: (messages) => {
@@ -64,7 +68,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearMessages: () => {
-    set({ messages: [], expandedSources: new Set() });
+    set({ messages: [], expandedSources: new Set(), activeChatId: null });
   },
 
   setInput: (input) => {
@@ -117,5 +121,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return state;
       });
     }
+  },
+
+  loadChat: (chatId, messages) => {
+    set({ activeChatId: chatId, messages: messages, expandedSources: new Set() });
+  },
+
+  newChat: () => {
+    set({ activeChatId: null, messages: [], expandedSources: new Set() });
   },
 }));
