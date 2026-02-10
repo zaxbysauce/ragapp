@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
     app.state.embedding_service = EmbeddingService()
     app.state.vector_store = VectorStore()
     app.state.vector_store.connect()
+    app.state.vector_store.migrate_add_vault_id()
     app.state.memory_store = MemoryStore()
     app.state.secret_manager = SecretManager()
     app.state.toggle_manager = ToggleManager(str(settings.sqlite_path))
