@@ -1,17 +1,10 @@
 import { ReactNode } from "react";
 import { NavigationRail } from "./NavigationRail";
-
-interface HealthStatus {
-  backend: boolean;
-  embeddings: boolean;
-  chat: boolean;
-  loading: boolean;
-  lastChecked: Date | null;
-}
+import type { HealthStatus } from "@/types/health";
 
 interface PageShellProps {
   children: ReactNode;
-  activeItem: "chat" | "documents" | "memory" | "settings";
+  activeItem: "chat" | "documents" | "memory" | "vaults" | "settings";
   onItemSelect: (id: string) => void;
   healthStatus: HealthStatus;
 }

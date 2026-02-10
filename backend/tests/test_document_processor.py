@@ -1,5 +1,6 @@
 """Unit tests for DocumentProcessor using SQL file path."""
 
+import asyncio
 import os
 import sqlite3
 import sys
@@ -118,7 +119,7 @@ CREATE TABLE posts (
     def test_process_file_returns_valid_result(self):
         """Test that process_file returns valid ProcessedDocument with SQL file."""
         # Process the SQL file
-        result = self.processor.process_file(self.sql_file_path)
+        result = asyncio.run(self.processor.process_file(self.sql_file_path))
 
         # Assert result is ProcessedDocument
         self.assertIsInstance(result, ProcessedDocument)
@@ -134,7 +135,7 @@ CREATE TABLE posts (
     def test_process_file_updates_db_status(self):
         """Test that process_file updates DB status to indexed with chunk_count."""
         # Process the SQL file
-        result = self.processor.process_file(self.sql_file_path)
+        result = asyncio.run(self.processor.process_file(self.sql_file_path))
 
         # Query database to verify status
         conn = sqlite3.connect(self.temp_db_path)
@@ -156,16 +157,16 @@ CREATE TABLE posts (
     def test_process_file_raises_duplicate_error_on_second_call(self):
         """Test that second call with same file raises DuplicateFileError."""
         # Process the SQL file first time
-        self.processor.process_file(self.sql_file_path)
+        asyncio.run(self.processor.process_file(self.sql_file_path))
 
         # Second call should raise DuplicateFileError
         with self.assertRaises(DuplicateFileError):
-            self.processor.process_file(self.sql_file_path)
+            asyncio.run(self.processor.process_file(self.sql_file_path))
 
     def test_process_file_extracts_correct_chunks(self):
         """Test that SQL file is correctly parsed into chunks."""
         # Process the SQL file
-        result = self.processor.process_file(self.sql_file_path)
+        result = asyncio.run(self.processor.process_file(self.sql_file_path))
 
         # Should have 2 chunks (users table and posts table)
         self.assertEqual(len(result.chunks), 2)

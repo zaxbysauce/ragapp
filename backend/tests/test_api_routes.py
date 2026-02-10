@@ -231,44 +231,86 @@ class TestSettingsEndpoints(unittest.TestCase):
 
 class TestMemoriesEndpoints(unittest.TestCase):
     """Tests for the /api/memories CRUD endpoints."""
-    
+
     def setUp(self):
         self.client = TestClient(app)
-        # Create temp directory and set settings.data_dir so sqlite_path resolves correctly
         self._temp_dir = tempfile.mkdtemp()
-        self._original_data_dir = settings.data_dir
-        settings.data_dir = Path(self._temp_dir)
-        # Ensure temp db directory exists
-        Path(self._temp_dir).mkdir(parents=True, exist_ok=True)
-        # Patch settings for routes
-        self.settings_patcher = patch("app.api.routes.memories.settings")
-        self.mock_settings = self.settings_patcher.start()
-        self.mock_settings.data_dir = Path(self._temp_dir)
-        self.mock_settings.sqlite_path = Path(self._temp_dir) / "test.db"
-        # Ensure MemoryStore uses the same path - patch __init__ to set sqlite_path
-        from app.services.memory_store import MemoryStore
-        self._original_memory_store_init = MemoryStore.__init__
-        def patched_init(instance):
-            instance.sqlite_path = str(Path(self._temp_dir) / "test.db")
-        MemoryStore.__init__ = patched_init
-        self._MemoryStore = MemoryStore
-        # Clear/init memories table
-        from app.models.database import init_db, get_db_connection
+
+        # Initialize test database
+        from app.models.database import init_db
         db_path = str(Path(self._temp_dir) / "test.db")
         init_db(db_path)
-        conn = get_db_connection(db_path)
-        try:
-            conn.execute("DELETE FROM memories")
-            conn.commit()
-        finally:
-            conn.close()
-    
+
+        # Create a real MemoryStore pointing to test DB
+        from app.services.memory_store import MemoryStore
+        test_store = MemoryStore()
+        test_store.sqlite_path = db_path
+
+        # Override get_db to use a pool that allows cross-thread usage
+        # Create a simple pool for testing
+        import sqlite3
+        from app.api.deps import get_db, get_memory_store
+        from queue import Queue, Empty
+        import threading
+
+        class SimpleConnectionPool:
+            def __init__(self, db_path):
+                self.db_path = db_path
+                self._pool = Queue(maxsize=5)
+                self._lock = threading.Lock()
+                self._closed = False
+
+            def get_connection(self):
+                if self._closed:
+                    raise RuntimeError("Pool closed")
+                try:
+                    return self._pool.get_nowait()
+                except Empty:
+                    return self._create_connection()
+
+            def _create_connection(self):
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON;")
+                return conn
+
+            def release_connection(self, conn):
+                if not self._closed:
+                    try:
+                        self._pool.put_nowait(conn)
+                    except:
+                        conn.close()
+
+            def close_all(self):
+                self._closed = True
+                while True:
+                    try:
+                        conn = self._pool.get_nowait()
+                        conn.close()
+                    except Empty:
+                        break
+
+        self._connection_pool = SimpleConnectionPool(db_path)
+
+        def override_get_db():
+            conn = self._connection_pool.get_connection()
+            try:
+                yield conn
+            finally:
+                self._connection_pool.release_connection(conn)
+
+        app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_memory_store] = lambda: test_store
+        self._test_store = test_store
+        self._db_path = db_path
+        self._get_db = get_db
+        self._get_memory_store = get_memory_store
+
     def tearDown(self):
-        self.settings_patcher.stop()
-        settings.data_dir = self._original_data_dir
-        # Restore MemoryStore.__init__
-        self._MemoryStore.__init__ = self._original_memory_store_init
-        # Cleanup temp directory
+        app.dependency_overrides.pop(self._get_db, None)
+        app.dependency_overrides.pop(self._get_memory_store, None)
+        if hasattr(self, '_connection_pool'):
+            self._connection_pool.close_all()
         import shutil
         shutil.rmtree(self._temp_dir, ignore_errors=True)
     
@@ -279,51 +321,33 @@ class TestMemoriesEndpoints(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["memories"], [])
-    
-    @patch("app.api.routes.memories.MemoryStore")
-    def test_create_memory(self, mock_store_class):
+
+    def test_create_memory(self):
         """Test POST /api/memories creates a new memory."""
-        from app.services.memory_store import MemoryRecord
-        
-        mock_record = MemoryRecord(
-            id=1,
-            content="Test memory content",
-            category="test",
-            tags="[\"tag1\", \"tag2\"]",
-            source="test_source",
-            created_at="2024-01-01T00:00:00",
-            updated_at="2024-01-01T00:00:00"
-        )
-        
-        mock_store = MagicMock()
-        mock_store.add_memory.return_value = mock_record
-        mock_store_class.return_value = mock_store
-        
         payload = {
             "content": "Test memory content",
             "category": "test",
             "tags": "[\"tag1\", \"tag2\"]",
             "source": "test_source"
         }
-        
+
         response = self.client.post("/api/memories", json=payload)
-        
+
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["content"], "Test memory content")
-        self.assertEqual(data["category"], "test")
-        self.assertEqual(data["id"], 1)
-    
-    @patch("app.api.routes.memories.MemoryStore")
-    def test_create_memory_invalid_empty_content(self, mock_store_class):
+        self.assertEqual(data["metadata"]["category"], "test")
+        self.assertEqual(data["id"], "1")  # id is now a string
+
+    def test_create_memory_invalid_empty_content(self):
         """Test POST /api/memories with empty content returns 422."""
         payload = {
             "content": "",
             "category": "test"
         }
-        
+
         response = self.client.post("/api/memories", json=payload)
-        
+
         self.assertEqual(response.status_code, 422)
     
     def test_create_and_list_memory(self):
@@ -357,18 +381,18 @@ class TestMemoriesEndpoints(unittest.TestCase):
         create_response = self.client.post("/api/memories", json=create_payload)
         self.assertEqual(create_response.status_code, 200)
         memory_id = create_response.json()["id"]
-        
+
         # Update the memory
         update_payload = {
             "content": "Updated content",
             "category": "updated"
         }
         update_response = self.client.put(f"/api/memories/{memory_id}", json=update_payload)
-        
+
         self.assertEqual(update_response.status_code, 200)
         data = update_response.json()
         self.assertEqual(data["content"], "Updated content")
-        self.assertEqual(data["category"], "updated")
+        self.assertEqual(data["metadata"]["category"], "updated")
     
     def test_update_memory_not_found(self):
         """Test PUT /api/memories/{id} returns 404 for non-existent memory."""
@@ -406,40 +430,93 @@ class TestMemoriesEndpoints(unittest.TestCase):
 
 class TestDocumentsEndpoints(unittest.TestCase):
     """Tests for the /api/documents endpoints."""
-    
+
     def setUp(self):
         self.client = TestClient(app)
-        # Patch settings for this test
-        self.settings_patcher = patch("app.api.routes.documents.settings")
-        self.mock_settings = self.settings_patcher.start()
-        self.mock_settings.sqlite_path = TEST_DB_PATH
-        self.mock_settings.data_dir = Path(TEST_DATA_DIR)
-        # Clear files table before each test
-        from app.models.database import get_db_connection
-        conn = get_db_connection(str(TEST_DB_PATH))
-        try:
-            conn.execute("DELETE FROM files")
-            conn.commit()
-        finally:
-            conn.close()
-    
+        self._temp_dir = tempfile.mkdtemp()
+        db_path = str(Path(self._temp_dir) / "test.db")
+
+        from app.models.database import init_db
+        init_db(db_path)
+
+        # Override get_db to use a pool that allows cross-thread usage
+        # Create a simple pool for testing
+        import sqlite3
+        from app.api.deps import get_db
+        from queue import Queue, Empty
+        import threading
+
+        class SimpleConnectionPool:
+            def __init__(self, db_path):
+                self.db_path = db_path
+                self._pool = Queue(maxsize=5)
+                self._lock = threading.Lock()
+                self._closed = False
+
+            def get_connection(self):
+                if self._closed:
+                    raise RuntimeError("Pool closed")
+                try:
+                    return self._pool.get_nowait()
+                except Empty:
+                    return self._create_connection()
+
+            def _create_connection(self):
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON;")
+                return conn
+
+            def release_connection(self, conn):
+                if not self._closed:
+                    try:
+                        self._pool.put_nowait(conn)
+                    except:
+                        conn.close()
+
+            def close_all(self):
+                self._closed = True
+                while True:
+                    try:
+                        conn = self._pool.get_nowait()
+                        conn.close()
+                    except Empty:
+                        break
+
+        self._connection_pool = SimpleConnectionPool(db_path)
+
+        def override_get_db():
+            conn = self._connection_pool.get_connection()
+            try:
+                yield conn
+            finally:
+                self._connection_pool.release_connection(conn)
+
+        app.dependency_overrides[get_db] = override_get_db
+        self._db_path = db_path
+        self._get_db = get_db
+
     def tearDown(self):
-        self.settings_patcher.stop()
-    
+        app.dependency_overrides.pop(self._get_db, None)
+        if hasattr(self, '_connection_pool'):
+            self._connection_pool.close_all()
+        import shutil
+        shutil.rmtree(self._temp_dir, ignore_errors=True)
+
     def test_get_document_stats_empty(self):
         """Test GET /api/documents/stats returns success with zero counts."""
         response = self.client.get("/api/documents/stats")
-        
+
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["total_files"], 0)
         self.assertEqual(data["total_chunks"], 0)
         self.assertEqual(data["status"], "success")
-    
+
     def test_list_documents_empty(self):
         """Test GET /api/documents returns empty list when no documents."""
         response = self.client.get("/api/documents/")
-        
+
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["documents"], [])
@@ -447,15 +524,25 @@ class TestDocumentsEndpoints(unittest.TestCase):
 
 class TestChatEndpoint(unittest.TestCase):
     """Tests for the /api/chat endpoint with mocked RAGEngine."""
-    
+
     def setUp(self):
         self.client = TestClient(app)
-    
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_chat_non_streaming(self, mock_rag_engine_class):
+
+    def tearDown(self):
+        from app.api.deps import get_rag_engine
+        app.dependency_overrides.pop(get_rag_engine, None)
+
+    def _set_mock_rag_engine(self, mock_query_fn):
+        """Helper to override get_rag_engine with a mock that uses the given query function."""
+        from app.api.deps import get_rag_engine
+        mock_engine = MagicMock()
+        mock_engine.query = mock_query_fn
+        app.dependency_overrides[get_rag_engine] = lambda: mock_engine
+
+    def test_chat_non_streaming(self):
         """Test POST /api/chat non-streaming returns content and sources."""
 
-        async def mock_query(user_input, chat_history, stream=False):
+        async def mock_query(user_input, chat_history, stream=False, **kwargs):
             """Mock async generator for RAG query."""
             yield {"type": "content", "content": "This is a test response."}
             yield {
@@ -467,9 +554,7 @@ class TestChatEndpoint(unittest.TestCase):
                 "memories_used": ["Memory 1"]
             }
 
-        mock_rag_engine = MagicMock()
-        mock_rag_engine.query = mock_query
-        mock_rag_engine_class.return_value = mock_rag_engine
+        self._set_mock_rag_engine(mock_query)
 
         payload = {
             "message": "What is the test?",
@@ -485,65 +570,59 @@ class TestChatEndpoint(unittest.TestCase):
         self.assertEqual(len(data["sources"]), 2)
         self.assertEqual(data["sources"][0]["file_id"], "1")
         self.assertEqual(len(data["memories_used"]), 1)
-    
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_chat_non_streaming_with_history(self, mock_rag_engine_class):
+
+    def test_chat_non_streaming_with_history(self):
         """Test POST /api/chat with chat history."""
-        
-        async def mock_query(user_input, chat_history, stream=False):
+
+        async def mock_query(user_input, chat_history, stream=False, **kwargs):
             """Mock async generator that verifies history is passed."""
             # Verify history is passed
             self.assertEqual(len(chat_history), 1)
             self.assertEqual(chat_history[0]["role"], "user")
             self.assertEqual(chat_history[0]["content"], "Previous message")
-            
+
             yield {"type": "content", "content": "Response with history."}
             yield {
                 "type": "done",
                 "sources": [],
                 "memories_used": []
             }
-        
-        mock_rag_engine = MagicMock()
-        mock_rag_engine.query = mock_query
-        mock_rag_engine_class.return_value = mock_rag_engine
-        
+
+        self._set_mock_rag_engine(mock_query)
+
         payload = {
             "message": "Follow-up question",
             "history": [{"role": "user", "content": "Previous message"}],
             "stream": False
         }
-        
+
         response = self.client.post("/api/chat", json=payload)
-        
+
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["content"], "Response with history.")
-    
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_chat_empty_sources(self, mock_rag_engine_class):
+
+    def test_chat_empty_sources(self):
         """Test POST /api/chat handles empty sources gracefully."""
-        
-        async def mock_query(user_input, chat_history, stream=False):
+
+        async def mock_query(user_input, chat_history, stream=False, **kwargs):
             yield {"type": "content", "content": "No relevant sources found."}
             yield {
                 "type": "done",
                 "sources": [],
                 "memories_used": []
             }
-        
-        mock_rag_engine = MagicMock()
-        mock_rag_engine.query = mock_query
-        mock_rag_engine_class.return_value = mock_rag_engine
-        
+
+        self._set_mock_rag_engine(mock_query)
+
         payload = {
             "message": "Unknown query",
             "history": [],
             "stream": False
         }
-        
+
         response = self.client.post("/api/chat", json=payload)
-        
+
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["content"], "No relevant sources found.")

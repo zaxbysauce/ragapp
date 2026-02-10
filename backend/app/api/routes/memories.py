@@ -9,12 +9,12 @@ import logging
 import sqlite3
 from typing import List, Optional, Union
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, validator
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.database import get_db_connection
 from app.services.memory_store import MemoryStore, MemoryRecord, MemoryStoreError
-from app.config import settings
+from app.api.deps import get_memory_store, get_db
+from app.security import require_auth
 
 
 logger = logging.getLogger(__name__)
@@ -60,8 +60,10 @@ class MemoryCreateRequest(BaseModel):
     category: Optional[str] = Field(None, max_length=255, description="Optional category")
     tags: Optional[str] = Field(None, max_length=1000, description="Optional tags (JSON array or comma-separated)")
     source: Optional[str] = Field(None, max_length=500, description="Optional source reference")
+    vault_id: Optional[int] = Field(None, description="Optional vault ID to scope this memory")
 
-    @validator('tags', pre=True)
+    @field_validator('tags', mode='before')
+    @classmethod
     def validate_tags(cls, v):
         return _normalize_tags_input(v)
 
@@ -73,7 +75,8 @@ class MemoryUpdateRequest(BaseModel):
     tags: Optional[str] = Field(None, max_length=1000, description="Optional tags")
     source: Optional[str] = Field(None, max_length=500, description="Optional source reference")
 
-    @validator('tags', pre=True)
+    @field_validator('tags', mode='before')
+    @classmethod
     def validate_tags(cls, v):
         return _normalize_tags_input(v)
 
@@ -94,8 +97,7 @@ class MemoryResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MemoryListResponse(BaseModel):
@@ -112,6 +114,7 @@ class MemorySearchResponse(BaseModel):
 class MemorySearchRequest(BaseModel):
     query: Optional[str] = Field(default="", description="Search query string")
     limit: int = Field(default=5, ge=1, le=100, description="Maximum number of results")
+    vault_id: Optional[int] = Field(None, description="Optional vault ID to filter search")
 
 
 def _parse_tags_to_list(tags: Optional[str]) -> Optional[List[str]]:
@@ -148,10 +151,9 @@ def _memory_record_to_response(record: MemoryRecord, score: Optional[float] = No
     )
 
 
-async def _perform_memory_search(query: str, limit: int) -> List[MemoryResponse]:
-    store = MemoryStore()
+async def _perform_memory_search(memory_store: MemoryStore, query: str, limit: int, vault_id: Optional[int] = None) -> List[MemoryResponse]:
     try:
-        records = await asyncio.to_thread(store.search_memories, query=query, limit=limit)
+        records = await asyncio.to_thread(memory_store.search_memories, query=query, limit=limit, vault_id=vault_id)
     except MemoryStoreError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -159,15 +161,28 @@ async def _perform_memory_search(query: str, limit: int) -> List[MemoryResponse]
 
 
 @router.get("/memories", response_model=MemoryListResponse)
-async def list_memories():
+async def list_memories(
+    vault_id: Optional[int] = Query(None, description="Filter by vault ID"),
+    conn: sqlite3.Connection = Depends(get_db),
+):
     """
     List all memories.
-    
+
     Returns a list of all memories with their id, content, category, tags, source,
     created_at, and updated_at fields.
     """
-    conn = get_db_connection(str(settings.sqlite_path))
-    try:
+    if vault_id is not None:
+        cursor = await asyncio.to_thread(
+            conn.execute,
+            """
+            SELECT id, content, category, tags, source, created_at, updated_at
+            FROM memories
+            WHERE vault_id = ?
+            ORDER BY created_at DESC
+            """,
+            (vault_id,)
+        )
+    else:
         cursor = await asyncio.to_thread(
             conn.execute,
             """
@@ -176,43 +191,45 @@ async def list_memories():
             ORDER BY created_at DESC
             """
         )
-        rows = await asyncio.to_thread(cursor.fetchall)
-        
-        memories = []
-        for row in rows:
-            metadata = MemoryMetadata(
-                category=row[2],
-                tags=_parse_tags_to_list(row[3]),
-                source=row[4],
-            ) if any([row[2], row[3], row[4]]) else None
-            memories.append(MemoryResponse(
-                id=str(row[0]),
-                content=row[1],
-                metadata=metadata,
-                created_at=row[5],
-                updated_at=row[6],
-            ))
-        
-        return MemoryListResponse(memories=memories)
-    finally:
-        await asyncio.to_thread(lambda: conn.close())
+    rows = await asyncio.to_thread(cursor.fetchall)
+    
+    memories = []
+    for row in rows:
+        metadata = MemoryMetadata(
+            category=row[2],
+            tags=_parse_tags_to_list(row[3]),
+            source=row[4],
+        ) if any([row[2], row[3], row[4]]) else None
+        memories.append(MemoryResponse(
+            id=str(row[0]),
+            content=row[1],
+            metadata=metadata,
+            created_at=row[5],
+            updated_at=row[6],
+        ))
+    
+    return MemoryListResponse(memories=memories)
 
 
 @router.post("/memories", response_model=MemoryResponse)
-async def create_memory(request: MemoryCreateRequest):
+async def create_memory(
+    request: MemoryCreateRequest,
+    memory_store: MemoryStore = Depends(get_memory_store),
+    auth: dict = Depends(require_auth),
+):
     """
     Create a new memory.
     
     Uses MemoryStore.add_memory to add a new memory to the database.
     """
-    store = MemoryStore()
     try:
         record = await asyncio.to_thread(
-            store.add_memory,
+            memory_store.add_memory,
             content=request.content,
             category=request.category,
             tags=request.tags,
             source=request.source,
+            vault_id=request.vault_id,
         )
     except MemoryStoreError as e:
         logger.exception("MemoryStoreError in create_memory (content length: %d)", len(request.content))
@@ -228,80 +245,46 @@ async def create_memory(request: MemoryCreateRequest):
 
 
 @router.put("/memories/{memory_id}", response_model=MemoryResponse)
-async def update_memory(memory_id: int, request: MemoryUpdateRequest):
+async def update_memory(
+    memory_id: int,
+    request: MemoryUpdateRequest,
+    conn: sqlite3.Connection = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
     """
     Update an existing memory.
     
     Updates content, category, tags, and/or source fields in the database.
     Returns 404 if the memory is not found.
     """
-    conn = get_db_connection(str(settings.sqlite_path))
     try:
-        try:
-            # Check if memory exists
-            cursor = await asyncio.to_thread(
-                conn.execute, "SELECT id FROM memories WHERE id = ?", (memory_id,)
-            )
-            row = await asyncio.to_thread(cursor.fetchone)
-            if row is None:
-                raise HTTPException(status_code=404, detail=f"Memory with id {memory_id} not found")
-            
-            # Build update query dynamically based on provided fields
-            update_fields = []
-            params = []
-            
-            if request.content is not None:
-                update_fields.append("content = ?")
-                params.append(request.content)
-            if request.category is not None:
-                update_fields.append("category = ?")
-                params.append(request.category)
-            if request.tags is not None:
-                update_fields.append("tags = ?")
-                params.append(request.tags)
-            if request.source is not None:
-                update_fields.append("source = ?")
-                params.append(request.source)
-            
-            if not update_fields:
-                # No fields to update, just fetch and return current record
-                cursor = await asyncio.to_thread(
-                    conn.execute,
-                    """
-                    SELECT id, content, category, tags, source, created_at, updated_at
-                    FROM memories WHERE id = ?
-                    """,
-                    (memory_id,)
-                )
-                row = await asyncio.to_thread(cursor.fetchone)
-                if row is None:
-                    raise HTTPException(status_code=404, detail=f"Memory with id {memory_id} not found")
-                metadata = MemoryMetadata(
-                    category=row[2],
-                    tags=_parse_tags_to_list(row[3]),
-                    source=row[4],
-                ) if any([row[2], row[3], row[4]]) else None
-                return MemoryResponse(
-                    id=str(row[0]),
-                    content=row[1],
-                    metadata=metadata,
-                    created_at=row[5],
-                    updated_at=row[6],
-                )
-            
-            # Add memory_id to params
-            params.append(memory_id)
-            
-            # Execute update
-            sql = f"""
-                UPDATE memories
-                SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """
-            await asyncio.to_thread(conn.execute, sql, params)
-            await asyncio.to_thread(lambda: conn.commit())
-            
-            # Fetch updated record
+        # Check if memory exists
+        cursor = await asyncio.to_thread(
+            conn.execute, "SELECT id FROM memories WHERE id = ?", (memory_id,)
+        )
+        row = await asyncio.to_thread(cursor.fetchone)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Memory with id {memory_id} not found")
+        
+        # Build update query dynamically based on provided fields
+        update_fields = []
+        params = []
+        
+        if request.content is not None:
+            update_fields.append("content = ?")
+            params.append(request.content)
+        if request.category is not None:
+            update_fields.append("category = ?")
+            params.append(request.category)
+        if request.tags is not None:
+            update_fields.append("tags = ?")
+            params.append(request.tags)
+        if request.source is not None:
+            update_fields.append("source = ?")
+            params.append(request.source)
+        
+        if not update_fields:
+            # No fields to update, just fetch and return current record
             cursor = await asyncio.to_thread(
                 conn.execute,
                 """
@@ -311,11 +294,8 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
                 (memory_id,)
             )
             row = await asyncio.to_thread(cursor.fetchone)
-            
-            # Race condition fix: check if row is None after fetch
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Memory with id {memory_id} not found")
-            
             metadata = MemoryMetadata(
                 category=row[2],
                 tags=_parse_tags_to_list(row[3]),
@@ -328,59 +308,102 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
                 created_at=row[5],
                 updated_at=row[6],
             )
-        except Exception:
-            await asyncio.to_thread(lambda: conn.rollback())
-            raise
-    finally:
-        await asyncio.to_thread(lambda: conn.close())
+        
+        # Add memory_id to params
+        params.append(memory_id)
+        
+        # Execute update
+        sql = f"""
+            UPDATE memories
+            SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """
+        await asyncio.to_thread(conn.execute, sql, params)
+        await asyncio.to_thread(conn.commit)
+        
+        # Fetch updated record
+        cursor = await asyncio.to_thread(
+            conn.execute,
+            """
+            SELECT id, content, category, tags, source, created_at, updated_at
+            FROM memories WHERE id = ?
+            """,
+            (memory_id,)
+        )
+        row = await asyncio.to_thread(cursor.fetchone)
+        
+        # Race condition fix: check if row is None after fetch
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Memory with id {memory_id} not found")
+        
+        metadata = MemoryMetadata(
+            category=row[2],
+            tags=_parse_tags_to_list(row[3]),
+            source=row[4],
+        ) if any([row[2], row[3], row[4]]) else None
+        return MemoryResponse(
+            id=str(row[0]),
+            content=row[1],
+            metadata=metadata,
+            created_at=row[5],
+            updated_at=row[6],
+        )
+    except Exception:
+        await asyncio.to_thread(lambda: conn.rollback())
+        raise
 
 
 @router.delete("/memories/{memory_id}")
-async def delete_memory(memory_id: int):
+async def delete_memory(
+    memory_id: int,
+    conn: sqlite3.Connection = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
     """
     Delete a memory.
     
     Deletes the memory with the given id from the database.
     Returns 404 if the memory is not found.
     """
-    conn = get_db_connection(str(settings.sqlite_path))
-    try:
-        # Check if memory exists
-        cursor = await asyncio.to_thread(
-            conn.execute, "SELECT id FROM memories WHERE id = ?", (memory_id,)
-        )
-        row = await asyncio.to_thread(cursor.fetchone)
-        if row is None:
-            raise HTTPException(status_code=404, detail=f"Memory with id {memory_id} not found")
-        
-        # Delete the memory
-        await asyncio.to_thread(conn.execute, "DELETE FROM memories WHERE id = ?", (memory_id,))
-        await asyncio.to_thread(lambda: conn.commit())
+    # Check if memory exists
+    cursor = await asyncio.to_thread(
+        conn.execute, "SELECT id FROM memories WHERE id = ?", (memory_id,)
+    )
+    row = await asyncio.to_thread(cursor.fetchone)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Memory with id {memory_id} not found")
+    
+    # Delete the memory
+    await asyncio.to_thread(conn.execute, "DELETE FROM memories WHERE id = ?", (memory_id,))
+    await asyncio.to_thread(conn.commit)
 
-        return {"message": f"Memory {memory_id} deleted successfully"}
-    finally:
-        await asyncio.to_thread(lambda: conn.close())
+    return {"message": f"Memory {memory_id} deleted successfully"}
 
 
 @router.get("/memories/search", response_model=MemorySearchResponse)
 async def search_memories(
     query: str = Query(..., min_length=1, description="Search query string"),
-    limit: int = Query(5, ge=1, le=100, description="Maximum number of results")
+    limit: int = Query(5, ge=1, le=100, description="Maximum number of results"),
+    vault_id: Optional[int] = Query(None, description="Filter by vault ID"),
+    memory_store: MemoryStore = Depends(get_memory_store),
 ):
     """
     Search memories using full-text search.
-    
+
     Uses MemoryStore.search_memories to search memories via FTS5.
     Returns matching memories ordered by relevance.
     """
-    results = await _perform_memory_search(query, limit)
+    results = await _perform_memory_search(memory_store, query, limit, vault_id)
     return MemorySearchResponse(results=results, total=len(results))
 
 
 @router.post("/memories/search", response_model=MemorySearchResponse)
-async def search_memories_post(request: MemorySearchRequest):
+async def search_memories_post(
+    request: MemorySearchRequest,
+    memory_store: MemoryStore = Depends(get_memory_store),
+):
     # Handle empty or whitespace-only queries gracefully
     if not request.query or not request.query.strip():
         return MemorySearchResponse(results=[], total=0)
-    results = await _perform_memory_search(request.query, request.limit)
+    results = await _perform_memory_search(memory_store, request.query, request.limit, request.vault_id)
     return MemorySearchResponse(results=results, total=len(results))

@@ -1,4 +1,4 @@
-import { MessageSquare, FileText, Brain, Settings } from "lucide-react";
+import { MessageSquare, FileText, Brain, Settings, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type NavItem = {
@@ -11,6 +11,7 @@ const navItems: NavItem[] = [
   { id: "chat", label: "Chat", icon: MessageSquare },
   { id: "documents", label: "Documents", icon: FileText },
   { id: "memory", label: "Memory", icon: Brain },
+  { id: "vaults", label: "Vaults", icon: Database },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -23,7 +24,7 @@ interface HealthStatus {
 }
 
 interface NavigationRailProps {
-  activeItem: "chat" | "documents" | "memory" | "settings";
+  activeItem: "chat" | "documents" | "memory" | "vaults" | "settings";
   onItemSelect: (id: string) => void;
   healthStatus: HealthStatus;
 }

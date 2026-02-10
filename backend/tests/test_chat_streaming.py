@@ -7,7 +7,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -63,12 +63,48 @@ class TestChatStreaming(unittest.TestCase):
         """Set up test client."""
         self.client = TestClient(app)
 
+    def tearDown(self):
+        from app.api.deps import get_rag_engine
+        from app.main import app
+        app.dependency_overrides.pop(get_rag_engine, None)
+        # Clean up app.state services
+        if hasattr(app.state, '_test_services'):
+            for key in app.state._test_services:
+                try:
+                    delattr(app.state, key)
+                except KeyError:
+                    pass
+            delattr(app.state, '_test_services')
+
+    def _set_mock_rag_engine(self, mock_query_fn):
+        """Helper to override get_rag_engine with a mock that uses the given query function."""
+        from app.api.deps import get_rag_engine
+        from app.main import app
+
+        mock_engine = MagicMock()
+        mock_engine.query = mock_query_fn
+        app.dependency_overrides[get_rag_engine] = lambda: mock_engine
+
+        # Set up app.state services that might be needed
+        if not hasattr(app.state, '_test_services'):
+            app.state._test_services = []
+        app.state._test_services.append('embedding_service')
+        app.state._test_services.append('vector_store')
+        app.state._test_services.append('memory_store')
+        app.state._test_services.append('llm_client')
+
+        # Create simple mocks for services
+        if not hasattr(app.state, 'embedding_service'):
+            app.state.embedding_service = MagicMock()
+        if not hasattr(app.state, 'vector_store'):
+            app.state.vector_store = MagicMock()
+        if not hasattr(app.state, 'memory_store'):
+            app.state.memory_store = MagicMock()
+        if not hasattr(app.state, 'llm_client'):
+            app.state.llm_client = MagicMock()
+
     def _parse_sse_events(self, response_text: str) -> list:
-        """Parse SSE response text into list of event data.
-        
-        Handles multi-line events, data: with/without space,
-        event: field, and retry: field (ignored).
-        """
+        """Parse SSE response text into list of event data."""
         events = []
         for block in response_text.strip().split('\n\n'):
             if not block:
@@ -77,212 +113,186 @@ class TestChatStreaming(unittest.TestCase):
             data_lines = []
             for line in block.split('\n'):
                 if line.startswith('data:'):
-                    # Handle 'data: ' and 'data:' (with or without space)
                     prefix_len = 6 if line.startswith('data: ') else 5
                     data_lines.append(line[prefix_len:])
                 elif line.startswith('event:'):
-                    # Handle 'event: ' and 'event:' (with or without space)
                     prefix_len = 7 if line.startswith('event: ') else 6
                     event_data['event_type'] = line[prefix_len:]
                 elif line.startswith('retry:'):
-                    # Retry field is parsed but ignored per spec
                     pass
             if data_lines:
-                # Join multi-line data with newlines
                 full_data = '\n'.join(data_lines)
                 event_data['data'] = json.loads(full_data)
                 events.append(event_data)
         return events
 
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_stream_chat_returns_sse_format(self, mock_rag_engine_class):
+    def test_stream_chat_returns_sse_format(self):
         """Test streaming chat returns SSE format with data: lines."""
         # Mock RAGEngine to yield deterministic chunks
-        mock_engine = mock_rag_engine_class.return_value
-        
         async def mock_query(*args, **kwargs):
             yield {"type": "content", "content": "Hello"}
             yield {"type": "content", "content": " world"}
             yield {"type": "done", "sources": [], "memories_used": []}
-        
-        mock_engine.query = mock_query
+
+        self._set_mock_rag_engine(mock_query)
 
         response = self.client.post(
-            "/api/chat",
-            json={"message": "test", "stream": True}
+            "/api/chat/stream",
+            json={"messages": [{"role": "user", "content": "test"}]}
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "text/event-stream; charset=utf-8")
-        
+
         # Verify SSE format: each line starts with "data: "
         text = response.text
         for line in text.strip().split('\n\n'):
             self.assertTrue(line.startswith("data: "), f"Line does not start with 'data: ': {line}")
 
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_stream_chat_accumulates_content(self, mock_rag_engine_class):
+    def test_stream_chat_accumulates_content(self):
         """Test streaming chat accumulates content chunks correctly."""
-        mock_engine = mock_rag_engine_class.return_value
-        
         async def mock_query(*args, **kwargs):
             yield {"type": "content", "content": "First"}
             yield {"type": "content", "content": " second"}
             yield {"type": "content", "content": " third"}
             yield {"type": "done", "sources": [], "memories_used": []}
-        
-        mock_engine.query = mock_query
+
+        self._set_mock_rag_engine(mock_query)
 
         response = self.client.post(
-            "/api/chat",
-            json={"message": "test", "stream": True}
+            "/api/chat/stream",
+            json={"messages": [{"role": "user", "content": "test"}]}
         )
 
         events = self._parse_sse_events(response.text)
-        
+
         # Filter content events
         content_events = [e['data'] for e in events if e.get('data', {}).get("type") == "content"]
         self.assertEqual(len(content_events), 3)
-        
+
         # Verify content accumulation
         full_content = "".join(e.get("content", "") for e in content_events)
         self.assertEqual(full_content, "First second third")
 
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_stream_chat_done_event_has_sources(self, mock_rag_engine_class):
+    def test_stream_chat_done_event_has_sources(self):
         """Test done event includes sources array."""
-        mock_engine = mock_rag_engine_class.return_value
-        
         expected_sources = [
             {"file_id": "doc1.txt", "score": 0.95, "metadata": {"source_file": "doc1.txt"}},
             {"file_id": "doc2.txt", "score": 0.87, "metadata": {"source_file": "doc2.txt"}}
         ]
-        
+
         async def mock_query(*args, **kwargs):
             yield {"type": "content", "content": "Response"}
             yield {"type": "done", "sources": expected_sources, "memories_used": []}
-        
-        mock_engine.query = mock_query
+
+        self._set_mock_rag_engine(mock_query)
 
         response = self.client.post(
-            "/api/chat",
-            json={"message": "test", "stream": True}
+            "/api/chat/stream",
+            json={"messages": [{"role": "user", "content": "test"}]}
         )
 
         events = self._parse_sse_events(response.text)
         done_events = [e['data'] for e in events if e.get('data', {}).get("type") == "done"]
-        
+
         self.assertEqual(len(done_events), 1)
         done_event = done_events[0]
         self.assertIn("sources", done_event)
         self.assertEqual(done_event["sources"], expected_sources)
 
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_stream_chat_done_event_has_memories_used(self, mock_rag_engine_class):
+    def test_stream_chat_done_event_has_memories_used(self):
         """Test done event includes memories_used array."""
-        mock_engine = mock_rag_engine_class.return_value
-        
         expected_memories = ["User likes Python", "User prefers dark mode"]
-        
+
         async def mock_query(*args, **kwargs):
             yield {"type": "content", "content": "Response"}
             yield {"type": "done", "sources": [], "memories_used": expected_memories}
-        
-        mock_engine.query = mock_query
+
+        self._set_mock_rag_engine(mock_query)
 
         response = self.client.post(
-            "/api/chat",
-            json={"message": "test", "stream": True}
+            "/api/chat/stream",
+            json={"messages": [{"role": "user", "content": "test"}]}
         )
 
         events = self._parse_sse_events(response.text)
         done_events = [e['data'] for e in events if e.get('data', {}).get("type") == "done"]
-        
+
         self.assertEqual(len(done_events), 1)
         done_event = done_events[0]
         self.assertIn("memories_used", done_event)
         self.assertEqual(done_event["memories_used"], expected_memories)
 
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_stream_chat_with_history(self, mock_rag_engine_class):
+    def test_stream_chat_with_history(self):
         """Test streaming chat accepts history parameter."""
-        mock_engine = mock_rag_engine_class.return_value
         captured_history = None
-        
-        async def mock_query(message, history, stream=False):
+
+        async def mock_query(message, history, stream=False, **kwargs):
             nonlocal captured_history
             captured_history = history
             yield {"type": "content", "content": "Response"}
             yield {"type": "done", "sources": [], "memories_used": []}
-        
-        mock_engine.query = mock_query
 
-        history = [
+        self._set_mock_rag_engine(mock_query)
+
+        messages = [
             {"role": "user", "content": "Previous question"},
-            {"role": "assistant", "content": "Previous answer"}
+            {"role": "assistant", "content": "Previous answer"},
+            {"role": "user", "content": "test"}
         ]
 
         response = self.client.post(
-            "/api/chat",
-            json={"message": "test", "stream": True, "history": history}
+            "/api/chat/stream",
+            json={"messages": messages}
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNotNone(captured_history)
         self.assertEqual(len(captured_history), 2)
-        
-        # Assert RAGEngine was instantiated
-        mock_rag_engine_class.assert_called_once()
-        
+
         # Assert history content is passed correctly
         self.assertEqual(captured_history[0]["role"], "user")
         self.assertEqual(captured_history[0]["content"], "Previous question")
         self.assertEqual(captured_history[1]["role"], "assistant")
         self.assertEqual(captured_history[1]["content"], "Previous answer")
 
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_stream_chat_empty_content_chunks(self, mock_rag_engine_class):
+    def test_stream_chat_empty_content_chunks(self):
         """Test streaming handles empty content chunks gracefully."""
-        mock_engine = mock_rag_engine_class.return_value
-        
         async def mock_query(*args, **kwargs):
             yield {"type": "content", "content": ""}
             yield {"type": "content", "content": "Actual content"}
             yield {"type": "done", "sources": [], "memories_used": []}
-        
-        mock_engine.query = mock_query
+
+        self._set_mock_rag_engine(mock_query)
 
         response = self.client.post(
-            "/api/chat",
-            json={"message": "test", "stream": True}
+            "/api/chat/stream",
+            json={"messages": [{"role": "user", "content": "test"}]}
         )
 
         events = self._parse_sse_events(response.text)
         content_events = [e['data'] for e in events if e.get('data', {}).get("type") == "content"]
-        
+
         # Should include empty content chunk
         self.assertEqual(len(content_events), 2)
         self.assertEqual(content_events[0].get("content"), "")
         self.assertEqual(content_events[1].get("content"), "Actual content")
 
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_stream_chat_single_chunk_response(self, mock_rag_engine_class):
+    def test_stream_chat_single_chunk_response(self):
         """Test streaming with single content chunk and done event."""
-        mock_engine = mock_rag_engine_class.return_value
-        
         async def mock_query(*args, **kwargs):
             yield {"type": "content", "content": "Complete response"}
             yield {"type": "done", "sources": [], "memories_used": []}
-        
-        mock_engine.query = mock_query
+
+        self._set_mock_rag_engine(mock_query)
 
         response = self.client.post(
-            "/api/chat",
-            json={"message": "test", "stream": True}
+            "/api/chat/stream",
+            json={"messages": [{"role": "user", "content": "test"}]}
         )
 
         events = self._parse_sse_events(response.text)
-        
+
         self.assertEqual(len(events), 2)
         self.assertEqual(events[0]['data'].get("type"), "content")
         self.assertEqual(events[0]['data'].get("content"), "Complete response")
@@ -334,30 +344,24 @@ data: {"type": "content", "content": "test"}
         # Retry field should not appear in parsed event
         self.assertNotIn('retry', events[0])
 
-    @patch("app.api.routes.chat.RAGEngine")
-    def test_stream_chat_newline_encoding_in_data(self, mock_rag_engine_class):
+    def test_stream_chat_newline_encoding_in_data(self):
         """Test streaming handles newline characters in content data."""
-        mock_engine = mock_rag_engine_class.return_value
-        
         async def mock_query(*args, **kwargs):
             yield {"type": "content", "content": "Line 1\nLine 2\nLine 3"}
             yield {"type": "done", "sources": [], "memories_used": []}
-        
-        mock_engine.query = mock_query
+
+        self._set_mock_rag_engine(mock_query)
 
         response = self.client.post(
-            "/api/chat",
-            json={"message": "test", "stream": True}
+            "/api/chat/stream",
+            json={"messages": [{"role": "user", "content": "test"}]}
         )
 
         events = self._parse_sse_events(response.text)
         content_events = [e['data'] for e in events if e.get('data', {}).get("type") == "content"]
-        
+
         self.assertEqual(len(content_events), 1)
         self.assertEqual(content_events[0].get("content"), "Line 1\nLine 2\nLine 3")
-        
-        # Assert RAGEngine was called
-        mock_rag_engine_class.assert_called_once()
 
 
 if __name__ == "__main__":

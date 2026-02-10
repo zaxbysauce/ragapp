@@ -25,8 +25,10 @@ class MemoryRecord:
     category: Optional[str]
     tags: Optional[str]
     source: Optional[str]
-    created_at: Optional[str]
-    updated_at: Optional[str]
+    vault_id: Optional[int] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    score: Optional[float] = None
 
 
 class MemoryStore:
@@ -51,28 +53,30 @@ class MemoryStore:
         category: Optional[str] = None,
         tags: Optional[str] = None,
         source: Optional[str] = None,
+        vault_id: Optional[int] = None,
     ) -> MemoryRecord:
         if not content or not content.strip():
             raise MemoryStoreError("Memory content cannot be empty")
 
         sql = """
-        INSERT INTO memories (content, category, tags, source)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO memories (content, category, tags, source, vault_id)
+        VALUES (?, ?, ?, ?, ?)
         """
         conn = self._connect()
         try:
-            cursor = conn.execute(sql, (content, category, tags, source))
+            cursor = conn.execute(sql, (content, category, tags, source, vault_id))
             conn.commit()
             memory_id = cursor.lastrowid
             if memory_id is None:
                 raise MemoryStoreError("Failed to insert memory")
-            # Fetch created_at and updated_at for the inserted row
+            # Fetch created_at, updated_at, and vault_id for the inserted row
             cursor = conn.execute(
-                "SELECT created_at, updated_at FROM memories WHERE id = ?", (memory_id,)
+                "SELECT created_at, updated_at, vault_id FROM memories WHERE id = ?", (memory_id,)
             )
             row = cursor.fetchone()
             created_at = row[0] if row else None
             updated_at = row[1] if row else None
+            retrieved_vault_id = row[2] if row else None
         finally:
             conn.close()
 
@@ -82,11 +86,12 @@ class MemoryStore:
             category=category,
             tags=tags,
             source=source,
+            vault_id=retrieved_vault_id,
             created_at=created_at,
             updated_at=updated_at,
         )
 
-    def search_memories(self, query: str, limit: int = 5) -> List[MemoryRecord]:
+    def search_memories(self, query: str, limit: int = 5, vault_id: Optional[int] = None) -> List[MemoryRecord]:
         if not query or not query.strip():
             return []
 
@@ -99,17 +104,32 @@ class MemoryStore:
         conn = self._connect()
         try:
             try:
-                cursor = conn.execute(
-                    """
-                    SELECT m.id, m.content, m.category, m.tags, m.source, m.created_at, m.updated_at, f.rank
+                # Build SQL query based on vault_id parameter
+                if vault_id is None:
+                    # No vault filter - return all memories (backward compatible)
+                    sql = """
+                    SELECT m.id, m.content, m.category, m.tags, m.source, m.vault_id, m.created_at, m.updated_at, f.rank
                     FROM memories_fts f
                     JOIN memories m ON f.rowid = m.id
                     WHERE memories_fts MATCH ?
                     ORDER BY rank
                     LIMIT ?
-                    """,
-                    (sanitized_query, limit),
-                )
+                    """
+                    params = (sanitized_query, limit)
+                else:
+                    # Filter to vault-scoped + global memories
+                    sql = """
+                    SELECT m.id, m.content, m.category, m.tags, m.source, m.vault_id, m.created_at, m.updated_at, f.rank
+                    FROM memories_fts f
+                    JOIN memories m ON f.rowid = m.id
+                    WHERE memories_fts MATCH ?
+                    AND (m.vault_id = ? OR m.vault_id IS NULL)
+                    ORDER BY rank
+                    LIMIT ?
+                    """
+                    params = (sanitized_query, vault_id, limit)
+
+                cursor = conn.execute(sql, params)
                 rows = cursor.fetchall()
             except sqlite3.Error as e:
                 raise MemoryStoreError(f"FTS query failed: {e}")
@@ -124,11 +144,12 @@ class MemoryStore:
                 category=row[2],
                 tags=row[3],
                 source=row[4],
-                created_at=row[5],
-                updated_at=row[6],
+                vault_id=row[5],
+                created_at=row[6],
+                updated_at=row[7],
             )
             # Attach score as an attribute (not part of dataclass but accessible)
-            record.score = row[7]
+            record.score = row[8]
             records.append(record)
         return records
 

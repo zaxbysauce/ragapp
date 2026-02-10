@@ -75,7 +75,8 @@ class FakeVectorStore:
         self,
         embedding: List[float],
         limit: int = 10,
-        filter_expr: Optional[str] = None
+        filter_expr: Optional[str] = None,
+        vault_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         return self._results[:limit]
 
@@ -122,7 +123,8 @@ class FakeMemoryStore:
         content: str,
         category: Optional[str] = None,
         tags: Optional[str] = None,
-        source: Optional[str] = None
+        source: Optional[str] = None,
+        vault_id: Optional[int] = None
     ) -> FakeMemoryRecord:
         self.added_memories.append({
             "content": content,
@@ -138,7 +140,7 @@ class FakeMemoryStore:
             source=source
         )
 
-    def search_memories(self, query: str, limit: int = 5) -> List[FakeMemoryRecord]:
+    def search_memories(self, query: str, limit: int = 5, vault_id: Optional[int] = None) -> List[FakeMemoryRecord]:
         return self._memories[:limit]
 
 

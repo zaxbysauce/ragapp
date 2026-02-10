@@ -9,6 +9,15 @@ const apiClient = axios.create({
   },
 });
 
+// Attach API key from localStorage if configured
+apiClient.interceptors.request.use((config) => {
+  const apiKey = localStorage.getItem("kv_api_key");
+  if (apiKey) {
+    config.headers.Authorization = `Bearer ${apiKey}`;
+  }
+  return config;
+});
+
 export interface HealthResponse {
   status: string;
   version?: string;
@@ -166,6 +175,31 @@ export interface ChatHistoryItem {
   messageCount: number;
 }
 
+export interface Vault {
+  id: number;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  file_count: number;
+  memory_count: number;
+  session_count: number;
+}
+
+export interface VaultListResponse {
+  vaults: Vault[];
+}
+
+export interface VaultCreateRequest {
+  name: string;
+  description?: string;
+}
+
+export interface VaultUpdateRequest {
+  name?: string;
+  description?: string;
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const response = await apiClient.get<HealthResponse>("/health");
   return response.data;
@@ -188,14 +222,40 @@ export async function testConnections(): Promise<ConnectionTestResult> {
   return response.data;
 }
 
+export async function listVaults(): Promise<VaultListResponse> {
+  const response = await apiClient.get<VaultListResponse>("/vaults");
+  return response.data;
+}
+
+export async function getVault(id: number): Promise<Vault> {
+  const response = await apiClient.get<Vault>(`/vaults/${id}`);
+  return response.data;
+}
+
+export async function createVault(request: VaultCreateRequest): Promise<Vault> {
+  const response = await apiClient.post<Vault>("/vaults", request);
+  return response.data;
+}
+
+export async function updateVault(id: number, request: VaultUpdateRequest): Promise<Vault> {
+  const response = await apiClient.put<Vault>(`/vaults/${id}`, request);
+  return response.data;
+}
+
+export async function deleteVault(id: number): Promise<void> {
+  await apiClient.delete(`/vaults/${id}`);
+}
+
 export async function searchMemories(
   request: SearchMemoriesRequest,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  vaultId?: number
 ): Promise<SearchMemoriesResponse> {
   try {
+    const body = { ...request, ...(vaultId != null && { vault_id: vaultId }) };
     const response = await apiClient.post<SearchMemoriesResponse>(
       "/memories/search",
-      request,
+      body,
       { signal }
     );
     return response.data;
@@ -210,13 +270,15 @@ export async function searchMemories(
 }
 
 export async function addMemory(
-  request: AddMemoryRequest
+  request: AddMemoryRequest,
+  vaultId?: number
 ): Promise<AddMemoryResponse> {
   try {
     // Ensure tags is always an array, never undefined
     const payload = {
       ...request,
       tags: request.tags ?? [],
+      ...(vaultId != null && { vault_id: vaultId }),
     };
     const response = await apiClient.post<AddMemoryResponse>("/memories", payload);
     return response.data;
@@ -237,14 +299,15 @@ export async function deleteMemory(id: string): Promise<void> {
   }
 }
 
-export async function listDocuments(): Promise<ListDocumentsResponse> {
-  const response = await apiClient.get<ListDocumentsResponse>("/documents");
+export async function listDocuments(vaultId?: number): Promise<ListDocumentsResponse> {
+  const response = await apiClient.get<ListDocumentsResponse>("/documents", vaultId != null ? { params: { vault_id: vaultId } } : undefined);
   return response.data;
 }
 
 export async function uploadDocument(
   file: File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  vaultId?: number
 ): Promise<UploadDocumentResponse> {
   const formData = new FormData();
   formData.append("file", file);
@@ -256,6 +319,7 @@ export async function uploadDocument(
       headers: {
         "Content-Type": "multipart/form-data",
       },
+      ...(vaultId != null && { params: { vault_id: vaultId } }),
       onUploadProgress: (progressEvent) => {
         if (onProgress) {
           if (progressEvent.total) {
@@ -279,25 +343,32 @@ export async function scanDocuments(): Promise<ScanDocumentsResponse> {
   return response.data;
 }
 
-export async function getDocumentStats(): Promise<DocumentStatsResponse> {
-  const response = await apiClient.get<DocumentStatsResponse>("/documents/stats");
+export async function getDocumentStats(vaultId?: number): Promise<DocumentStatsResponse> {
+  const response = await apiClient.get<DocumentStatsResponse>("/documents/stats", vaultId != null ? { params: { vault_id: vaultId } } : undefined);
   return response.data;
 }
 
 export function chatStream(
   messages: ChatMessage[],
-  callbacks: ChatStreamCallbacks
+  callbacks: ChatStreamCallbacks,
+  vaultId?: number
 ): () => void {
   const abortController = new AbortController();
 
   const startStream = async () => {
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      const apiKey = localStorage.getItem("kv_api_key");
+      if (apiKey) {
+        headers["Authorization"] = `Bearer ${apiKey}`;
+      }
+
       const response = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ messages }),
+        headers,
+        body: JSON.stringify({ messages, ...(vaultId != null && { vault_id: vaultId }) }),
         signal: abortController.signal,
       });
 
@@ -379,6 +450,14 @@ export function getChatHistory(): ChatHistoryItem[] {
     return [];
   } catch {
     return [];
+  }
+}
+
+export function saveChatHistory(history: ChatHistoryItem[]): void {
+  try {
+    localStorage.setItem("kv_chat_history", JSON.stringify(history));
+  } catch (err) {
+    console.error("Failed to save chat history:", err);
   }
 }
 

@@ -17,8 +17,9 @@ from app.api.routes.health import router as health_router
 from app.api.routes.memories import router as memories_router
 from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
+from app.api.routes.vaults import router as vaults_router
 from app.config import settings
-from app.models.database import init_db
+from app.models.database import init_db, get_pool
 from app.services.llm_client import LLMClient
 from app.services.vector_store import VectorStore
 from app.services.memory_store import MemoryStore
@@ -70,6 +71,7 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     # Startup: Initialize database and services
     init_db(str(settings.sqlite_path))
+    app.state.db_pool = get_pool(str(settings.sqlite_path), max_size=10)
     app.state.llm_client = LLMClient()
     app.state.llm_client.start()
     app.state.embedding_service = EmbeddingService()
@@ -110,6 +112,7 @@ async def lifespan(app: FastAPI):
     await app.state.background_processor.stop()
     await app.state.llm_client.close()
     app.state.vector_store.close()
+    app.state.db_pool.close_all()
 
 
 app = FastAPI(
@@ -143,6 +146,7 @@ app.include_router(search_router, prefix="/api")
 app.include_router(memories_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
+app.include_router(vaults_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 
 # Register exception handler for validation errors (empty filename)

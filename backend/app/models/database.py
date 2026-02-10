@@ -12,9 +12,19 @@ from contextlib import contextmanager
 
 # Database schema definition
 SCHEMA = """
+-- Vaults table: stores document collection vaults
+CREATE TABLE IF NOT EXISTS vaults (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Files table: stores uploaded file metadata
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vault_id INTEGER NOT NULL DEFAULT 1,
     file_path TEXT NOT NULL,
     file_name TEXT NOT NULL,
     file_hash TEXT,
@@ -25,12 +35,14 @@ CREATE TABLE IF NOT EXISTS files (
     error_message TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     processed_at TIMESTAMP,
-    modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (vault_id) REFERENCES vaults(id)
 );
 
 -- Memories table: stores processed document chunks with embeddings
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vault_id INTEGER,
     content TEXT NOT NULL,
     category TEXT,
     tags TEXT,       -- JSON array of tags
@@ -66,9 +78,11 @@ END;
 -- Chat sessions table: stores conversation sessions
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vault_id INTEGER NOT NULL DEFAULT 1,
     title TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (vault_id) REFERENCES vaults(id)
 );
 
 -- Chat messages table: stores individual messages within sessions
@@ -85,6 +99,9 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 -- Index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
+CREATE INDEX IF NOT EXISTS idx_files_vault_id ON files(vault_id);
+CREATE INDEX IF NOT EXISTS idx_memories_vault_id ON memories(vault_id);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_vault_id ON chat_sessions(vault_id);
 
 -- Document actions for auditing admin operations
 CREATE TABLE IF NOT EXISTS document_actions (
@@ -153,6 +170,10 @@ def init_db(sqlite_path: str) -> None:
     try:
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.executescript(SCHEMA)
+        # Ensure default vault exists
+        conn.execute(
+            "INSERT OR IGNORE INTO vaults (id, name, description) VALUES (1, 'Default', 'Default vault')"
+        )
         conn.commit()
     finally:
         conn.close()
@@ -173,6 +194,66 @@ def run_migrations(sqlite_path: str) -> None:
         None
     """
     init_db(sqlite_path)
+    migrate_add_vaults(sqlite_path)
+
+
+def migrate_add_vaults(sqlite_path: str) -> None:
+    """
+    Migration: Add vaults table and vault_id columns to existing databases.
+    
+    This migration is idempotent — safe to run multiple times.
+    It creates the vaults table, inserts a default vault, adds vault_id
+    columns to files/memories/chat_sessions if missing, and backfills
+    existing rows with the default vault.
+    
+    Args:
+        sqlite_path: Path to the SQLite database file.
+    """
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+        
+        # 1. Create vaults table if not exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS vaults (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # 2. Insert default vault
+        conn.execute(
+            "INSERT OR IGNORE INTO vaults (id, name, description) VALUES (1, 'Default', 'Default vault')"
+        )
+        
+        # 3. Add vault_id columns if missing (SQLite doesn't support IF NOT EXISTS for columns)
+        def _column_exists(table: str, column: str) -> bool:
+            cursor = conn.execute(f"PRAGMA table_info({table})")
+            return any(row[1] == column for row in cursor.fetchall())
+        
+        if not _column_exists("files", "vault_id"):
+            conn.execute("ALTER TABLE files ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1 REFERENCES vaults(id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_vault_id ON files(vault_id)")
+        
+        if not _column_exists("memories", "vault_id"):
+            conn.execute("ALTER TABLE memories ADD COLUMN vault_id INTEGER")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_vault_id ON memories(vault_id)")
+        
+        if not _column_exists("chat_sessions", "vault_id"):
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1 REFERENCES vaults(id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_vault_id ON chat_sessions(vault_id)")
+        
+        # 4. Backfill existing rows with default vault
+        conn.execute("UPDATE files SET vault_id = 1 WHERE vault_id IS NULL")
+        conn.execute("UPDATE chat_sessions SET vault_id = 1 WHERE vault_id IS NULL")
+        # memories: NULL vault_id is intentional (global), no backfill needed
+        
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_db_connection(sqlite_path: str) -> sqlite3.Connection:

@@ -1,5 +1,6 @@
 """Admin routes for managing feature toggles."""
 
+import asyncio
 from datetime import datetime
 import hmac
 import hashlib
@@ -7,9 +8,9 @@ import hashlib
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
-from app.api.deps import get_secret_manager, get_toggle_manager
-from app.config import settings
-from app.models.database import get_db_connection
+from app.api.deps import get_secret_manager, get_toggle_manager, get_settings, get_db
+from app.config import Settings, settings
+import sqlite3
 from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
 
@@ -50,11 +51,12 @@ def _compute_hmac(key: bytes, feature: str, enabled: bool, user_id: str | None, 
 async def set_toggle(
     payload: TogglePayload,
     request: Request,
+    conn: sqlite3.Connection = Depends(get_db),
     toggle_manager: ToggleManager = Depends(get_toggle_manager),
     secret_manager: SecretManager = Depends(get_secret_manager),
     auth: dict = Depends(require_admin_scope("admin:config")),
 ):
-    toggle_manager.set_toggle(payload.feature, payload.enabled)
+    await asyncio.to_thread(toggle_manager.set_toggle, payload.feature, payload.enabled)
     key, key_version = secret_manager.get_hmac_key()
     try:
         hmac_digest, timestamp = _compute_hmac(
@@ -66,25 +68,24 @@ async def set_toggle(
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to compute audit HMAC: {exc}")
-    conn = get_db_connection(str(settings.sqlite_path))
-    try:
-        conn.execute(
-            """
-            INSERT INTO audit_toggle_log(feature, enabled, user_id, ip, timestamp, key_version, hmac_sha256)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload.feature,
-                int(payload.enabled),
-                auth.get("user_id"),
-                request.client.host if request.client else None,
-                timestamp,
-                key_version,
-                hmac_digest,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    request.app.state.model_validation = toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
+    await asyncio.to_thread(
+        conn.execute,
+        """
+        INSERT INTO audit_toggle_log(feature, enabled, user_id, ip, timestamp, key_version, hmac_sha256)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload.feature,
+            int(payload.enabled),
+            auth.get("user_id"),
+            request.client.host if request.client else None,
+            timestamp,
+            key_version,
+            hmac_digest,
+        ),
+    )
+    await asyncio.to_thread(conn.commit)
+    request.app.state.model_validation = await asyncio.to_thread(
+        toggle_manager.get_toggle, "model_validation", settings.enable_model_validation
+    )
     return {"feature": payload.feature, "enabled": payload.enabled, "hmac": hmac_digest}

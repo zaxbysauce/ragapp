@@ -4,7 +4,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
 from app.config import settings
 from app.api.deps import get_csrf_manager
-from app.security import CSRFManager, issue_csrf_token
+from app.security import CSRFManager, issue_csrf_token, require_auth
 
 router = APIRouter()
 
@@ -176,7 +176,10 @@ def get_settings():
 
 
 @router.post("/settings")
-def update_settings(update: SettingsUpdate):
+def update_settings(
+    update: SettingsUpdate,
+    auth: dict = Depends(require_auth),
+):
     """Update runtime settings.
 
     NOTE: Changes are applied in-memory only and will be lost on server restart.
@@ -186,7 +189,10 @@ def update_settings(update: SettingsUpdate):
 
 
 @router.put("/settings")
-def update_settings_put(update: SettingsUpdate):
+def update_settings_put(
+    update: SettingsUpdate,
+    auth: dict = Depends(require_auth),
+):
     """Update runtime settings (PUT method).
 
     NOTE: Changes are applied in-memory only and will be lost on server restart.

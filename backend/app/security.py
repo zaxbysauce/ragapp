@@ -147,11 +147,14 @@ def require_scope(scope: str) -> Callable:
             raise HTTPException(status_code=401, detail="Authorization header missing")
         if not authorization.lower().startswith("bearer "):
             raise HTTPException(status_code=401, detail="Invalid authorization header")
-        token = authorization.split(" ", 1)[1]
+        parts = authorization.split(" ", 1)
+        if len(parts) < 2 or not parts[1].strip():
+            raise HTTPException(status_code=401, detail="Invalid authorization header")
+        token = parts[1].strip()
         scopes = [s.strip().lower() for s in x_scopes.split(",") if s.strip()]
         if scope.lower() not in scopes:
             raise HTTPException(status_code=403, detail="Missing required scope")
-        if token != settings.admin_secret_token:
+        if not secrets.compare_digest(token, settings.admin_secret_token):
             raise HTTPException(status_code=403, detail="Unauthorized token")
         return {"user_id": token}
 
@@ -182,6 +185,26 @@ def issue_csrf_token(response: Response, csrf_manager: CSRFManager) -> str:
         httponly=False,
     )
     return token
+
+
+def require_auth(
+    authorization: str = Header(None),
+) -> dict:
+    """Simple Bearer token auth. Skips if admin_secret_token is unconfigured."""
+    token_configured = settings.admin_secret_token not in ("", "admin-secret-token")
+    if not token_configured:
+        return {"authenticated": True}
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header required")
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization scheme")
+    parts = authorization.split(" ", 1)
+    if len(parts) < 2 or not parts[1].strip():
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    token = parts[1].strip()
+    if not secrets.compare_digest(token, settings.admin_secret_token):
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    return {"authenticated": True}
 
 
 def log_action_digest(key: bytes, *parts: str) -> str:

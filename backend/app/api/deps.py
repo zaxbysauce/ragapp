@@ -1,8 +1,12 @@
 """FastAPI dependency functions."""
 
+import sqlite3
+from contextlib import contextmanager
+
 from fastapi import Request, Depends
 
 from app.config import Settings, settings
+from app.models.database import get_pool
 from app.services.llm_client import LLMClient
 from app.services.embeddings import EmbeddingService
 from app.services.vector_store import VectorStore
@@ -10,7 +14,19 @@ from app.services.memory_store import MemoryStore
 from app.services.rag_engine import RAGEngine
 from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
+from app.services.background_tasks import BackgroundProcessor
+from app.services.maintenance import MaintenanceService
 from app.security import get_csrf_manager
+
+
+def get_db():
+    """Yield a database connection from the pool, releasing it when done."""
+    pool = get_pool(str(settings.sqlite_path))
+    conn = pool.get_connection()
+    try:
+        yield conn
+    finally:
+        pool.release_connection(conn)
 
 
 def get_settings() -> Settings:
@@ -59,3 +75,13 @@ def get_toggle_manager(request: Request) -> ToggleManager:
 
 def get_secret_manager(request: Request) -> SecretManager:
     return request.app.state.secret_manager
+
+
+def get_background_processor(request: Request) -> BackgroundProcessor:
+    """Return the background processor from app state."""
+    return request.app.state.background_processor
+
+
+def get_maintenance_service(request: Request) -> MaintenanceService:
+    """Return the maintenance service from app state."""
+    return request.app.state.maintenance_service

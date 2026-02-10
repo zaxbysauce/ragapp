@@ -10,7 +10,7 @@ import json
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import List, Any, Optional
 
@@ -134,20 +134,21 @@ class DocumentProcessor:
         self.vector_store = vector_store
         self.embedding_service = embedding_service
 
-    def _check_duplicate(self, file_hash: str, conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
+    def _check_duplicate(self, file_hash: str, conn: sqlite3.Connection, vault_id: int = 1) -> Optional[sqlite3.Row]:
         """
         Check if a file with the given hash already exists and is indexed.
 
         Args:
             file_hash: The hash of the file to check
             conn: Database connection
+            vault_id: The vault ID to check for duplicates in (defaults to 1)
 
         Returns:
             The existing file row if found and indexed, None otherwise
         """
         cursor = conn.execute(
-            "SELECT * FROM files WHERE file_hash = ? AND status = 'indexed'",
-            (file_hash,)
+            "SELECT * FROM files WHERE file_hash = ? AND vault_id = ? AND status = 'indexed'",
+            (file_hash, vault_id)
         )
         return cursor.fetchone()
 
@@ -155,7 +156,8 @@ class DocumentProcessor:
         self,
         file_path: str,
         file_hash: str,
-        conn: sqlite3.Connection
+        conn: sqlite3.Connection,
+        vault_id: int = 1
     ) -> int:
         """
         Insert a new file record or update existing one, returning the file ID.
@@ -164,6 +166,7 @@ class DocumentProcessor:
             file_path: Path to the file
             file_hash: Computed hash of the file
             conn: Database connection
+            vault_id: The vault ID for the file (defaults to 1)
 
         Returns:
             The file ID (database row ID)
@@ -175,7 +178,7 @@ class DocumentProcessor:
         file_name = path.name
         file_size = path.stat().st_size
         file_type = path.suffix.lower() if path.suffix else None
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         path_str = str(file_path)
 
         try:
@@ -198,20 +201,20 @@ class DocumentProcessor:
                 # Update existing record
                 conn.execute(
                     """UPDATE files
-                       SET file_hash = ?, file_size = ?, file_type = ?,
+                       SET file_hash = ?, file_size = ?, file_type = ?, vault_id = ?,
                            status = 'pending', error_message = NULL,
                            modified_at = ?, processed_at = NULL
                        WHERE id = ?""",
-                    (file_hash, file_size, file_type, now, file_id)
+                    (file_hash, file_size, file_type, vault_id, now, file_id)
                 )
             else:
                 # Insert new record
                 cursor = conn.execute(
                     """INSERT INTO files
-                       (file_path, file_name, file_hash, file_size, file_type,
+                       (file_path, file_name, file_hash, file_size, file_type, vault_id,
                         status, created_at, modified_at)
-                       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)""",
-                    (path_str, file_name, file_hash, file_size, file_type, now, now)
+                       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                    (path_str, file_name, file_hash, file_size, file_type, vault_id, now, now)
                 )
                 lastrowid = cursor.lastrowid
                 if lastrowid is None:
@@ -252,7 +255,7 @@ class DocumentProcessor:
         Note:
             This method does not commit - caller is responsible for transaction management.
         """
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
 
         if status == 'indexed':
             conn.execute(
@@ -329,12 +332,13 @@ class DocumentProcessor:
         elements = await asyncio.to_thread(self.parser.parse, file_path)
         return await asyncio.to_thread(self.chunker.chunk_elements, elements)
 
-    async def process_file(self, file_path: str) -> ProcessedDocument:
+    async def process_file(self, file_path: str, vault_id: int = 1) -> ProcessedDocument:
         """
         Process a file with status tracking and deduplication.
 
         Args:
             file_path: Path to the file to process
+            vault_id: The vault ID to associate the file with (defaults to 1)
 
         Returns:
             ProcessedDocument containing file_id and chunks
@@ -360,14 +364,14 @@ class DocumentProcessor:
 
         try:
             # Check for duplicates
-            duplicate = self._check_duplicate(file_hash, conn)
+            duplicate = self._check_duplicate(file_hash, conn, vault_id)
             if duplicate:
                 raise DuplicateFileError(
                     f"File with hash {file_hash} already indexed as '{duplicate['file_path']}'"
                 )
 
             # Insert or get file record (handles its own commit)
-            file_id = self._insert_or_get_file_record(file_path, file_hash, conn)
+            file_id = self._insert_or_get_file_record(file_path, file_hash, conn, vault_id)
 
             try:
                 # Update status to processing
@@ -405,6 +409,7 @@ class DocumentProcessor:
                                 "text": chunk.text,
                                 "file_id": str(file_id),
                                 "chunk_index": chunk.chunk_index,
+                                "vault_id": str(vault_id),
                                 "metadata": json.dumps(chunk.metadata),
                                 "embedding": embedding
                             })

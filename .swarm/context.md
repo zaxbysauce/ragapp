@@ -1,7 +1,7 @@
 # KnowledgeVault Context
 
 **Project:** KnowledgeVault - Self-Hosted RAG Knowledge Base  
-**Swarm:** mega  
+**Swarm:** paid  
 **Current Phase:** 7 (Complete)
 **Last Updated:** 2026-02-04
 
@@ -291,12 +291,14 @@ Phase 7 Tasks COMPLETED:
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| read | 267 | 267 | 0 | 16ms |
-| bash | 196 | 196 | 0 | 1902ms |
-| edit | 152 | 152 | 0 | 1140ms |
-| glob | 84 | 84 | 0 | 58ms |
-| write | 76 | 76 | 0 | 1846ms |
-| task | 33 | 33 | 0 | 169482ms |
-| apply_patch | 26 | 26 | 0 | 1896ms |
-| grep | 22 | 22 | 0 | 45ms |
-| todowrite | 4 | 4 | 0 | 3ms |
+| read | 1102 | 1102 | 0 | 7ms |
+| bash | 355 | 355 | 0 | 1734ms |
+| edit | 284 | 284 | 0 | 551ms |
+| glob | 160 | 160 | 0 | 10351ms |
+| task | 149 | 149 | 0 | 112887ms |
+| write | 127 | 127 | 0 | 310ms |
+| todowrite | 85 | 85 | 0 | 3ms |
+| grep | 73 | 73 | 0 | 92ms |
+| apply_patch | 49 | 49 | 0 | 46ms |
+| memory_set | 4 | 4 | 0 | 4ms |
+| detect_domains | 1 | 1 | 0 | 1ms |

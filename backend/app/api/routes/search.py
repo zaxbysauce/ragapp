@@ -3,14 +3,16 @@ Semantic search API routes for document chunks.
 
 Provides endpoints for searching document chunks using vector similarity.
 """
+import asyncio
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.services.embeddings import EmbeddingService, EmbeddingError
 from app.services.vector_store import VectorStore, VectorStoreError
+from app.api.deps import get_embedding_service, get_vector_store
 
 
 router = APIRouter()
@@ -20,6 +22,7 @@ class SearchRequest(BaseModel):
     """Request model for semantic search endpoint."""
     query: str = Field(..., min_length=1, max_length=1000)
     limit: int = Field(10, ge=1, le=100)
+    vault_id: Optional[int] = None
 
 
 class SearchResult(BaseModel):
@@ -38,7 +41,11 @@ class SearchResponse(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search(request: SearchRequest):
+async def search(
+    request: SearchRequest,
+    embedding_service: EmbeddingService = Depends(get_embedding_service),
+    vector_store: VectorStore = Depends(get_vector_store),
+):
     """
     Semantic search endpoint for document chunks.
     
@@ -61,21 +68,20 @@ async def search(request: SearchRequest):
         )
 
     try:
-        # Initialize services
-        embedding_service = EmbeddingService()
-        vector_store = VectorStore()
-
         # Generate embedding for the query
         query_embedding = await embedding_service.embed_single(request.query)
         
         # Initialize vector store table
         embedding_dim = len(query_embedding)
-        vector_store.init_table(embedding_dim)
+        await asyncio.to_thread(vector_store.init_table, embedding_dim)
         
         # Perform semantic search
-        raw_results = vector_store.search(
+        vault_id_str = str(request.vault_id) if request.vault_id is not None else None
+        raw_results = await asyncio.to_thread(
+            vector_store.search,
             embedding=query_embedding,
-            limit=request.limit
+            limit=request.limit,
+            vault_id=vault_id_str
         )
         
         # Transform results to response model

@@ -137,7 +137,7 @@ class FakeVectorStore:
         self.stored_chunks: List[Dict] = []
         self.deleted_file_ids: List[str] = []
     
-    def search(self, embedding: List[float], limit: int = 10, filter_expr=None) -> List[Dict]:
+    def search(self, embedding: List[float], limit: int = 10, filter_expr=None, vault_id=None) -> List[Dict]:
         return self.search_results[:limit]
     
     def add_chunks(self, records: List[Dict]):
@@ -169,7 +169,8 @@ class FakeMemoryStore:
         return self._intent
     
     def add_memory(self, content: str, category: Optional[str] = None, 
-                   tags: Optional[str] = None, source: Optional[str] = None):
+                   tags: Optional[str] = None, source: Optional[str] = None,
+                   vault_id: Optional[int] = None):
         self.added_memories.append({
             "content": content,
             "category": category,
@@ -187,7 +188,7 @@ class FakeMemoryStore:
             updated_at=None
         )
     
-    def search_memories(self, query: str, limit: int = 5) -> List:
+    def search_memories(self, query: str, limit: int = 5, vault_id=None) -> List:
         return self._memories[:limit]
 
 
@@ -348,18 +349,18 @@ class TestIntegration(unittest.TestCase):
         docs_data = response.json()
         self.assertIn("documents", docs_data)
     
-    @patch("app.api.routes.chat.get_rag_engine")
-    def test_chat_with_indexed_document(self, mock_get_rag_engine):
+    def test_chat_with_indexed_document(self):
         """Test chat endpoint returns response with sources."""
         from fastapi.testclient import TestClient
         from app.main import app
         from app.services.rag_engine import RAGEngine
-        
+        from app.api.deps import get_rag_engine
+
         # Setup mocks for app state
         setup_app_state(app)
-        
+
         client = TestClient(app)
-        
+
         # Setup fake vector store with search results
         self.fake_vector_store.search_results = [
             {
@@ -369,12 +370,12 @@ class TestIntegration(unittest.TestCase):
                 "score": 0.95
             }
         ]
-        
+
         # Setup fake memory
         fake_memory = MagicMock()
         fake_memory.content = "Remember this important fact"
         self.fake_memory_store._memories = [fake_memory]
-        
+
         # Create RAG engine with fake services
         rag_engine = RAGEngine(
             embedding_service=self.fake_embedding_service,
@@ -382,27 +383,32 @@ class TestIntegration(unittest.TestCase):
             memory_store=self.fake_memory_store,
             llm_client=self.fake_llm_client
         )
-        mock_get_rag_engine.return_value = rag_engine
-        
-        # Send chat request
-        response = client.post(
-            "/api/chat",
-            json={
-                "message": "What information is in the document?",
-                "history": [],
-                "stream": False
-            }
-        )
-        
-        self.assertEqual(response.status_code, 200)
-        chat_data = response.json()
-        self.assertIn("content", chat_data)
-        self.assertIn("sources", chat_data)
-        self.assertIn("memories_used", chat_data)
-        
-        # Verify sources are included
-        self.assertEqual(len(chat_data["sources"]), 1)
-        self.assertEqual(chat_data["sources"][0]["file_id"], "123")
+        # Override dependency to use our fake RAG engine
+        app.dependency_overrides[get_rag_engine] = lambda: rag_engine
+
+        try:
+            # Send chat request
+            response = client.post(
+                "/api/chat",
+                json={
+                    "message": "What information is in the document?",
+                    "history": [],
+                    "stream": False
+                }
+            )
+
+            self.assertEqual(response.status_code, 200)
+            chat_data = response.json()
+            self.assertIn("content", chat_data)
+            self.assertIn("sources", chat_data)
+            self.assertIn("memories_used", chat_data)
+
+            # Verify sources are included
+            self.assertEqual(len(chat_data["sources"]), 1)
+            self.assertEqual(chat_data["sources"][0]["file_id"], "123")
+        finally:
+            # Clean up dependency override
+            app.dependency_overrides.pop(get_rag_engine, None)
     
     @patch("app.api.routes.chat.get_rag_engine")
     def test_chat_streaming_response(self, mock_get_rag_engine):
@@ -616,18 +622,18 @@ class TestIntegration(unittest.TestCase):
     # Test: Error Cases for Embedding/Chat Downtime
     # ==========================================================================
     
-    @patch("app.api.routes.chat.get_rag_engine")
-    def test_chat_with_embedding_service_down(self, mock_get_rag_engine):
+    def test_chat_with_embedding_service_down(self):
         """Test chat handles embedding service downtime gracefully."""
         from fastapi.testclient import TestClient
         from app.main import app
         from app.services.rag_engine import RAGEngine
-        
+        from app.api.deps import get_rag_engine
+
         # Setup mocks for app state
         setup_app_state(app)
-        
+
         client = TestClient(app)
-        
+
         # Create RAG engine with failing embedding service
         failing_embedding = FakeEmbeddingService(raise_error=True)
         rag_engine = RAGEngine(
@@ -636,34 +642,39 @@ class TestIntegration(unittest.TestCase):
             memory_store=self.fake_memory_store,
             llm_client=self.fake_llm_client
         )
-        mock_get_rag_engine.return_value = rag_engine
-        
-        response = client.post(
-            "/api/chat",
-            json={
-                "message": "Test message",
-                "history": [],
-                "stream": False
-            }
-        )
-        
-        # Should return 503 Service Unavailable
-        self.assertEqual(response.status_code, 503)
-        error_data = response.json()
-        self.assertIn("detail", error_data)
+        # Override dependency to use our fake RAG engine
+        app.dependency_overrides[get_rag_engine] = lambda: rag_engine
+
+        try:
+            response = client.post(
+                "/api/chat",
+                json={
+                    "message": "Test message",
+                    "history": [],
+                    "stream": False
+                }
+            )
+
+            # Should return 503 Service Unavailable
+            self.assertEqual(response.status_code, 503)
+            error_data = response.json()
+            self.assertIn("detail", error_data)
+        finally:
+            # Clean up dependency override
+            app.dependency_overrides.pop(get_rag_engine, None)
     
-    @patch("app.api.routes.chat.get_rag_engine")
-    def test_chat_with_llm_service_down(self, mock_get_rag_engine):
+    def test_chat_with_llm_service_down(self):
         """Test chat handles LLM service downtime gracefully."""
         from fastapi.testclient import TestClient
         from app.main import app
         from app.services.rag_engine import RAGEngine
-        
+        from app.api.deps import get_rag_engine
+
         # Setup mocks for app state
         setup_app_state(app)
-        
+
         client = TestClient(app)
-        
+
         # Create RAG engine with failing LLM client
         failing_llm = FakeLLMClient(raise_error=True)
         rag_engine = RAGEngine(
@@ -672,34 +683,39 @@ class TestIntegration(unittest.TestCase):
             memory_store=self.fake_memory_store,
             llm_client=failing_llm
         )
-        mock_get_rag_engine.return_value = rag_engine
-        
-        response = client.post(
-            "/api/chat",
-            json={
-                "message": "Test message",
-                "history": [],
-                "stream": False
-            }
-        )
-        
-        # Should return 503 Service Unavailable
-        self.assertEqual(response.status_code, 503)
-        error_data = response.json()
-        self.assertIn("detail", error_data)
+        # Override dependency to use our fake RAG engine
+        app.dependency_overrides[get_rag_engine] = lambda: rag_engine
+
+        try:
+            response = client.post(
+                "/api/chat",
+                json={
+                    "message": "Test message",
+                    "history": [],
+                    "stream": False
+                }
+            )
+
+            # Should return 503 Service Unavailable
+            self.assertEqual(response.status_code, 503)
+            error_data = response.json()
+            self.assertIn("detail", error_data)
+        finally:
+            # Clean up dependency override
+            app.dependency_overrides.pop(get_rag_engine, None)
     
-    @patch("app.api.routes.chat.get_rag_engine")
-    def test_chat_streaming_with_llm_error(self, mock_get_rag_engine):
+    def test_chat_streaming_with_llm_error(self):
         """Test streaming chat handles LLM errors gracefully."""
         from fastapi.testclient import TestClient
         from app.main import app
         from app.services.rag_engine import RAGEngine
-        
+        from app.api.deps import get_rag_engine
+
         # Setup mocks for app state
         setup_app_state(app)
-        
+
         client = TestClient(app)
-        
+
         failing_llm = FakeLLMClient(raise_error=True)
         rag_engine = RAGEngine(
             embedding_service=self.fake_embedding_service,
@@ -707,19 +723,24 @@ class TestIntegration(unittest.TestCase):
             memory_store=self.fake_memory_store,
             llm_client=failing_llm
         )
-        mock_get_rag_engine.return_value = rag_engine
-        
-        response = client.post(
-            "/api/chat/stream",
-            json={
-                "messages": [{"role": "user", "content": "Test"}]
-            }
-        )
-        
-        # Streaming endpoint returns 200 but includes error in stream
-        self.assertEqual(response.status_code, 200)
-        content = response.text
-        self.assertIn("error", content.lower())
+        # Override dependency to use our fake RAG engine
+        app.dependency_overrides[get_rag_engine] = lambda: rag_engine
+
+        try:
+            response = client.post(
+                "/api/chat/stream",
+                json={
+                    "messages": [{"role": "user", "content": "Test"}]
+                }
+            )
+
+            # Streaming endpoint returns 200 but includes error in stream
+            self.assertEqual(response.status_code, 200)
+            content = response.text
+            self.assertIn("error", content.lower())
+        finally:
+            # Clean up dependency override
+            app.dependency_overrides.pop(get_rag_engine, None)
     
     # ==========================================================================
     # Test: Document Upload Error Cases
@@ -774,14 +795,14 @@ class TestIntegration(unittest.TestCase):
         setup_app_state(app)
         
         client = TestClient(app)
-        
+
         response = client.post(
             "/api/documents/upload",
             files={"file": ("", BytesIO(b"test"), "text/plain")}
         )
-        
-        # Should either use default name or return error
-        self.assertIn(response.status_code, [200, 400])
+
+        # Empty filename should return 422 (validation error)
+        self.assertEqual(response.status_code, 422)
     
     # ==========================================================================
     # Test: Health and Status Endpoints

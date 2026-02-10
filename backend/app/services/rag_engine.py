@@ -13,6 +13,9 @@ from app.services.memory_store import MemoryRecord, MemoryStore
 from app.services.vector_store import VectorStore
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass
 class RAGSource:
     text: str
@@ -37,11 +40,23 @@ class RAGEngine:
         vector_store_instance: Optional[VectorStore] = None,
         memory_store_instance: Optional[MemoryStore] = None,
     ) -> None:
+        # Use fallback creation for backward compatibility with tests
         self.embedding_service = embedding_service or EmbeddingService()
         # Support both naming conventions for backward compatibility with tests
         self.vector_store = vector_store or vector_store_instance or VectorStore()
         self.memory_store = memory_store or memory_store_instance or MemoryStore()
         self.llm_client = llm_client or LLMClient()
+
+        # Log warnings for missing dependencies (indicates non-DI usage)
+        if embedding_service is None:
+            logger.warning("RAGEngine created without injected embedding_service - using default instance")
+        if (vector_store is None and vector_store_instance is None):
+            logger.warning("RAGEngine created without injected vector_store - using default instance")
+        if (memory_store is None and memory_store_instance is None):
+            logger.warning("RAGEngine created without injected memory_store - using default instance")
+        if llm_client is None:
+            logger.warning("RAGEngine created without injected llm_client - using default instance")
+
         self.relevance_threshold = settings.rag_relevance_threshold
         self.top_k = settings.vector_top_k
         self.maintenance_mode = settings.maintenance_mode
@@ -52,12 +67,13 @@ class RAGEngine:
         user_input: str,
         chat_history: List[Dict[str, Any]],
         stream: bool = False,
+        vault_id: Optional[int] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Execute a RAG query: embed, search, build prompt, call LLM."""
         try:
             memory_content = self.memory_store.detect_memory_intent(user_input)
             if memory_content:
-                memory = self.memory_store.add_memory(memory_content, source="chat")
+                memory = self.memory_store.add_memory(memory_content, source="chat", vault_id=vault_id)
                 yield {
                     "type": "content",
                     "content": f"Memory stored: {memory.content}",
@@ -86,6 +102,7 @@ class RAGEngine:
                     self.vector_store.search,
                     query_embedding,
                     self.top_k,
+                    vault_id=str(vault_id) if vault_id is not None else None,
                 )
             except Exception as exc:
                 fallback_reason = str(exc)
@@ -115,6 +132,7 @@ class RAGEngine:
                 self.memory_store.search_memories,
                 user_input,
                 settings.max_context_chunks,
+                vault_id=vault_id,
             )
         except Exception as exc:
             self.logger.error("Memory search failed: %s", exc)
