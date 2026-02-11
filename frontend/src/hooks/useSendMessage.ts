@@ -17,9 +17,6 @@ export function useSendMessage(
   refreshHistory: () => Promise<void>
 ): UseSendMessageReturn {
   const {
-    input,
-    isStreaming,
-    messages,
     setInput,
     setIsStreaming,
     setAbortFn,
@@ -29,13 +26,14 @@ export function useSendMessage(
   } = useChatStore();
 
   const handleSend = useCallback(async () => {
-    if (!input.trim() || isStreaming) return;
-    if (input.length > MAX_INPUT_LENGTH) {
+    const { input: currentInput, isStreaming: currentIsStreaming } = useChatStore.getState();
+    if (!currentInput.trim() || currentIsStreaming) return;
+    if (currentInput.length > MAX_INPUT_LENGTH) {
       setInputError(`Input exceeds maximum length of ${MAX_INPUT_LENGTH} characters`);
       return;
     }
 
-    const userContent = input.trim();
+    const userContent = currentInput.trim();
 
     // Get or create session
     const currentState = useChatStore.getState();
@@ -50,6 +48,7 @@ export function useSendMessage(
         useChatStore.setState({ activeChatId: newSession.id.toString() });
       } catch (err) {
         console.error("Failed to create chat session:", err);
+        setInputError("Failed to start chat session. Please check your connection.");
         return;
       }
     }
@@ -69,8 +68,9 @@ export function useSendMessage(
       content: "",
     };
 
+    const currentMessages = useChatStore.getState().messages;
     const chatMessages: ChatMessage[] = [
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
+      ...currentMessages.map((m) => ({ role: m.role, content: m.content })),
       { role: "user", content: userMessage.content },
     ];
 
@@ -129,9 +129,6 @@ export function useSendMessage(
     setInput("");
     setInputError(null);
   }, [
-    input,
-    isStreaming,
-    messages,
     setInput,
     setIsStreaming,
     setAbortFn,

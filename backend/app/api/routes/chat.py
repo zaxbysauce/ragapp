@@ -335,11 +335,11 @@ async def create_session(
     Returns the created session with its ID.
     """
     query = "INSERT INTO chat_sessions (vault_id, title, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-    await asyncio.to_thread(conn.execute, query, (request.vault_id, request.title))
+    cursor = await asyncio.to_thread(conn.execute, query, (request.vault_id, request.title))
     await asyncio.to_thread(conn.commit)
 
     # Get the created session
-    session_id = conn.lastrowid
+    session_id = cursor.lastrowid
     select_query = "SELECT id, vault_id, title, created_at, updated_at FROM chat_sessions WHERE id = ?"
     result = await asyncio.to_thread(conn.execute, select_query, (session_id,))
     row = await asyncio.to_thread(result.fetchone)
@@ -395,7 +395,7 @@ async def add_message(
         INSERT INTO chat_messages (session_id, role, content, sources, created_at)
         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
     """
-    await asyncio.to_thread(conn.execute, insert_query, (session_id, request.role, request.content, sources_json))
+    cursor = await asyncio.to_thread(conn.execute, insert_query, (session_id, request.role, request.content, sources_json))
 
     # Update session's updated_at
     update_query = "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
@@ -403,7 +403,7 @@ async def add_message(
     await asyncio.to_thread(conn.commit)
 
     # Get the created message
-    message_id = conn.lastrowid
+    message_id = cursor.lastrowid
     select_query = "SELECT id, role, content, sources, created_at FROM chat_messages WHERE id = ?"
     result = await asyncio.to_thread(conn.execute, select_query, (message_id,))
     row = await asyncio.to_thread(result.fetchone)

@@ -38,6 +38,7 @@ export default function DocumentsPage() {
       setDocuments(response.documents);
     } catch (err) {
       console.error("Failed to fetch documents:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to load documents");
     }
   }, [activeVaultId]);
 
@@ -47,6 +48,7 @@ export default function DocumentsPage() {
       setStats(response);
     } catch (err) {
       console.error("Failed to fetch stats:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to load document stats");
     }
   }, [activeVaultId]);
 
