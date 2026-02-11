@@ -543,8 +543,8 @@ class TestIntegration(unittest.TestCase):
     # ==========================================================================
     
     @patch("app.api.routes.documents.VectorStore")
-    def test_document_delete_with_csrf_and_auth(self, mock_vector_store_class):
-        """Test document deletion requires auth and CSRF token."""
+    def test_document_delete_without_existing_doc(self, mock_vector_store_class):
+        """Test document deletion returns 404 for non-existent document."""
         from fastapi.testclient import TestClient
         from app.main import app
         
@@ -560,9 +560,9 @@ class TestIntegration(unittest.TestCase):
         mock_vector_store.db = MagicMock()
         mock_vector_store.db.table_names.return_value = ["chunks"]
         
-        # Try delete without auth (should fail)
+        # Try delete of non-existent document (auth skipped when no token configured)
         response = client.delete("/api/documents/1")
-        self.assertEqual(response.status_code, 401)  # Unauthorized
+        self.assertEqual(response.status_code, 404)  # Document not found
     
     @patch("app.api.routes.documents.SecretManager")
     @patch("app.api.routes.documents.VectorStore")

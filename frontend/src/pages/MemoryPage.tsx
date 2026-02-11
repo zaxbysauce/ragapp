@@ -10,6 +10,7 @@ import { Brain, Plus, Search, Trash2, Loader2 } from "lucide-react";
 import { searchMemories, addMemory, deleteMemory, listMemories, type MemoryResult } from "@/lib/api";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useVaultStore } from "@/stores/useVaultStore";
+import { VaultSelector } from "@/components/vault/VaultSelector";
 
 const MAX_MEMORY_CONTENT_LENGTH = 10000;
 
@@ -169,10 +170,13 @@ export default function MemoryPage() {
           <h1 className="text-3xl font-bold tracking-tight">Memory</h1>
           <p className="text-muted-foreground mt-1">View and manage AI memory and context</p>
         </div>
-        <Button onClick={() => setIsAddDialogOpen(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Add Memory
-        </Button>
+        <div className="flex items-center gap-2">
+          <VaultSelector />
+          <Button onClick={() => setIsAddDialogOpen(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Add Memory
+          </Button>
+        </div>
       </div>
 
       <div className="flex items-center gap-4">

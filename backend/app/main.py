@@ -28,6 +28,7 @@ from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
 from app.services.maintenance import MaintenanceService
 from app.services.background_tasks import get_background_processor
+from app.services.file_watcher import FileWatcher
 from app.limiter import limiter
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.maintenance import MaintenanceMiddleware
@@ -99,17 +100,22 @@ async def lifespan(app: FastAPI):
     )
     await app.state.background_processor.start()
     
+    # Start FileWatcher for auto-scanning directories
+    app.state.file_watcher = FileWatcher(app.state.background_processor)
+    await app.state.file_watcher.start()
+    
     # Start LLM keep-alive task to prevent LM Studio from unloading model
     keepalive_task = asyncio.create_task(_llm_keepalive_task(app.state.llm_client))
     
     yield
     
-    # Shutdown: Cancel keepalive and close services
+    # Shutdown: Cancel keepalive, stop file watcher, and close services
     keepalive_task.cancel()
     try:
         await keepalive_task
     except asyncio.CancelledError:
         pass
+    await app.state.file_watcher.stop()
     await app.state.background_processor.stop()
     await app.state.llm_client.close()
     app.state.vector_store.close()

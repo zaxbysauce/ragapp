@@ -347,9 +347,17 @@ export async function uploadDocument(
   return response.data;
 }
 
-export async function scanDocuments(): Promise<ScanDocumentsResponse> {
-  const response = await apiClient.post<ScanDocumentsResponse>("/documents/scan");
+export async function scanDocuments(vaultId?: number): Promise<ScanDocumentsResponse> {
+  const response = await apiClient.post<ScanDocumentsResponse>(
+    "/documents/scan",
+    undefined,
+    vaultId != null ? { params: { vault_id: vaultId } } : undefined
+  );
   return response.data;
+}
+
+export async function deleteDocument(fileId: string): Promise<void> {
+  await apiClient.delete(`/documents/${fileId}`);
 }
 
 export async function getDocumentStats(vaultId?: number): Promise<DocumentStatsResponse> {

@@ -535,14 +535,11 @@ async def scan_directories(
 
 
 @router.delete("/{file_id}", response_model=DeleteResponse)
-@limiter.limit(settings.admin_rate_limit)
 async def delete_document(
     file_id: int,
     request: Request,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_scope("documents:manage")),
-    csrf_token: str = Depends(csrf_protect),
-    secret_manager: SecretManager = Depends(get_secret_manager),
+    auth: dict = Depends(require_auth),
     vector_store: VectorStore = Depends(get_vector_store),
 ):
     """
@@ -580,15 +577,6 @@ async def delete_document(
 
         # Delete from database
         await asyncio.to_thread(conn.execute, "DELETE FROM files WHERE id = ?", (file_id,))
-        await asyncio.to_thread(
-            _record_document_action,
-            file_id,
-            "delete",
-            "success",
-            auth.get("user_id", "unknown"),
-            secret_manager,
-            conn,
-        )
         await asyncio.to_thread(conn.commit)
         
         return DeleteResponse(

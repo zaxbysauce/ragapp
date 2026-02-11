@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FileText, Upload, Search, Trash2, ScanLine, AlertCircle, CheckCircle, Clock, Loader2 } from "lucide-react";
-import { listDocuments, uploadDocument, scanDocuments, getDocumentStats, type Document, type DocumentStatsResponse } from "@/lib/api";
+import { listDocuments, uploadDocument, scanDocuments, deleteDocument, getDocumentStats, type Document, type DocumentStatsResponse } from "@/lib/api";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
@@ -132,13 +132,24 @@ export default function DocumentsPage() {
   const handleScan = async () => {
     setIsScanning(true);
     try {
-      const result = await scanDocuments();
+      const result = await scanDocuments(activeVaultId ?? undefined);
       toast.success(`Scan complete: ${result.added} new document(s) added, ${result.scanned} scanned`);
       await Promise.all([fetchDocuments(), fetchStats()]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Scan failed");
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const handleDeleteDocument = async (docId: string) => {
+    if (!confirm("Are you sure you want to delete this document? This will also remove all associated chunks.")) return;
+    try {
+      await deleteDocument(docId);
+      toast.success("Document deleted successfully");
+      await Promise.all([fetchDocuments(), fetchStats()]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete document");
     }
   };
 
@@ -398,7 +409,7 @@ export default function DocumentsPage() {
                       <td className="p-4">{formatFileSize(doc.size)}</td>
                       <td className="p-4 text-muted-foreground">{formatDate(doc.created_at)}</td>
                       <td className="p-4 text-right">
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDeleteDocument(String(doc.id))}>
                           <Trash2 className="w-4 h-4 text-destructive" />
                         </Button>
                       </td>
