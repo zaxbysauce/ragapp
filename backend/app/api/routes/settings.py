@@ -1,9 +1,11 @@
 import httpx
+import json
+import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
 from app.config import settings
-from app.api.deps import get_csrf_manager
+from app.api.deps import get_csrf_manager, get_db
 from app.security import CSRFManager, issue_csrf_token, require_auth
 
 router = APIRouter()
@@ -69,6 +71,18 @@ ALLOWED_FIELDS = [
     "auto_scan_interval_minutes",
     "rag_relevance_threshold",
 ]
+
+
+def _persist_settings(conn: sqlite3.Connection, update: SettingsUpdate) -> None:
+    """Save changed settings to the settings_kv table."""
+    for field in ALLOWED_FIELDS:
+        value = getattr(update, field)
+        if value is not None:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings_kv (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                (field, json.dumps(value)),
+            )
+    conn.commit()
 
 
 class SettingsResponse(BaseModel):
@@ -178,27 +192,31 @@ def get_settings():
 @router.post("/settings")
 def update_settings(
     update: SettingsUpdate,
+    conn: sqlite3.Connection = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
     """Update runtime settings.
 
-    NOTE: Changes are applied in-memory only and will be lost on server restart.
-    DB persistence is not yet implemented.
+    Changes are persisted to the database and applied immediately.
     """
-    return _apply_settings_update(update)
+    result = _apply_settings_update(update)
+    _persist_settings(conn, update)
+    return result
 
 
 @router.put("/settings")
 def update_settings_put(
     update: SettingsUpdate,
+    conn: sqlite3.Connection = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
     """Update runtime settings (PUT method).
 
-    NOTE: Changes are applied in-memory only and will be lost on server restart.
-    DB persistence is not yet implemented.
+    Changes are persisted to the database and applied immediately.
     """
-    return _apply_settings_update(update)
+    result = _apply_settings_update(update)
+    _persist_settings(conn, update)
+    return result
 
 
 @router.get("/csrf-token")

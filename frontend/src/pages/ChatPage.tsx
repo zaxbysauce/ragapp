@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MessageSquare, FileText, Plus, ChevronDown, ChevronRight, AlertCircle } from "lucide-react";
-import { chatStream, getChatHistory, saveChatHistory, type ChatMessage, type Source, type ChatHistoryItem } from "@/lib/api";
+import { chatStream, listChatSessions, getChatSession, createChatSession, addChatMessage, type ChatMessage, type Source, type ChatSession } from "@/lib/api";
 import { useChatStore, type Message } from "@/stores/useChatStore";
 import { MessageContent } from "@/components/shared/MessageContent";
 import { useVaultStore } from "@/stores/useVaultStore";
@@ -34,45 +34,58 @@ export default function ChatPage() {
   const { activeVaultId } = useVaultStore();
 
   // Chat history state
-  const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
+  const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(true);
   const [chatHistoryError, setChatHistoryError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("active");
 
   useEffect(() => {
-    // Load chat history from localStorage
-    setIsChatLoading(true);
-    setChatHistoryError(null);
-    try {
-      const history = getChatHistory();
-      setChatHistory(history);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to load chat history";
-      setChatHistoryError(errorMessage);
-      console.error("Failed to load chat history:", err);
-    } finally {
-      setIsChatLoading(false);
-    }
-  }, []);
+    const loadHistory = async () => {
+      setIsChatLoading(true);
+      setChatHistoryError(null);
+      try {
+        const data = await listChatSessions(activeVaultId ?? undefined);
+        setChatHistory(data.sessions);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Failed to load chat history";
+        setChatHistoryError(errorMessage);
+      } finally {
+        setIsChatLoading(false);
+      }
+    };
+    loadHistory();
+  }, [activeVaultId]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim() || isStreaming) return;
     if (input.length > MAX_INPUT_LENGTH) {
       setInputError(`Input exceeds maximum length of ${MAX_INPUT_LENGTH} characters`);
       return;
     }
 
-    // Use existing chat ID or create new one
+    const userContent = input.trim();
+
+    // Get or create session
     const currentState = useChatStore.getState();
-    const chatId = currentState.activeChatId || Date.now().toString();
-    if (!currentState.activeChatId) {
-      useChatStore.setState({ activeChatId: chatId });
+    let sessionId: number;
+
+    if (currentState.activeChatId) {
+      sessionId = parseInt(currentState.activeChatId);
+    } else {
+      try {
+        const newSession = await createChatSession({ vault_id: activeVaultId ?? 1 });
+        sessionId = newSession.id;
+        useChatStore.setState({ activeChatId: newSession.id.toString() });
+      } catch (err) {
+        console.error("Failed to create chat session:", err);
+        return;
+      }
     }
 
     const userMessage = {
       id: Date.now().toString(),
       role: "user" as const,
-      content: input.trim(),
+      content: userContent,
     };
 
     setIsStreaming(true);
@@ -104,35 +117,30 @@ export default function ChatPage() {
         setIsStreaming(false);
         setAbortFn(null);
       },
-      onComplete: () => {
+      onComplete: async () => {
         setIsStreaming(false);
         setAbortFn(null);
-        // Save/update chat history
-        const allMessages = useChatStore.getState().messages;
-        if (allMessages.length > 0) {
-          const firstUserMsg = allMessages.find(m => m.role === "user");
-          const title = firstUserMsg
-            ? firstUserMsg.content.slice(0, 60) + (firstUserMsg.content.length > 60 ? "..." : "")
-            : "New Chat";
-          const existingHistory = getChatHistory();
-          // Remove existing entry for this chatId if updating
-          const filteredHistory = existingHistory.filter(h => h.id !== chatId);
-          const entry: ChatHistoryItem = {
-            id: chatId,
-            title,
-            lastActive: new Date().toLocaleString(),
-            messageCount: allMessages.length,
-            messages: allMessages.map(m => ({
-              id: m.id,
-              role: m.role,
-              content: m.content,
-              ...(m.sources && { sources: m.sources }),
-            })),
-          };
-          // Prepend updated/new entry, keep max 50
-          const updatedHistory = [entry, ...filteredHistory].slice(0, 50);
-          saveChatHistory(updatedHistory);
-          setChatHistory(updatedHistory);
+        // Save messages to API
+        try {
+          // Save user message
+          await addChatMessage(sessionId, { role: "user", content: userContent });
+
+          // Save assistant message
+          const allMessages = useChatStore.getState().messages;
+          const assistantMsg = allMessages.find(m => m.id === assistantMessageId);
+          if (assistantMsg) {
+            await addChatMessage(sessionId, {
+              role: "assistant",
+              content: assistantMsg.content,
+              sources: assistantMsg.sources ?? undefined,
+            });
+          }
+
+          // Refresh session list
+          const data = await listChatSessions(activeVaultId ?? undefined);
+          setChatHistory(data.sessions);
+        } catch (err) {
+          console.error("Failed to save chat messages:", err);
         }
       },
     }, activeVaultId ?? undefined);
@@ -170,16 +178,21 @@ export default function ChatPage() {
     toggleSource(sourceId);
   };
 
-  const handleLoadChat = (chat: ChatHistoryItem) => {
+  const handleLoadChat = async (session: ChatSession) => {
     if (isStreaming) return;
-    const loadedMessages: Message[] = chat.messages.map(m => ({
-      id: m.id,
-      role: m.role as "user" | "assistant",
-      content: m.content,
-      sources: m.sources,
-    }));
-    useChatStore.getState().loadChat(chat.id, loadedMessages);
-    setActiveTab("active");
+    try {
+      const detail = await getChatSession(session.id);
+      const loadedMessages: Message[] = detail.messages.map(m => ({
+        id: m.id.toString(),
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        sources: m.sources ?? undefined,
+      }));
+      useChatStore.getState().loadChat(session.id.toString(), loadedMessages);
+      setActiveTab("active");
+    } catch (err) {
+      console.error("Failed to load chat session:", err);
+    }
   };
 
   const { latestAssistantMessage, hasSources } = useMemo(() => {
@@ -351,16 +364,16 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {chatHistory.map((chat) => (
-                    <div key={chat.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors" onClick={() => handleLoadChat(chat)}>
+                  {chatHistory.map((session) => (
+                    <div key={session.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors" onClick={() => handleLoadChat(session)}>
                       <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
                         <MessageSquare className="h-5 w-5 text-primary" />
                       </div>
                       <div className="flex-1">
-                        <p className="font-medium">{chat.title}</p>
-                        <p className="text-sm text-muted-foreground">Last active {chat.lastActive}</p>
+                        <p className="font-medium">{session.title || "Untitled"}</p>
+                        <p className="text-sm text-muted-foreground">Last active {new Date(session.updated_at).toLocaleString()}</p>
                       </div>
-                      <span className="text-xs text-muted-foreground">{chat.messageCount} messages</span>
+                      <span className="text-xs text-muted-foreground">{session.message_count ?? 0} messages</span>
                     </div>
                   ))}
                 </div>

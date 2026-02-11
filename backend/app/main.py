@@ -2,6 +2,7 @@
 FastAPI application with lifespan context manager.
 """
 import asyncio
+import sqlite3
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -67,11 +68,33 @@ async def _llm_keepalive_task(llm_client: LLMClient, interval: int = 30):
             logger.debug("LLM keep-alive ping failed (model may be unloaded): %s", e)
 
 
+def _load_persisted_settings(sqlite_path: str) -> None:
+    """Load user-configurable settings from DB if they were previously saved."""
+    import json
+    conn = sqlite3.connect(sqlite_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.execute("SELECT key, value FROM settings_kv")
+        for row in cursor.fetchall():
+            key, raw_value = row["key"], row["value"]
+            if key in ("chunk_size", "chunk_overlap", "max_context_chunks", "auto_scan_interval_minutes"):
+                setattr(settings, key, int(json.loads(raw_value)))
+            elif key == "auto_scan_enabled":
+                setattr(settings, key, bool(json.loads(raw_value)))
+            elif key == "rag_relevance_threshold":
+                setattr(settings, key, float(json.loads(raw_value)))
+    except sqlite3.OperationalError:
+        pass  # Table doesn't exist yet on first run
+    finally:
+        conn.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     # Startup: Initialize database and services
     run_migrations(str(settings.sqlite_path))
+    _load_persisted_settings(str(settings.sqlite_path))
     app.state.db_pool = get_pool(str(settings.sqlite_path), max_size=10)
     app.state.llm_client = LLMClient()
     app.state.llm_client.start()

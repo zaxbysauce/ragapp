@@ -291,14 +291,13 @@ Phase 7 Tasks COMPLETED:
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| read | 1102 | 1102 | 0 | 7ms |
-| bash | 355 | 355 | 0 | 1734ms |
-| edit | 284 | 284 | 0 | 551ms |
-| glob | 160 | 160 | 0 | 10351ms |
-| task | 149 | 149 | 0 | 112887ms |
-| write | 127 | 127 | 0 | 310ms |
-| todowrite | 85 | 85 | 0 | 3ms |
-| grep | 73 | 73 | 0 | 92ms |
-| apply_patch | 49 | 49 | 0 | 46ms |
-| memory_set | 4 | 4 | 0 | 4ms |
-| detect_domains | 1 | 1 | 0 | 1ms |
+| read | 45 | 45 | 0 | 3ms |
+| edit | 20 | 20 | 0 | 239ms |
+| bash | 17 | 17 | 0 | 2450ms |
+| apply_patch | 10 | 10 | 0 | 13ms |
+| task | 10 | 10 | 0 | 68871ms |
+| invalid | 6 | 6 | 0 | 1ms |
+| todowrite | 5 | 5 | 0 | 2ms |
+| grep | 5 | 5 | 0 | 221ms |
+| skill | 1 | 1 | 0 | 14ms |
+| write | 1 | 1 | 0 | 3ms |

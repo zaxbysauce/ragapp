@@ -145,6 +145,13 @@ CREATE TABLE IF NOT EXISTS system_flags (
     reason TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Settings key-value store for persistence across restarts
+CREATE TABLE IF NOT EXISTS settings_kv (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 

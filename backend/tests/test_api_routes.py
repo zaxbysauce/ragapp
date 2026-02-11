@@ -165,11 +165,28 @@ class TestSettingsEndpoints(unittest.TestCase):
         # Store original values
         self._original_chunk_size = settings.chunk_size
         self._original_rag_threshold = settings.rag_relevance_threshold
+        # Override get_db to use a pool that allows cross-thread usage
+        from app.models.database import get_pool
+        from app.api.deps import get_db
+
+        self._test_pool = get_pool(str(TEST_DB_PATH))
+
+        def override_get_db():
+            conn = self._test_pool.get_connection()
+            try:
+                yield conn
+            finally:
+                self._test_pool.release_connection(conn)
+
+        app.dependency_overrides[get_db] = override_get_db
+        self._get_db = get_db
     
     def tearDown(self):
         # Restore original values
         settings.chunk_size = self._original_chunk_size
         settings.rag_relevance_threshold = self._original_rag_threshold
+        # Restore get_db dependency
+        app.dependency_overrides.pop(self._get_db, None)
     
     def test_get_settings(self):
         """Test GET /api/settings returns current settings."""

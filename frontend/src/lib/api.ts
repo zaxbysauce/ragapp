@@ -176,6 +176,38 @@ export interface ChatHistoryItem {
   messages: Array<{ id: string; role: string; content: string; sources?: Source[] }>;
 }
 
+export interface ChatSession {
+  id: number;
+  vault_id: number;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count?: number;
+}
+
+export interface ChatSessionMessage {
+  id: number;
+  role: string;
+  content: string;
+  sources: Source[] | null;
+  created_at: string;
+}
+
+export interface ChatSessionDetail extends ChatSession {
+  messages: ChatSessionMessage[];
+}
+
+export interface CreateSessionRequest {
+  title?: string;
+  vault_id?: number;
+}
+
+export interface AddMessageRequest {
+  role: string;
+  content: string;
+  sources?: Source[];
+}
+
 export interface Vault {
   id: number;
   name: string;
@@ -476,6 +508,38 @@ export function saveChatHistory(history: ChatHistoryItem[]): void {
   } catch (err) {
     console.error("Failed to save chat history:", err);
   }
+}
+
+export async function listChatSessions(vaultId?: number): Promise<{ sessions: ChatSession[] }> {
+  const response = await apiClient.get<{ sessions: ChatSession[] }>(
+    "/chat/sessions",
+    vaultId != null ? { params: { vault_id: vaultId } } : undefined
+  );
+  return response.data;
+}
+
+export async function getChatSession(sessionId: number): Promise<ChatSessionDetail> {
+  const response = await apiClient.get<ChatSessionDetail>(`/chat/sessions/${sessionId}`);
+  return response.data;
+}
+
+export async function createChatSession(request: CreateSessionRequest): Promise<ChatSession> {
+  const response = await apiClient.post<ChatSession>("/chat/sessions", request);
+  return response.data;
+}
+
+export async function addChatMessage(sessionId: number, request: AddMessageRequest): Promise<ChatSessionMessage> {
+  const response = await apiClient.post<ChatSessionMessage>(`/chat/sessions/${sessionId}/messages`, request);
+  return response.data;
+}
+
+export async function updateChatSession(sessionId: number, title: string): Promise<ChatSession> {
+  const response = await apiClient.put<ChatSession>(`/chat/sessions/${sessionId}`, { title });
+  return response.data;
+}
+
+export async function deleteChatSession(sessionId: number): Promise<void> {
+  await apiClient.delete(`/chat/sessions/${sessionId}`);
 }
 
 export default apiClient;
