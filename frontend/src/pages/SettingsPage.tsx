@@ -7,10 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, Loader2 } from "lucide-react";
-import { getSettings, updateSettings, getHealth, testConnections, type ConnectionTestResult } from "@/lib/api";
+import { getSettings, updateSettings, testConnections, type ConnectionTestResult } from "@/lib/api";
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { ConnectionStatusBadges } from "@/components/shared/ConnectionStatusBadges";
 import type { HealthStatus } from "@/types/health";
+import { useHealthCheck } from "@/hooks/useHealthCheck";
 
 // Internal component that renders the settings form
 function SettingsPageContent() {
@@ -461,38 +462,6 @@ function SettingsPageWithStatus({ health }: { health: HealthStatus }) {
 
 // Main SettingsPage that checks health
 export default function SettingsPage() {
-  const [health, setHealth] = useState<HealthStatus>({
-    backend: false,
-    embeddings: false,
-    chat: false,
-    loading: true,
-    lastChecked: null,
-  });
-
-  useEffect(() => {
-    const checkHealth = async () => {
-      try {
-        const response = await getHealth();
-        setHealth({
-          backend: response.services?.backend ?? response.status === "ok",
-          embeddings: response.services?.embeddings ?? false,
-          chat: response.services?.chat ?? false,
-          loading: false,
-          lastChecked: new Date(),
-        });
-      } catch {
-        setHealth({
-          backend: false,
-          embeddings: false,
-          chat: false,
-          loading: false,
-          lastChecked: new Date(),
-        });
-      }
-    };
-
-    checkHealth();
-  }, []);
-
+  const health = useHealthCheck();
   return <SettingsPageWithStatus health={health} />;
 }

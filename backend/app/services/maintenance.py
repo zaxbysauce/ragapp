@@ -6,8 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from app.config import settings
-from app.models.database import get_db_connection
+from app.models.database import SQLiteConnectionPool
 
 
 class MaintenanceError(Exception):
@@ -25,12 +24,12 @@ class MaintenanceFlag:
 class MaintenanceService:
     FLAG_NAME = "maintenance"
 
-    def __init__(self, sqlite_path: str) -> None:
-        self.sqlite_path = sqlite_path
+    def __init__(self, pool: SQLiteConnectionPool) -> None:
+        self.pool = pool
         self._ensure_flag_row()
 
     def _ensure_flag_row(self) -> None:
-        conn = get_db_connection(self.sqlite_path)
+        conn = self.pool.get_connection()
         try:
             conn.execute(
                 """
@@ -41,10 +40,10 @@ class MaintenanceService:
             )
             conn.commit()
         finally:
-            conn.close()
+            self.pool.release_connection(conn)
 
     def get_flag(self) -> MaintenanceFlag:
-        conn = get_db_connection(self.sqlite_path)
+        conn = self.pool.get_connection()
         try:
             row = conn.execute(
                 "SELECT value, reason, version, updated_at FROM system_flags WHERE name = ?",
@@ -59,13 +58,13 @@ class MaintenanceService:
                 updated_at=row[3],
             )
         finally:
-            conn.close()
+            self.pool.release_connection(conn)
 
     def set_flag(self, enabled: bool, reason: str = "") -> None:
         attempts = 0
         while True:
             flag = self.get_flag()
-            conn = get_db_connection(self.sqlite_path)
+            conn = self.pool.get_connection()
             try:
                 cursor = conn.execute(
                     """
@@ -79,7 +78,7 @@ class MaintenanceService:
                     conn.commit()
                     return
             finally:
-                conn.close()
+                self.pool.release_connection(conn)
             attempts += 1
             if attempts > 3:
                 raise MaintenanceError("Failed to update maintenance flag")

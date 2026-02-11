@@ -10,7 +10,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from app.models.database import init_db
+from app.models.database import init_db, SQLiteConnectionPool
 from app.services.maintenance import MaintenanceService, MaintenanceError
 
 
@@ -21,9 +21,11 @@ class TestMaintenanceService(unittest.TestCase):
         """Create a temporary database file for each test."""
         self.temp_fd, self.temp_db_path = tempfile.mkstemp(suffix='.db')
         os.close(self.temp_fd)
+        self.pool = SQLiteConnectionPool(self.temp_db_path, max_size=2)
 
     def tearDown(self):
         """Clean up the temporary database file."""
+        self.pool.close_all()
         if os.path.exists(self.temp_db_path):
             os.remove(self.temp_db_path)
 
@@ -48,7 +50,7 @@ class TestMaintenanceService(unittest.TestCase):
     def test_maintenance_service_initialization(self):
         """Test MaintenanceService initializes correctly."""
         init_db(self.temp_db_path)
-        service = MaintenanceService(self.temp_db_path)
+        service = MaintenanceService(self.pool)
 
         # Check that maintenance flag row was created
         conn = sqlite3.connect(self.temp_db_path)
@@ -65,7 +67,7 @@ class TestMaintenanceService(unittest.TestCase):
     def test_get_flag_returns_disabled_by_default(self):
         """Test that get_flag returns disabled state by default."""
         init_db(self.temp_db_path)
-        service = MaintenanceService(self.temp_db_path)
+        service = MaintenanceService(self.pool)
 
         flag = service.get_flag()
 
@@ -76,7 +78,7 @@ class TestMaintenanceService(unittest.TestCase):
     def test_set_flag_enables_maintenance(self):
         """Test that set_flag can enable maintenance mode."""
         init_db(self.temp_db_path)
-        service = MaintenanceService(self.temp_db_path)
+        service = MaintenanceService(self.pool)
 
         service.set_flag(True, "Scheduled maintenance")
         flag = service.get_flag()
@@ -88,7 +90,7 @@ class TestMaintenanceService(unittest.TestCase):
     def test_set_flag_disables_maintenance(self):
         """Test that set_flag can disable maintenance mode."""
         init_db(self.temp_db_path)
-        service = MaintenanceService(self.temp_db_path)
+        service = MaintenanceService(self.pool)
 
         # First enable
         service.set_flag(True, "Scheduled maintenance")
@@ -106,7 +108,7 @@ class TestMaintenanceService(unittest.TestCase):
     def test_set_flag_updates_version_correctly(self):
         """Test that set_flag increments version on each update."""
         init_db(self.temp_db_path)
-        service = MaintenanceService(self.temp_db_path)
+        service = MaintenanceService(self.pool)
 
         flag1 = service.get_flag()
         self.assertEqual(flag1.version, 0)
@@ -126,7 +128,7 @@ class TestMaintenanceService(unittest.TestCase):
     def test_get_flag_returns_updated_at(self):
         """Test that get_flag returns the updated_at timestamp."""
         init_db(self.temp_db_path)
-        service = MaintenanceService(self.temp_db_path)
+        service = MaintenanceService(self.pool)
 
         # Initial flag should have updated_at
         flag1 = service.get_flag()
@@ -140,7 +142,7 @@ class TestMaintenanceService(unittest.TestCase):
     def test_set_flag_with_empty_reason(self):
         """Test that set_flag works with empty reason."""
         init_db(self.temp_db_path)
-        service = MaintenanceService(self.temp_db_path)
+        service = MaintenanceService(self.pool)
 
         service.set_flag(True)
         flag = service.get_flag()
@@ -152,8 +154,8 @@ class TestMaintenanceService(unittest.TestCase):
         """Test that multiple MaintenanceService instances share the same database state."""
         init_db(self.temp_db_path)
 
-        service1 = MaintenanceService(self.temp_db_path)
-        service2 = MaintenanceService(self.temp_db_path)
+        service1 = MaintenanceService(self.pool)
+        service2 = MaintenanceService(self.pool)
 
         # Set flag via service1
         service1.set_flag(True, "Set by service1")

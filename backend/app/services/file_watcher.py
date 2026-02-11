@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, Set
 
 from ..config import settings
-from ..models.database import get_db_connection
+from ..models.database import SQLiteConnectionPool
 from .background_tasks import BackgroundProcessor
 
 
@@ -33,14 +33,16 @@ class FileWatcher:
         _shutdown_event: asyncio.Event for graceful shutdown
     """
 
-    def __init__(self, processor: BackgroundProcessor):
+    def __init__(self, processor: BackgroundProcessor, pool: Optional[SQLiteConnectionPool] = None):
         """
         Initialize the file watcher.
 
         Args:
             processor: BackgroundProcessor instance for enqueueing files
+            pool: Optional SQLiteConnectionPool for database connections
         """
         self.processor = processor
+        self.pool = pool
         self._watching_task: Optional[asyncio.Task] = None
         self._running = False
         self._shutdown_event = asyncio.Event()
@@ -146,13 +148,16 @@ class FileWatcher:
         # Get files from database
         files_in_db: Set[str] = set()
         try:
-            conn = get_db_connection(str(settings.sqlite_path))
+            if self.pool is None:
+                from ..models.database import get_pool
+                self.pool = get_pool(str(settings.sqlite_path), max_size=2)
+            conn = self.pool.get_connection()
             try:
                 cursor = conn.execute("SELECT file_path FROM files")
                 for row in cursor.fetchall():
                     files_in_db.add(row["file_path"])
             finally:
-                conn.close()
+                self.pool.release_connection(conn)
         except Exception as e:
             logger.error(f"Error querying database: {e}")
             return set()

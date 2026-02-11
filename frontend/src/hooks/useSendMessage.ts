@@ -1,0 +1,178 @@
+import { useCallback } from "react";
+import { chatStream, createChatSession, addChatMessage, type ChatMessage } from "@/lib/api";
+import { useChatStore } from "@/stores/useChatStore";
+
+export const MAX_INPUT_LENGTH = 2000;
+
+export interface UseSendMessageReturn {
+  handleSend: () => Promise<void>;
+  handleStop: () => void;
+  handleKeyDown: (e: React.KeyboardEvent) => void;
+  handleInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+}
+
+/** Handles sending chat messages with streaming, session management, and input validation. */
+export function useSendMessage(
+  activeVaultId: number | null,
+  refreshHistory: () => Promise<void>
+): UseSendMessageReturn {
+  const {
+    input,
+    isStreaming,
+    messages,
+    setInput,
+    setIsStreaming,
+    setAbortFn,
+    setInputError,
+    addMessage,
+    updateMessage,
+  } = useChatStore();
+
+  const handleSend = useCallback(async () => {
+    if (!input.trim() || isStreaming) return;
+    if (input.length > MAX_INPUT_LENGTH) {
+      setInputError(`Input exceeds maximum length of ${MAX_INPUT_LENGTH} characters`);
+      return;
+    }
+
+    const userContent = input.trim();
+
+    // Get or create session
+    const currentState = useChatStore.getState();
+    let sessionId: number;
+
+    if (currentState.activeChatId) {
+      sessionId = parseInt(currentState.activeChatId);
+    } else {
+      try {
+        const newSession = await createChatSession({ vault_id: activeVaultId ?? 1 });
+        sessionId = newSession.id;
+        useChatStore.setState({ activeChatId: newSession.id.toString() });
+      } catch (err) {
+        console.error("Failed to create chat session:", err);
+        return;
+      }
+    }
+
+    const userMessage = {
+      id: Date.now().toString(),
+      role: "user" as const,
+      content: userContent,
+    };
+
+    setIsStreaming(true);
+
+    const assistantMessageId = (Date.now() + 1).toString();
+    const assistantMessage = {
+      id: assistantMessageId,
+      role: "assistant" as const,
+      content: "",
+    };
+
+    const chatMessages: ChatMessage[] = [
+      ...messages.map((m) => ({ role: m.role, content: m.content })),
+      { role: "user", content: userMessage.content },
+    ];
+
+    const abort = chatStream(
+      chatMessages,
+      {
+        onMessage: (chunk) => {
+          const currentMessages = useChatStore.getState().messages;
+          const currentMsg = currentMessages.find((m) => m.id === assistantMessageId);
+          updateMessage(assistantMessageId, {
+            content: (currentMsg?.content || "") + chunk,
+          });
+        },
+        onSources: (sources) => {
+          updateMessage(assistantMessageId, { sources });
+        },
+        onError: (error) => {
+          console.error("Chat stream error:", error);
+          updateMessage(assistantMessageId, { error: error.message });
+          setIsStreaming(false);
+          setAbortFn(null);
+        },
+        onComplete: async () => {
+          setIsStreaming(false);
+          setAbortFn(null);
+          // Save messages to API
+          try {
+            // Save user message
+            await addChatMessage(sessionId, { role: "user", content: userContent });
+
+            // Save assistant message
+            const allMessages = useChatStore.getState().messages;
+            const assistantMsg = allMessages.find((m) => m.id === assistantMessageId);
+            if (assistantMsg) {
+              await addChatMessage(sessionId, {
+                role: "assistant",
+                content: assistantMsg.content,
+                sources: assistantMsg.sources ?? undefined,
+              });
+            }
+
+            // Refresh session list
+            await refreshHistory();
+          } catch (err) {
+            console.error("Failed to save chat messages:", err);
+          }
+        },
+      },
+      activeVaultId ?? undefined
+    );
+
+    setAbortFn(abort);
+    addMessage(userMessage);
+    addMessage(assistantMessage);
+
+    setInput("");
+    setInputError(null);
+  }, [
+    input,
+    isStreaming,
+    messages,
+    setInput,
+    setIsStreaming,
+    setAbortFn,
+    setInputError,
+    addMessage,
+    updateMessage,
+    activeVaultId,
+    refreshHistory,
+  ]);
+
+  const handleStop = useCallback(() => {
+    useChatStore.getState().stopStreaming();
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    },
+    [handleSend]
+  );
+
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const value = e.target.value;
+      setInput(value);
+      if (value.length > MAX_INPUT_LENGTH) {
+        setInputError(`Input exceeds maximum length of ${MAX_INPUT_LENGTH} characters`);
+      } else {
+        setInputError(null);
+      }
+    },
+    [setInput, setInputError]
+  );
+
+  return {
+    handleSend,
+    handleStop,
+    handleKeyDown,
+    handleInputChange,
+  };
+}

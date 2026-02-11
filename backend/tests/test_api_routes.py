@@ -58,6 +58,8 @@ except ImportError:
 
 from fastapi.testclient import TestClient
 
+from app.api.deps import get_llm_health_checker, get_model_checker
+
 
 # Create a temporary database for testing
 TEST_DB_PATH = None
@@ -98,9 +100,7 @@ class TestHealthEndpoint(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
     
-    @patch("app.api.routes.health.LLMHealthChecker")
-    @patch("app.api.routes.health.ModelChecker")
-    def test_health_check_success(self, mock_model_checker_class, mock_llm_checker_class):
+    def test_health_check_success(self):
         """Test health check returns ok status with mocked services."""
         # Mock LLMHealthChecker
         mock_llm_checker = MagicMock()
@@ -110,7 +110,6 @@ class TestHealthEndpoint(unittest.TestCase):
             "chat": {"ok": True, "error": None},
             "error": None
         })
-        mock_llm_checker_class.return_value = mock_llm_checker
 
         # Mock ModelChecker
         mock_model_checker = MagicMock()
@@ -118,20 +117,24 @@ class TestHealthEndpoint(unittest.TestCase):
             "embedding_model": {"available": True, "error": None},
             "chat_model": {"available": True, "error": None}
         })
-        mock_model_checker_class.return_value = mock_model_checker
 
-        response = self.client.get("/api/health")
+        app.dependency_overrides[get_llm_health_checker] = lambda: mock_llm_checker
+        app.dependency_overrides[get_model_checker] = lambda: mock_model_checker
 
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["status"], "ok")
-        self.assertIn("llm", data)
-        self.assertIn("models", data)
-        self.assertTrue(data["llm"]["ok"])
+        try:
+            response = self.client.get("/api/health")
 
-    @patch("app.api.routes.health.LLMHealthChecker")
-    @patch("app.api.routes.health.ModelChecker")
-    def test_health_check_llm_failure(self, mock_model_checker_class, mock_llm_checker_class):
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["status"], "ok")
+            self.assertIn("llm", data)
+            self.assertIn("models", data)
+            self.assertTrue(data["llm"]["ok"])
+        finally:
+            app.dependency_overrides.pop(get_llm_health_checker, None)
+            app.dependency_overrides.pop(get_model_checker, None)
+
+    def test_health_check_llm_failure(self):
         """Test health check handles LLM service failure."""
         mock_llm_checker = MagicMock()
         mock_llm_checker.check_all = AsyncMock(return_value={
@@ -140,21 +143,26 @@ class TestHealthEndpoint(unittest.TestCase):
             "chat": {"ok": True, "error": None},
             "error": "Embedding service error"
         })
-        mock_llm_checker_class.return_value = mock_llm_checker
 
         mock_model_checker = MagicMock()
         mock_model_checker.check_models = AsyncMock(return_value={
             "embedding_model": {"available": True, "error": None},
             "chat_model": {"available": True, "error": None}
         })
-        mock_model_checker_class.return_value = mock_model_checker
 
-        response = self.client.get("/api/health")
+        app.dependency_overrides[get_llm_health_checker] = lambda: mock_llm_checker
+        app.dependency_overrides[get_model_checker] = lambda: mock_model_checker
 
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["status"], "ok")
-        self.assertFalse(data["llm"]["ok"])
+        try:
+            response = self.client.get("/api/health")
+
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["status"], "ok")
+            self.assertFalse(data["llm"]["ok"])
+        finally:
+            app.dependency_overrides.pop(get_llm_health_checker, None)
+            app.dependency_overrides.pop(get_model_checker, None)
 
 
 class TestSettingsEndpoints(unittest.TestCase):
@@ -260,8 +268,9 @@ class TestMemoriesEndpoints(unittest.TestCase):
 
         # Create a real MemoryStore pointing to test DB
         from app.services.memory_store import MemoryStore
-        test_store = MemoryStore()
-        test_store.sqlite_path = db_path
+        from app.models.database import SQLiteConnectionPool
+        self.test_pool = SQLiteConnectionPool(db_path, max_size=2)
+        test_store = MemoryStore(pool=self.test_pool)
 
         # Override get_db to use a pool that allows cross-thread usage
         # Create a simple pool for testing
@@ -326,6 +335,8 @@ class TestMemoriesEndpoints(unittest.TestCase):
     def tearDown(self):
         app.dependency_overrides.pop(self._get_db, None)
         app.dependency_overrides.pop(self._get_memory_store, None)
+        if hasattr(self, 'test_pool'):
+            self.test_pool.close_all()
         if hasattr(self, '_connection_pool'):
             self._connection_pool.close_all()
         import shutil

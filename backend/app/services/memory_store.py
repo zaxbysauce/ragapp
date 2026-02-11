@@ -3,11 +3,10 @@
 import re
 import sqlite3
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from app.config import settings
-from app.models.database import get_db_connection
+from app.models.database import SQLiteConnectionPool, get_pool
 
 
 class MemoryStoreError(Exception):
@@ -41,11 +40,10 @@ class MemoryStore:
         re.compile(r"note that\s+(?P<memory>.+?)(?:\.|$)", re.IGNORECASE),
     ]
 
-    def __init__(self, sqlite_path: Optional[Path] = None) -> None:
-        self.sqlite_path = str(sqlite_path or settings.sqlite_path)
-
-    def _connect(self):
-        return get_db_connection(self.sqlite_path)
+    def __init__(self, pool: Optional[SQLiteConnectionPool] = None) -> None:
+        if pool is None:
+            pool = get_pool(str(settings.sqlite_path), max_size=2)
+        self.pool = pool
 
     def add_memory(
         self,
@@ -62,7 +60,7 @@ class MemoryStore:
         INSERT INTO memories (content, category, tags, source, vault_id)
         VALUES (?, ?, ?, ?, ?)
         """
-        conn = self._connect()
+        conn = self.pool.get_connection()
         try:
             cursor = conn.execute(sql, (content, category, tags, source, vault_id))
             conn.commit()
@@ -78,7 +76,7 @@ class MemoryStore:
             updated_at = row[1] if row else None
             retrieved_vault_id = row[2] if row else None
         finally:
-            conn.close()
+            self.pool.release_connection(conn)
 
         return MemoryRecord(
             id=memory_id,
@@ -101,7 +99,7 @@ class MemoryStore:
         if not sanitized_query.strip():
             return []
 
-        conn = self._connect()
+        conn = self.pool.get_connection()
         try:
             try:
                 # Build SQL query based on vault_id parameter
@@ -134,7 +132,7 @@ class MemoryStore:
             except sqlite3.Error as e:
                 raise MemoryStoreError(f"FTS query failed: {e}")
         finally:
-            conn.close()
+            self.pool.release_connection(conn)
 
         records: List[MemoryRecord] = []
         for row in rows:

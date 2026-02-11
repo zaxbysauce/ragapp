@@ -1,5 +1,3 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,161 +5,31 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Brain, Plus, Search, Trash2, Loader2 } from "lucide-react";
-import { searchMemories, addMemory, deleteMemory, listMemories, type MemoryResult } from "@/lib/api";
-import { useDebounce } from "@/hooks/useDebounce";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
-
-const MAX_MEMORY_CONTENT_LENGTH = 10000;
+import { useMemorySearch } from "@/hooks/useMemorySearch";
+import { useMemoryCrud, getCategoryFromMetadata, getTagsFromMetadata, getSourceFromMetadata, MAX_MEMORY_CONTENT_LENGTH } from "@/hooks/useMemoryCrud";
 
 export default function MemoryPage() {
-  const [memories, setMemories] = useState<MemoryResult[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearchQuery] = useDebounce(searchQuery, 300);
-  const [loading, setLoading] = useState(false);
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [newMemory, setNewMemory] = useState({
-    content: "",
-    category: "",
-    tags: "",
-    source: "",
-  });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isDeleting, setIsDeleting] = useState<string | null>(null);
-  const [contentError, setContentError] = useState<string | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
   const { activeVaultId } = useVaultStore();
 
-  const handleSearch = useCallback(async () => {
-    // Cancel any pending request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
+  // Hook 1: Memory search/list functionality
+  const { memories, searchQuery, setSearchQuery, loading, handleSearch } = useMemorySearch(activeVaultId);
 
-    setLoading(true);
-    try {
-      if (debouncedSearchQuery.trim()) {
-        // Search mode — use POST /memories/search
-        const response = await searchMemories(
-          { query: debouncedSearchQuery, limit: 50 },
-          abortController.signal,
-          activeVaultId ?? undefined
-        );
-        if (!abortController.signal.aborted) {
-          setMemories(response.results);
-        }
-      } else {
-        // List mode — use GET /memories
-        const response = await listMemories(activeVaultId ?? undefined);
-        if (!abortController.signal.aborted) {
-          setMemories(response.memories);
-        }
-      }
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        return;
-      }
-      console.error("Failed to load memories:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to load memories");
-    } finally {
-      if (!abortController.signal.aborted) {
-        setLoading(false);
-      }
-    }
-  }, [debouncedSearchQuery, activeVaultId]);
-
-  useEffect(() => {
-    handleSearch();
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
-  }, [handleSearch]);
-
-  const validateContent = (content: string): boolean => {
-    if (content.length > MAX_MEMORY_CONTENT_LENGTH) {
-      setContentError(`Content exceeds maximum length of ${MAX_MEMORY_CONTENT_LENGTH} characters`);
-      return false;
-    }
-    setContentError(null);
-    return true;
-  };
-
-  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value;
-    setNewMemory({ ...newMemory, content: value });
-    if (value.length > MAX_MEMORY_CONTENT_LENGTH) {
-      setContentError(`Content exceeds maximum length of ${MAX_MEMORY_CONTENT_LENGTH} characters`);
-    } else {
-      setContentError(null);
-    }
-  };
-
-  const handleAddMemory = async () => {
-    if (!newMemory.content.trim()) return;
-    if (!validateContent(newMemory.content)) return;
-
-    setIsSubmitting(true);
-    try {
-      await addMemory({
-        content: newMemory.content,
-        category: newMemory.category || undefined,
-        tags: newMemory.tags ? newMemory.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
-        source: newMemory.source || undefined,
-      }, activeVaultId ?? undefined);
-      toast.success("Memory added successfully");
-      // Reset form and close dialog only on success
-      setNewMemory({ content: "", category: "", tags: "", source: "" });
-      setContentError(null);
-      setIsAddDialogOpen(false);
-      handleSearch();
-    } catch (err) {
-      console.error("Failed to add memory:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to add memory");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && e.ctrlKey) {
-      e.preventDefault();
-      handleAddMemory();
-    }
-  };
-
-  const handleDeleteMemory = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this memory?")) return;
-
-    setIsDeleting(id);
-    try {
-      await deleteMemory(id);
-      toast.success("Memory deleted successfully");
-      handleSearch();
-    } catch (err) {
-      console.error("Failed to delete memory:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to delete memory");
-    } finally {
-      setIsDeleting(null);
-    }
-  };
-
-  const getCategoryFromMetadata = (metadata?: Record<string, unknown>) => {
-    return (metadata?.category as string) || "Uncategorized";
-  };
-
-  const getTagsFromMetadata = (metadata?: Record<string, unknown>) => {
-    const tags = metadata?.tags;
-    if (Array.isArray(tags)) return tags;
-    return [];
-  };
-
-  const getSourceFromMetadata = (metadata?: Record<string, unknown>) => {
-    return (metadata?.source as string) || "";
-  };
+  // Hook 2: Memory CRUD operations
+  const {
+    isAddDialogOpen,
+    setIsAddDialogOpen,
+    newMemory,
+    setNewMemory,
+    isSubmitting,
+    isDeleting,
+    contentError,
+    handleContentChange,
+    handleAddMemory,
+    handleKeyDown,
+    handleDeleteMemory,
+  } = useMemoryCrud(activeVaultId, handleSearch);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">

@@ -259,7 +259,3 @@ class ModelChecker:
                 'available': False,
                 'error': f"Unexpected error: {str(e)}"
             }
-
-
-# Singleton instance for convenience
-model_checker = ModelChecker()

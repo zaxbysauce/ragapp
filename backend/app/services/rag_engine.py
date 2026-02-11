@@ -37,22 +37,18 @@ class RAGEngine:
         vector_store: Optional[VectorStore] = None,
         memory_store: Optional[MemoryStore] = None,
         llm_client: Optional[LLMClient] = None,
-        vector_store_instance: Optional[VectorStore] = None,
-        memory_store_instance: Optional[MemoryStore] = None,
     ) -> None:
-        # Use fallback creation for backward compatibility with tests
         self.embedding_service = embedding_service or EmbeddingService()
-        # Support both naming conventions for backward compatibility with tests
-        self.vector_store = vector_store or vector_store_instance or VectorStore()
-        self.memory_store = memory_store or memory_store_instance or MemoryStore()
+        self.vector_store = vector_store or VectorStore()
+        self.memory_store = memory_store or MemoryStore()
         self.llm_client = llm_client or LLMClient()
 
         # Log warnings for missing dependencies (indicates non-DI usage)
         if embedding_service is None:
             logger.warning("RAGEngine created without injected embedding_service - using default instance")
-        if (vector_store is None and vector_store_instance is None):
+        if vector_store is None:
             logger.warning("RAGEngine created without injected vector_store - using default instance")
-        if (memory_store is None and memory_store_instance is None):
+        if memory_store is None:
             logger.warning("RAGEngine created without injected memory_store - using default instance")
         if llm_client is None:
             logger.warning("RAGEngine created without injected llm_client - using default instance")
@@ -60,7 +56,6 @@ class RAGEngine:
         self.relevance_threshold = settings.rag_relevance_threshold
         self.top_k = settings.vector_top_k
         self.maintenance_mode = settings.maintenance_mode
-        self.logger = logging.getLogger(__name__)
 
     async def query(
         self,
@@ -80,7 +75,7 @@ class RAGEngine:
                 }
                 return
         except Exception as exc:
-            self.logger.error("Memory intent detection/add failed: %s", exc)
+            logger.error("Memory intent detection/add failed: %s", exc)
 
         try:
             query_embedding = await self.embedding_service.embed_single(user_input)
@@ -119,7 +114,7 @@ class RAGEngine:
             )
             relevant_chunks = [fallback_source]
         if fallback_reason:
-            self.logger.warning("Vector search fallback triggered: %s", fallback_reason)
+            logger.warning("Vector search fallback triggered: %s", fallback_reason)
             yield {
                 "type": "fallback",
                 "reason": fallback_reason,
@@ -135,15 +130,12 @@ class RAGEngine:
                 vault_id=vault_id,
             )
         except Exception as exc:
-            self.logger.error("Memory search failed: %s", exc)
+            logger.error("Memory search failed: %s", exc)
             memories = []
 
         messages = self._build_messages(user_input, chat_history, relevant_chunks, memories)
 
         if stream:
-            if getattr(self.llm_client, "raise_error", False):
-                yield {"type": "error", "message": "LLM service unavailable", "code": "LLM_ERROR"}
-                return
             try:
                 async for chunk in self.llm_client.chat_completion_stream(messages):
                     yield {"type": "content", "content": chunk}
@@ -173,7 +165,7 @@ class RAGEngine:
                 if isinstance(parsed, dict):
                     return parsed
             except (json.JSONDecodeError, TypeError) as exc:
-                self.logger.warning("Failed to parse metadata JSON: %s", exc)
+                logger.warning("Failed to parse metadata JSON: %s", exc)
                 pass
         return {}
 

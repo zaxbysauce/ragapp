@@ -182,8 +182,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
 
         engine = RAGEngine(
             embedding_service=fake_embedding,
-            vector_store_instance=fake_vector,
-            memory_store_instance=fake_memory_store,
+            vector_store=fake_vector,
+            memory_store=fake_memory_store,
             llm_client=fake_llm
         )
 
@@ -230,8 +230,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
 
         engine = RAGEngine(
             embedding_service=fake_embedding,
-            vector_store_instance=fake_vector,
-            memory_store_instance=fake_memory_store,
+            vector_store=fake_vector,
+            memory_store=fake_memory_store,
             llm_client=fake_llm
         )
 
@@ -280,8 +280,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
 
         engine = RAGEngine(
             embedding_service=fake_embedding,
-            vector_store_instance=fake_vector,
-            memory_store_instance=fake_memory_store,
+            vector_store=fake_vector,
+            memory_store=fake_memory_store,
             llm_client=fake_llm
         )
 
@@ -314,8 +314,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
 
         engine = RAGEngine(
             embedding_service=fake_embedding,
-            vector_store_instance=fake_vector,
-            memory_store_instance=fake_memory_store,
+            vector_store=fake_vector,
+            memory_store=fake_memory_store,
             llm_client=fake_llm
         )
 
@@ -343,8 +343,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
 
         engine = RAGEngine(
             embedding_service=fake_embedding,
-            vector_store_instance=fake_vector,
-            memory_store_instance=fake_memory_store,
+            vector_store=fake_vector,
+            memory_store=fake_memory_store,
             llm_client=fake_llm
         )
 
@@ -375,8 +375,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
 
         engine = RAGEngine(
             embedding_service=fake_embedding,
-            vector_store_instance=fake_vector,
-            memory_store_instance=fake_memory_store,
+            vector_store=fake_vector,
+            memory_store=fake_memory_store,
             llm_client=fake_llm
         )
 
@@ -406,8 +406,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
 
         engine = RAGEngine(
             embedding_service=fake_embedding,
-            vector_store_instance=fake_vector,
-            memory_store_instance=fake_memory_store,
+            vector_store=fake_vector,
+            memory_store=fake_memory_store,
             llm_client=fake_llm
         )
 
@@ -428,8 +428,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
 
         engine = RAGEngine(
             embedding_service=fake_embedding,
-            vector_store_instance=fake_vector,
-            memory_store_instance=fake_memory_store,
+            vector_store=fake_vector,
+            memory_store=fake_memory_store,
             llm_client=fake_llm
         )
 
@@ -458,8 +458,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
 
         engine = RAGEngine(
             embedding_service=fake_embedding,
-            vector_store_instance=fake_vector,
-            memory_store_instance=fake_memory_store,
+            vector_store=fake_vector,
+            memory_store=fake_memory_store,
             llm_client=fake_llm
         )
 

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from fastapi import Request, Depends
 
 from app.config import Settings, settings
-from app.models.database import get_pool
+from app.models.database import get_pool, SQLiteConnectionPool
 from app.services.llm_client import LLMClient
 from app.services.embeddings import EmbeddingService
 from app.services.vector_store import VectorStore
@@ -16,6 +16,8 @@ from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
 from app.services.background_tasks import BackgroundProcessor
 from app.services.maintenance import MaintenanceService
+from app.services.llm_health import LLMHealthChecker
+from app.services.model_checker import ModelChecker
 from app.security import get_csrf_manager
 
 
@@ -27,6 +29,11 @@ def get_db():
         yield conn
     finally:
         pool.release_connection(conn)
+
+
+def get_db_pool(request: Request) -> SQLiteConnectionPool:
+    """Return the database pool from app state."""
+    return request.app.state.db_pool
 
 
 def get_settings() -> Settings:
@@ -70,10 +77,12 @@ def get_rag_engine(
 
 
 def get_toggle_manager(request: Request) -> ToggleManager:
+    """Return the toggle manager from app state."""
     return request.app.state.toggle_manager
 
 
 def get_secret_manager(request: Request) -> SecretManager:
+    """Return the secret manager from app state."""
     return request.app.state.secret_manager
 
 
@@ -85,3 +94,13 @@ def get_background_processor(request: Request) -> BackgroundProcessor:
 def get_maintenance_service(request: Request) -> MaintenanceService:
     """Return the maintenance service from app state."""
     return request.app.state.maintenance_service
+
+
+def get_llm_health_checker(request: Request) -> LLMHealthChecker:
+    """Return the LLM health checker from app state."""
+    return request.app.state.llm_health_checker
+
+
+def get_model_checker(request: Request) -> ModelChecker:
+    """Return the model checker from app state."""
+    return request.app.state.model_checker

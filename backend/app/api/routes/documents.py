@@ -24,7 +24,8 @@ from app.services.document_processor import DocumentProcessor, DocumentProcessin
 from app.services.vector_store import VectorStore
 from app.services.embeddings import EmbeddingService
 from app.services.secret_manager import SecretManager
-from app.api.deps import get_secret_manager, get_background_processor, get_vector_store, get_embedding_service, get_settings, get_db
+from app.models.database import SQLiteConnectionPool
+from app.api.deps import get_secret_manager, get_background_processor, get_vector_store, get_embedding_service, get_settings, get_db, get_db_pool
 from app.security import csrf_protect, require_scope, require_auth
 from app.limiter import limiter
 from app.services.background_tasks import BackgroundProcessor
@@ -334,13 +335,14 @@ async def upload_document_root(
     settings_dep: Settings = Depends(get_settings),
     vector_store: VectorStore = Depends(get_vector_store),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
+    db_pool: SQLiteConnectionPool = Depends(get_db_pool),
     auth: dict = Depends(require_auth),
 ):
     """
     Upload endpoint at root /documents for frontend compatibility.
     Delegates to the main upload handler.
     """
-    return await _do_upload(request, file, settings_dep, vector_store, embedding_service, vault_id)
+    return await _do_upload(request, file, settings_dep, vector_store, embedding_service, db_pool, vault_id)
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -351,6 +353,7 @@ async def upload_document(
     settings_dep: Settings = Depends(get_settings),
     vector_store: VectorStore = Depends(get_vector_store),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
+    db_pool: SQLiteConnectionPool = Depends(get_db_pool),
     auth: dict = Depends(require_auth),
 ):
     """
@@ -360,7 +363,7 @@ async def upload_document(
     Saves the uploaded file to settings.uploads_dir using aiofiles,
     then processes it via DocumentProcessor.process_file in asyncio.to_thread.
     """
-    return await _do_upload(request, file, settings_dep, vector_store, embedding_service, vault_id)
+    return await _do_upload(request, file, settings_dep, vector_store, embedding_service, db_pool, vault_id)
 
 
 async def _do_upload(
@@ -369,6 +372,7 @@ async def _do_upload(
     settings_dep: Settings,
     vector_store: VectorStore,
     embedding_service: EmbeddingService,
+    db_pool: SQLiteConnectionPool,
     vault_id: int,
 ) -> UploadResponse:
     # Validate file is provided
@@ -453,6 +457,7 @@ async def _do_upload(
             chunk_overlap=settings_dep.chunk_overlap,
             vector_store=vector_store,
             embedding_service=embedding_service,
+            pool=db_pool,
         )
 
         try:
@@ -493,6 +498,7 @@ async def _do_upload(
 async def scan_directories(
     request: Request,
     background_processor: BackgroundProcessor = Depends(get_background_processor),
+    db_pool: SQLiteConnectionPool = Depends(get_db_pool),
     auth: dict = Depends(require_auth),
 ):
     """
@@ -510,7 +516,7 @@ async def scan_directories(
         await background_processor.start()
 
     try:
-        watcher = FileWatcher(background_processor)
+        watcher = FileWatcher(background_processor, pool=db_pool)
 
         # Perform scan
         files_enqueued = await watcher.scan_once()
@@ -560,8 +566,6 @@ async def delete_document(
     try:
         # Delete from vector store first (wrapped in to_thread to avoid blocking)
         try:
-            await asyncio.to_thread(vector_store.connect)
-            # Check if chunks table exists before attempting deletion
             db = vector_store.db
             if db is not None and "chunks" in db.table_names():
                 vector_store.table = db.open_table("chunks")
@@ -572,8 +576,6 @@ async def delete_document(
         except Exception as e:
             logger.warning("Error deleting chunks from vector store: %s", e)
             # Continue with database deletion even if vector store fails
-        finally:
-            await asyncio.to_thread(vector_store.close)
 
         # Delete from database
         await asyncio.to_thread(conn.execute, "DELETE FROM files WHERE id = ?", (file_id,))

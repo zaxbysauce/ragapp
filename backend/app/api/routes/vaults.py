@@ -68,6 +68,53 @@ class VaultListResponse(BaseModel):
     vaults: List[VaultResponse]
 
 
+def _row_to_vault_response(row) -> VaultResponse:
+    """Map a database row to VaultResponse."""
+    return VaultResponse(
+        id=row[0],
+        name=row[1],
+        description=row[2],
+        created_at=row[3],
+        updated_at=row[4],
+        file_count=row[5] or 0,
+        memory_count=row[6] or 0,
+        session_count=row[7] or 0,
+    )
+
+
+_VAULT_WITH_COUNTS_SQL = """
+    SELECT v.id, v.name, v.description, v.created_at, v.updated_at,
+           COUNT(DISTINCT f.id) as file_count,
+           COUNT(DISTINCT m.id) as memory_count,
+           COUNT(DISTINCT cs.id) as session_count
+    FROM vaults v
+    LEFT JOIN files f ON f.vault_id = v.id
+    LEFT JOIN memories m ON m.vault_id = v.id
+    LEFT JOIN chat_sessions cs ON cs.vault_id = v.id
+"""
+
+
+async def _fetch_vault_with_counts(conn: sqlite3.Connection, vault_id: int) -> Optional[VaultResponse]:
+    """Fetch a single vault with file/memory/session counts."""
+    cursor = await asyncio.to_thread(
+        conn.execute,
+        _VAULT_WITH_COUNTS_SQL + " WHERE v.id = ? GROUP BY v.id",
+        (vault_id,)
+    )
+    row = await asyncio.to_thread(cursor.fetchone)
+    return _row_to_vault_response(row) if row else None
+
+
+async def _fetch_all_vaults(conn: sqlite3.Connection) -> List[VaultResponse]:
+    """Fetch all vaults with counts, ordered by creation date."""
+    cursor = await asyncio.to_thread(
+        conn.execute,
+        _VAULT_WITH_COUNTS_SQL + " GROUP BY v.id ORDER BY v.created_at ASC"
+    )
+    rows = await asyncio.to_thread(cursor.fetchall)
+    return [_row_to_vault_response(row) for row in rows]
+
+
 @router.get("/vaults", response_model=VaultListResponse)
 async def list_vaults(conn: sqlite3.Connection = Depends(get_db)):
     """
@@ -76,37 +123,7 @@ async def list_vaults(conn: sqlite3.Connection = Depends(get_db)):
     Returns a list of all vaults with their associated counts for files,
     memories, and chat sessions, ordered by creation date.
     """
-    cursor = await asyncio.to_thread(
-        conn.execute,
-        """
-        SELECT v.id, v.name, v.description, v.created_at, v.updated_at,
-               COUNT(DISTINCT f.id) as file_count,
-               COUNT(DISTINCT m.id) as memory_count,
-               COUNT(DISTINCT cs.id) as session_count
-        FROM vaults v
-        LEFT JOIN files f ON f.vault_id = v.id
-        LEFT JOIN memories m ON m.vault_id = v.id
-        LEFT JOIN chat_sessions cs ON cs.vault_id = v.id
-        GROUP BY v.id
-        ORDER BY v.created_at ASC
-        """
-    )
-    rows = await asyncio.to_thread(cursor.fetchall)
-
-    vaults = [
-        VaultResponse(
-            id=row[0],
-            name=row[1],
-            description=row[2],
-            created_at=row[3],
-            updated_at=row[4],
-            file_count=row[5] or 0,
-            memory_count=row[6] or 0,
-            session_count=row[7] or 0,
-        )
-        for row in rows
-    ]
-
+    vaults = await _fetch_all_vaults(conn)
     return VaultListResponse(vaults=vaults)
 
 
@@ -118,37 +135,10 @@ async def get_vault(vault_id: int, conn: sqlite3.Connection = Depends(get_db)):
     Returns the vault with the given id including file, memory,
     and session counts. Returns 404 if not found.
     """
-    cursor = await asyncio.to_thread(
-        conn.execute,
-        """
-        SELECT v.id, v.name, v.description, v.created_at, v.updated_at,
-               COUNT(DISTINCT f.id) as file_count,
-               COUNT(DISTINCT m.id) as memory_count,
-               COUNT(DISTINCT cs.id) as session_count
-        FROM vaults v
-        LEFT JOIN files f ON f.vault_id = v.id
-        LEFT JOIN memories m ON m.vault_id = v.id
-        LEFT JOIN chat_sessions cs ON cs.vault_id = v.id
-        WHERE v.id = ?
-        GROUP BY v.id
-        """,
-        (vault_id,)
-    )
-    row = await asyncio.to_thread(cursor.fetchone)
-
-    if row is None:
+    vault = await _fetch_vault_with_counts(conn, vault_id)
+    if vault is None:
         raise HTTPException(status_code=404, detail=f"Vault with id {vault_id} not found")
-
-    return VaultResponse(
-        id=row[0],
-        name=row[1],
-        description=row[2],
-        created_at=row[3],
-        updated_at=row[4],
-        file_count=row[5] or 0,
-        memory_count=row[6] or 0,
-        session_count=row[7] or 0,
-    )
+    return vault
 
 
 @router.post("/vaults", response_model=VaultResponse, status_code=201)
@@ -171,38 +161,13 @@ async def create_vault(
         )
         await asyncio.to_thread(conn.commit)
         vault_id = cursor.lastrowid
+        if vault_id is None:
+            raise HTTPException(status_code=500, detail="Failed to create vault")
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail=f"Vault with name '{request.name}' already exists")
 
-    # Fetch the created vault
-    cursor = await asyncio.to_thread(
-        conn.execute,
-        """
-        SELECT v.id, v.name, v.description, v.created_at, v.updated_at,
-               COUNT(DISTINCT f.id) as file_count,
-               COUNT(DISTINCT m.id) as memory_count,
-               COUNT(DISTINCT cs.id) as session_count
-        FROM vaults v
-        LEFT JOIN files f ON f.vault_id = v.id
-        LEFT JOIN memories m ON m.vault_id = v.id
-        LEFT JOIN chat_sessions cs ON cs.vault_id = v.id
-        WHERE v.id = ?
-        GROUP BY v.id
-        """,
-        (vault_id,)
-    )
-    row = await asyncio.to_thread(cursor.fetchone)
-
-    return VaultResponse(
-        id=row[0],
-        name=row[1],
-        description=row[2],
-        created_at=row[3],
-        updated_at=row[4],
-        file_count=row[5] or 0,
-        memory_count=row[6] or 0,
-        session_count=row[7] or 0,
-    )
+    vault = await _fetch_vault_with_counts(conn, vault_id)
+    return vault
 
 
 @router.put("/vaults/{vault_id}", response_model=VaultResponse)
@@ -251,35 +216,10 @@ async def update_vault(
 
     if not update_fields:
         # No fields to update, just fetch and return current record
-        cursor = await asyncio.to_thread(
-            conn.execute,
-            """
-            SELECT v.id, v.name, v.description, v.created_at, v.updated_at,
-                   COUNT(DISTINCT f.id) as file_count,
-                   COUNT(DISTINCT m.id) as memory_count,
-                   COUNT(DISTINCT cs.id) as session_count
-            FROM vaults v
-            LEFT JOIN files f ON f.vault_id = v.id
-            LEFT JOIN memories m ON m.vault_id = v.id
-            LEFT JOIN chat_sessions cs ON cs.vault_id = v.id
-            WHERE v.id = ?
-            GROUP BY v.id
-            """,
-            (vault_id,)
-        )
-        row = await asyncio.to_thread(cursor.fetchone)
-        if row is None:
+        vault = await _fetch_vault_with_counts(conn, vault_id)
+        if vault is None:
             raise HTTPException(status_code=404, detail=f"Vault with id {vault_id} not found")
-        return VaultResponse(
-            id=row[0],
-            name=row[1],
-            description=row[2],
-            created_at=row[3],
-            updated_at=row[4],
-            file_count=row[5] or 0,
-            memory_count=row[6] or 0,
-            session_count=row[7] or 0,
-        )
+        return vault
 
     # Add vault_id to params
     params.append(vault_id)
@@ -300,38 +240,13 @@ async def update_vault(
         )
 
     # Fetch updated record
-    cursor = await asyncio.to_thread(
-        conn.execute,
-        """
-        SELECT v.id, v.name, v.description, v.created_at, v.updated_at,
-               COUNT(DISTINCT f.id) as file_count,
-               COUNT(DISTINCT m.id) as memory_count,
-               COUNT(DISTINCT cs.id) as session_count
-        FROM vaults v
-        LEFT JOIN files f ON f.vault_id = v.id
-        LEFT JOIN memories m ON m.vault_id = v.id
-        LEFT JOIN chat_sessions cs ON cs.vault_id = v.id
-        WHERE v.id = ?
-        GROUP BY v.id
-        """,
-        (vault_id,)
-    )
-    row = await asyncio.to_thread(cursor.fetchone)
+    vault = await _fetch_vault_with_counts(conn, vault_id)
 
-    # Race condition fix: check if row is None after fetch
-    if row is None:
+    # Race condition fix: check if vault is None after fetch
+    if vault is None:
         raise HTTPException(status_code=404, detail=f"Vault with id {vault_id} not found")
 
-    return VaultResponse(
-        id=row[0],
-        name=row[1],
-        description=row[2],
-        created_at=row[3],
-        updated_at=row[4],
-        file_count=row[5] or 0,
-        memory_count=row[6] or 0,
-        session_count=row[7] or 0,
-    )
+    return vault
 
 
 @router.delete("/vaults/{vault_id}")

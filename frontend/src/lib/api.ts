@@ -18,6 +18,41 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// Normalize error responses
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // Preserve AbortError for cancellation handling
+    if (error.name === "AbortError" || error.code === "ERR_CANCELED") {
+      return Promise.reject(error);
+    }
+
+    // Extract the most useful error message
+    let message = "An unexpected error occurred";
+    
+    if (error.response) {
+      // Server responded with an error status
+      const data = error.response.data;
+      message = data?.detail || data?.message || data?.error || error.response.statusText || message;
+    } else if (error.request) {
+      // Request was made but no response received
+      message = "Unable to reach the server. Please check your connection.";
+    } else {
+      // Something else happened
+      message = error.message || message;
+    }
+
+    // Create a normalized error with the extracted message
+    const normalizedError = new Error(message);
+    normalizedError.name = error.name || "APIError";
+    // Preserve the original response for status code checking
+    (normalizedError as any).status = error.response?.status;
+    (normalizedError as any).originalError = error;
+    
+    return Promise.reject(normalizedError);
+  }
+);
+
 export interface HealthResponse {
   status: string;
   version?: string;
@@ -284,52 +319,31 @@ export async function searchMemories(
   signal?: AbortSignal,
   vaultId?: number
 ): Promise<SearchMemoriesResponse> {
-  try {
-    const body = { ...request, ...(vaultId != null && { vault_id: vaultId }) };
-    const response = await apiClient.post<SearchMemoriesResponse>(
-      "/memories/search",
-      body,
-      { signal }
-    );
-    return response.data;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw error;
-    }
-    throw new Error(
-      error instanceof Error ? error.message : "Failed to search memories"
-    );
-  }
+  const body = { ...request, ...(vaultId != null && { vault_id: vaultId }) };
+  const response = await apiClient.post<SearchMemoriesResponse>(
+    "/memories/search",
+    body,
+    { signal }
+  );
+  return response.data;
 }
 
 export async function addMemory(
   request: AddMemoryRequest,
   vaultId?: number
 ): Promise<AddMemoryResponse> {
-  try {
-    // Ensure tags is always an array, never undefined
-    const payload = {
-      ...request,
-      tags: request.tags ?? [],
-      ...(vaultId != null && { vault_id: vaultId }),
-    };
-    const response = await apiClient.post<AddMemoryResponse>("/memories", payload);
-    return response.data;
-  } catch (error) {
-    throw new Error(
-      error instanceof Error ? error.message : "Failed to add memory"
-    );
-  }
+  // Ensure tags is always an array, never undefined
+  const payload = {
+    ...request,
+    tags: request.tags ?? [],
+    ...(vaultId != null && { vault_id: vaultId }),
+  };
+  const response = await apiClient.post<AddMemoryResponse>("/memories", payload);
+  return response.data;
 }
 
 export async function deleteMemory(id: string): Promise<void> {
-  try {
-    await apiClient.delete(`/memories/${id}`);
-  } catch (error) {
-    throw new Error(
-      error instanceof Error ? error.message : "Failed to delete memory"
-    );
-  }
+  await apiClient.delete(`/memories/${id}`);
 }
 
 export async function listMemories(vaultId?: number): Promise<{ memories: MemoryResult[] }> {

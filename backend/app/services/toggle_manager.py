@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from app.models.database import get_db_connection
+from app.models.database import SQLiteConnectionPool
 
 
 @dataclass
@@ -20,8 +20,8 @@ class ToggleManager:
 
     CACHE_TTL = 30.0  # seconds
 
-    def __init__(self, sqlite_path: str) -> None:
-        self.sqlite_path = sqlite_path
+    def __init__(self, pool: SQLiteConnectionPool) -> None:
+        self.pool = pool
         self._cache: dict[str, ToggleCacheEntry] = {}
         self._lock = threading.Lock()
 
@@ -31,7 +31,7 @@ class ToggleManager:
             entry = self._cache.get(feature)
             if entry and now - entry.timestamp < self.CACHE_TTL:
                 return entry.enabled
-        conn = get_db_connection(self.sqlite_path)
+        conn = self.pool.get_connection()
         try:
             row = conn.execute(
                 "SELECT enabled FROM admin_toggles WHERE feature = ?",
@@ -39,13 +39,13 @@ class ToggleManager:
             ).fetchone()
             value = default if row is None else bool(row["enabled"])
         finally:
-            conn.close()
+            self.pool.release_connection(conn)
         with self._lock:
             self._cache[feature] = ToggleCacheEntry(timestamp=now, enabled=value)
         return value
 
     def set_toggle(self, feature: str, enabled: bool) -> None:
-        conn = get_db_connection(self.sqlite_path)
+        conn = self.pool.get_connection()
         try:
             conn.execute(
                 "INSERT INTO admin_toggles(feature, enabled) VALUES(?, ?) ON CONFLICT(feature) DO UPDATE SET enabled=excluded.enabled, updated_at=CURRENT_TIMESTAMP",
@@ -53,7 +53,7 @@ class ToggleManager:
             )
             conn.commit()
         finally:
-            conn.close()
+            self.pool.release_connection(conn)
         with self._lock:
             self._cache[feature] = ToggleCacheEntry(timestamp=time.time(), enabled=enabled)
 

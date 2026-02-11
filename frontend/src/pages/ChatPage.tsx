@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,13 +7,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MessageSquare, FileText, Plus, ChevronDown, ChevronRight, AlertCircle } from "lucide-react";
-import { chatStream, listChatSessions, getChatSession, createChatSession, addChatMessage, type ChatMessage, type Source, type ChatSession } from "@/lib/api";
-import { useChatStore, type Message } from "@/stores/useChatStore";
+import { type Source } from "@/lib/api";
+import { useChatStore } from "@/stores/useChatStore";
 import { MessageContent } from "@/components/shared/MessageContent";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
-
-const MAX_INPUT_LENGTH = 2000;
+import { useChatHistory } from "@/hooks/useChatHistory";
+import { useSendMessage, MAX_INPUT_LENGTH } from "@/hooks/useSendMessage";
 
 export default function ChatPage() {
   const {
@@ -22,178 +22,21 @@ export default function ChatPage() {
     isStreaming,
     inputError,
     expandedSources,
-    setInput,
-    setIsStreaming,
-    setAbortFn,
-    setInputError,
-    addMessage,
-    updateMessage,
     toggleSource,
-    stopStreaming,
   } = useChatStore();
   const { activeVaultId } = useVaultStore();
 
-  // Chat history state
-  const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
-  const [isChatLoading, setIsChatLoading] = useState(true);
-  const [chatHistoryError, setChatHistoryError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("active");
 
-  useEffect(() => {
-    const loadHistory = async () => {
-      setIsChatLoading(true);
-      setChatHistoryError(null);
-      try {
-        const data = await listChatSessions(activeVaultId ?? undefined);
-        setChatHistory(data.sessions);
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Failed to load chat history";
-        setChatHistoryError(errorMessage);
-      } finally {
-        setIsChatLoading(false);
-      }
-    };
-    loadHistory();
-  }, [activeVaultId]);
+  // Chat history logic
+  const { chatHistory, isChatLoading, chatHistoryError, handleLoadChat, refreshHistory } =
+    useChatHistory(activeVaultId);
 
-  const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
-    if (input.length > MAX_INPUT_LENGTH) {
-      setInputError(`Input exceeds maximum length of ${MAX_INPUT_LENGTH} characters`);
-      return;
-    }
-
-    const userContent = input.trim();
-
-    // Get or create session
-    const currentState = useChatStore.getState();
-    let sessionId: number;
-
-    if (currentState.activeChatId) {
-      sessionId = parseInt(currentState.activeChatId);
-    } else {
-      try {
-        const newSession = await createChatSession({ vault_id: activeVaultId ?? 1 });
-        sessionId = newSession.id;
-        useChatStore.setState({ activeChatId: newSession.id.toString() });
-      } catch (err) {
-        console.error("Failed to create chat session:", err);
-        return;
-      }
-    }
-
-    const userMessage = {
-      id: Date.now().toString(),
-      role: "user" as const,
-      content: userContent,
-    };
-
-    setIsStreaming(true);
-
-    const assistantMessageId = (Date.now() + 1).toString();
-    const assistantMessage = {
-      id: assistantMessageId,
-      role: "assistant" as const,
-      content: "",
-    };
-
-    const chatMessages: ChatMessage[] = [
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
-      { role: "user", content: userMessage.content },
-    ];
-
-    const abort = chatStream(chatMessages, {
-      onMessage: (chunk) => {
-        const currentMessages = useChatStore.getState().messages;
-        const currentMsg = currentMessages.find(m => m.id === assistantMessageId);
-        updateMessage(assistantMessageId, { content: (currentMsg?.content || "") + chunk });
-      },
-      onSources: (sources) => {
-        updateMessage(assistantMessageId, { sources });
-      },
-      onError: (error) => {
-        console.error("Chat stream error:", error);
-        updateMessage(assistantMessageId, { error: error.message });
-        setIsStreaming(false);
-        setAbortFn(null);
-      },
-      onComplete: async () => {
-        setIsStreaming(false);
-        setAbortFn(null);
-        // Save messages to API
-        try {
-          // Save user message
-          await addChatMessage(sessionId, { role: "user", content: userContent });
-
-          // Save assistant message
-          const allMessages = useChatStore.getState().messages;
-          const assistantMsg = allMessages.find(m => m.id === assistantMessageId);
-          if (assistantMsg) {
-            await addChatMessage(sessionId, {
-              role: "assistant",
-              content: assistantMsg.content,
-              sources: assistantMsg.sources ?? undefined,
-            });
-          }
-
-          // Refresh session list
-          const data = await listChatSessions(activeVaultId ?? undefined);
-          setChatHistory(data.sessions);
-        } catch (err) {
-          console.error("Failed to save chat messages:", err);
-        }
-      },
-    }, activeVaultId ?? undefined);
-
-    setAbortFn(abort);
-    addMessage(userMessage);
-    addMessage(assistantMessage);
-
-    setInput("");
-    setInputError(null);
-  };
-
-  const handleStop = () => {
-    stopStreaming();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value;
-    setInput(value);
-    if (value.length > MAX_INPUT_LENGTH) {
-      setInputError(`Input exceeds maximum length of ${MAX_INPUT_LENGTH} characters`);
-    } else {
-      setInputError(null);
-    }
-  };
-
-  const handleToggleSource = (sourceId: string) => {
-    toggleSource(sourceId);
-  };
-
-  const handleLoadChat = async (session: ChatSession) => {
-    if (isStreaming) return;
-    try {
-      const detail = await getChatSession(session.id);
-      const loadedMessages: Message[] = detail.messages.map(m => ({
-        id: m.id.toString(),
-        role: m.role as "user" | "assistant",
-        content: m.content,
-        sources: m.sources ?? undefined,
-      }));
-      useChatStore.getState().loadChat(session.id.toString(), loadedMessages);
-      setActiveTab("active");
-    } catch (err) {
-      console.error("Failed to load chat session:", err);
-    }
-  };
+  // Send message logic
+  const { handleSend, handleStop, handleKeyDown, handleInputChange } = useSendMessage(
+    activeVaultId,
+    refreshHistory
+  );
 
   const { latestAssistantMessage, hasSources } = useMemo(() => {
     const latest = messages.filter((m) => m.role === "assistant").pop();
@@ -202,6 +45,10 @@ export default function ChatPage() {
       hasSources: !!(latest?.sources && latest.sources.length > 0),
     };
   }, [messages]);
+
+  const handleToggleSource = (sourceId: string) => {
+    toggleSource(sourceId);
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -365,7 +212,7 @@ export default function ChatPage() {
               ) : (
                 <div className="space-y-4">
                   {chatHistory.map((session) => (
-                    <div key={session.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors" onClick={() => handleLoadChat(session)}>
+                    <div key={session.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors" onClick={async () => { await handleLoadChat(session); setActiveTab("active"); }}>
                       <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
                         <MessageSquare className="h-5 w-5 text-primary" />
                       </div>

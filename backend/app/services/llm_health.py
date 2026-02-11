@@ -122,7 +122,3 @@ class LLMHealthChecker:
             "chat": chat_status,
             "error": "; ".join(errors) if errors else None
         }
-
-
-# Global health checker instance with default timeout
-llm_health_checker = LLMHealthChecker()

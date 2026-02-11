@@ -5,7 +5,7 @@ import tempfile
 import os
 from pathlib import Path
 
-from app.models.database import init_db
+from app.models.database import init_db, SQLiteConnectionPool
 from app.services.memory_store import MemoryStore, MemoryStoreError, MemoryRecord
 
 
@@ -17,10 +17,12 @@ class TestMemoryStore(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = Path(self.temp_dir) / "test.db"
         init_db(str(self.db_path))
-        self.store = MemoryStore(sqlite_path=self.db_path)
+        self.pool = SQLiteConnectionPool(str(self.db_path), max_size=2)
+        self.store = MemoryStore(pool=self.pool)
 
     def tearDown(self):
         """Clean up test database."""
+        self.pool.close_all()
         if self.db_path.exists():
             os.remove(self.db_path)
         os.rmdir(self.temp_dir)

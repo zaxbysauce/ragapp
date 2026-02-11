@@ -17,7 +17,7 @@ from typing import List, Any, Optional
 from unstructured.partition.auto import partition
 
 from ..config import settings
-from ..models.database import get_db_connection
+from ..models.database import SQLiteConnectionPool, get_pool
 from ..utils.file_utils import compute_file_hash
 from .chunking import SemanticChunker, ProcessedChunk
 from .embeddings import EmbeddingService
@@ -113,7 +113,8 @@ class DocumentProcessor:
         chunk_size: int = 512,
         chunk_overlap: int = 50,
         vector_store: Optional[VectorStore] = None,
-        embedding_service: Optional[EmbeddingService] = None
+        embedding_service: Optional[EmbeddingService] = None,
+        pool: Optional['SQLiteConnectionPool'] = None,
     ):
         """
         Initialize the document processor.
@@ -123,6 +124,7 @@ class DocumentProcessor:
             chunk_overlap: Overlap between chunks in tokens
             vector_store: VectorStore instance for storing chunk embeddings
             embedding_service: EmbeddingService instance for generating embeddings
+            pool: SQLiteConnectionPool instance for database connections
         """
         self.parser = DocumentParser()
         self.chunker = SemanticChunker(
@@ -130,7 +132,10 @@ class DocumentProcessor:
             chunk_overlap=chunk_overlap
         )
         self.schema_parser = SchemaParser()
-        self.sqlite_path = str(settings.sqlite_path)
+        # Fallback to creating a pool from settings if not provided
+        if pool is None:
+            pool = get_pool(str(settings.sqlite_path), max_size=2)
+        self.pool = pool
         self.vector_store = vector_store
         self.embedding_service = embedding_service
 
@@ -359,8 +364,8 @@ class DocumentProcessor:
         # Compute file hash
         file_hash = compute_file_hash(file_path)
 
-        # Get database connection
-        conn = get_db_connection(self.sqlite_path)
+        # Get database connection from pool
+        conn = self.pool.get_connection()
 
         try:
             # Check for duplicates
@@ -432,4 +437,4 @@ class DocumentProcessor:
                 raise
 
         finally:
-            conn.close()
+            self.pool.release_connection(conn)

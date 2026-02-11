@@ -231,32 +231,40 @@ async def list_sessions(
 
     Returns sessions sorted by updated_at DESC with message count for each session.
     """
-    # Build query with optional vault_id filter
+    # Build single JOIN query with optional vault_id filter to avoid N+1
     if vault_id is not None:
-        query = "SELECT id, vault_id, title, created_at, updated_at FROM chat_sessions WHERE vault_id = ? ORDER BY updated_at DESC"
+        query = """
+            SELECT s.id, s.vault_id, s.title, s.created_at, s.updated_at, COUNT(m.id) as message_count
+            FROM chat_sessions s
+            LEFT JOIN chat_messages m ON m.session_id = s.id
+            WHERE s.vault_id = ?
+            GROUP BY s.id
+            ORDER BY s.updated_at DESC
+        """
         params = (vault_id,)
     else:
-        query = "SELECT id, vault_id, title, created_at, updated_at FROM chat_sessions ORDER BY updated_at DESC"
+        query = """
+            SELECT s.id, s.vault_id, s.title, s.created_at, s.updated_at, COUNT(m.id) as message_count
+            FROM chat_sessions s
+            LEFT JOIN chat_messages m ON m.session_id = s.id
+            GROUP BY s.id
+            ORDER BY s.updated_at DESC
+        """
         params = ()
 
-    sessions = await asyncio.to_thread(conn.execute, query, params)
-    rows = await asyncio.to_thread(sessions.fetchall)
+    result = await asyncio.to_thread(conn.execute, query, params)
+    rows = await asyncio.to_thread(result.fetchall)
 
-    # Get message count for each session
+    # Map rows to dicts (message_count is now the 6th column, index 5)
     sessions_with_count = []
     for row in rows:
-        session_id = row[0]
-        count_query = "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?"
-        count_result = await asyncio.to_thread(conn.execute, count_query, (session_id,))
-        message_count = await asyncio.to_thread(count_result.fetchone)
-
         sessions_with_count.append({
             "id": row[0],
             "vault_id": row[1],
             "title": row[2],
             "created_at": row[3],
             "updated_at": row[4],
-            "message_count": message_count[0]
+            "message_count": row[5]
         })
 
     return {"sessions": sessions_with_count}

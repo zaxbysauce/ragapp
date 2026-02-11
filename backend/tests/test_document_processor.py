@@ -51,7 +51,7 @@ except ImportError:
     sys.modules['unstructured.documents'] = _unstructured.documents
     sys.modules['unstructured.documents.elements'] = _unstructured.documents.elements
 
-from app.models.database import init_db
+from app.models.database import init_db, SQLiteConnectionPool
 from app.services.document_processor import (
     DocumentProcessor,
     DuplicateFileError,
@@ -99,14 +99,18 @@ CREATE TABLE posts (
         self._original_data_dir = settings.data_dir
         settings.data_dir = Path(self.temp_dir)
 
-        # Create DocumentProcessor instance
-        self.processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
-        # Override sqlite_path directly on instance
-        self.processor.sqlite_path = self.temp_db_path
+        # Create test pool
+        self.test_pool = SQLiteConnectionPool(self.temp_db_path, max_size=2)
+
+        # Create DocumentProcessor instance with pool
+        self.processor = DocumentProcessor(chunk_size=512, chunk_overlap=50, pool=self.test_pool)
 
     def tearDown(self):
         """Clean up temporary files."""
         settings.data_dir = self._original_data_dir
+
+        # Close test pool
+        self.test_pool.close_all()
 
         # Remove temp files
         if os.path.exists(self.sql_file_path):

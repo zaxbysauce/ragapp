@@ -1,85 +1,131 @@
-# KnowledgeVault Development Plan
+# KnowledgeVault Code Review Remediation Plan
 Swarm: paid
-Phase: 6 [IN PROGRESS] | Updated: 2026-02-10
+Phase: 6 [COMPLETE] | Updated: 2026-02-11
+
+## Rollback Strategy
+- Git commit after each phase; revert to prior commit if app fails to start
+- Phase 2 (highest risk): commit before AND after each singleton removal; test suite gates each step
+- Frontend: npm run build gates each task; git revert if build breaks
 
 ---
-## Phase 1: Discovery & Audit [COMPLETE]
-- [x] 1.1: Backend Deep Scan (Security, Performance, Architecture) [SMALL]
-- [x] 1.2: Frontend Deep Scan (Performance, Re [SMALL]
-- [x] 1.3: Generate Refactoring Roadmap [SMALL]
+
+## Phase 1: Bug Fixes (CRITICAL + HIGH) [COMPLETE]
+
+- [x] 1.1: Fix `exempt_when_health_check` no-op decorator (backend/app/limiter.py) [SMALL]
+  - Replaced broken decorator with WhitelistLimiter._check_request_limit override + hmac.compare_digest
+
+- [x] 1.2: Fix sync/async mismatch in LLMHealthChecker (backend/app/services/llm_client.py:32) [SMALL]
+  - Changed `def start()` to `async def start()`; updated caller in main.py
+
+- [x] 1.3: Fix health endpoint per-request instantiation (backend/app/api/routes/health.py) [SMALL]
+  - Added to app.state + deps.py; health.py now uses Depends()
+
+- [CANCELLED] 1.4: CSRF store token validation — Not broken (presence-based scheme, token is in key not value)
+
+- [x] 1.5: Fix deprecated `datetime.utcnow()` + timing attack in admin.py [SMALL]
+  - Changed to datetime.now(timezone.utc); added secrets.compare_digest for token comparison
+
+- [x] 1.6: Phase 1 verification — 171/171 tests passing
 
 ---
-## Phase 2: Refactoring - Batch 1: Critical Security (Backend) [COMPLETE]
-- [x] 2.1: Fix Path Traversal in File Upload (backend/app/api/routes/documents.py) [SMALL]
-- [x] 2.2: Add File Size & Type Validation (backend/app/api/routes/documents.py) [SMALL]
-- [x] 2.3: Fix Unsafe Query Parameter in Memory Search (backend/app/services/memory_store.py) [SMALL]
-- [x] 2.4: Remove Duplicate Health Check Endpoints (backend/app/main.py) [SMALL]
-- [x] 2.5: Fix Global HTTP Client Leak (backend/app/services/llm_client.py) [SMALL]
+
+## Phase 2: DI & Connection Consolidation [COMPLETE]
+Order: Update deps.py first (2.1), then refactor services in dependency order (leaf services first), verify after each.
+
+- [x] 2.1: Remove module-level singletons + update deps.py [MEDIUM] (depends: 1.2, 1.3)
+  - Removed dead singletons from llm_client.py, model_checker.py, llm_health.py
+  - background_tasks.py kept (intentional factory pattern)
+
+- [x] 2.2: Refactor toggle_manager to accept DB via DI (backend/app/services/toggle_manager.py) [SMALL]
+  - Constructor now accepts SQLiteConnectionPool; uses pool.get_connection()/release_connection()
+  - main.py updated to pass app.state.db_pool
+
+- [x] 2.3: Refactor maintenance service to accept DB via DI (backend/app/services/maintenance.py) [SMALL]
+  - Constructor accepts SQLiteConnectionPool; updated test_maintenance.py
+
+- [x] 2.4: Refactor memory_store to accept DB via DI (backend/app/services/memory_store.py) [SMALL]
+  - Optional pool with fallback for backward compat; updated test_memory_store.py + test_api_routes.py
+
+- [x] 2.5: Refactor document_processor to accept DB via DI (backend/app/services/document_processor.py) [SMALL]
+  - Optional pool with fallback; updated background_tasks.py, documents.py, deps.py (new get_db_pool), test files
+
+- [x] 2.6: Refactor file_watcher to accept DB via DI (backend/app/services/file_watcher.py) [SMALL]
+  - Optional pool with lazy init; updated main.py, documents.py scan endpoint
+
+- [x] 2.7: Verify all tests pass after DI consolidation — 171/171 passing
+  - Zero get_db_connection calls remain in services/
 
 ---
-## Phase 3: Refactoring - Batch 2: Core Architecture (Backend) [COMPLETE]
-- [x] 3.1: Implement Dependency Injection for Services (Remove Global Singletons) [SMALL]
-- [x] 3.2: Implement Database Connection Pooling (Remove new connection per request) [SMALL]
-- [x] 3.3: Standardize Async/Sync boundaries (Fix blocking I/O) [SMALL]
+
+## Phase 3: Performance & Query Fixes [COMPLETE]
+
+- [x] 3.1: Fix N+1 query in list_sessions (backend/app/api/routes/chat.py) [SMALL]
+  - Replaced N+1 loop with single LEFT JOIN + GROUP BY query
+  - Index idx_chat_messages_session_id already existed
+
+- [x] 3.2: Batch embedding API calls (backend/app/services/embeddings.py) [MEDIUM]
+  - embed_batch now uses asyncio.gather + Semaphore(10) + sub-batches of 64
+
+- [x] 3.3: Fix vector_store connect/close in delete endpoint (backend/app/api/routes/documents.py) [SMALL]
+  - Removed connect()/close() calls that disrupted shared VectorStore state
+
+- [x] 3.4: Verify all tests pass — 171/171 passing
 
 ---
-## Phase 4: Refactoring - Batch 3: Frontend Modernization [COMPLETE]
-- [x] 4.1: Decompose Monolithic App.tsx into Page Components [SMALL]
-- [x] 4.2: Extract Custom Hooks (useDebounce, useDocuments, etc.) [SMALL]
-- [x] 4.3: Optimize Rendering (React.memo, useMemo) [SMALL]
-- [x] 4.4: Fix Memory Search Debounce & Chat History Persistence [SMALL]
+
+## Phase 4: Code Cleanup (Slop + Refactoring) [COMPLETE]
+
+- [x] 4.1: Extract vault query helper (backend/app/api/routes/vaults.py) [SMALL]
+  - Extracted _row_to_vault_response, _VAULT_WITH_COUNTS_SQL, _fetch_vault_with_counts, _fetch_all_vaults
+  - vaults.py reduced from 431 to 346 lines
+
+- [x] 4.2: Clean up RAG engine cruft (backend/app/services/rag_engine.py) [SMALL]
+  - Removed redundant _instance params, test-only getattr check, replaced self.logger with module-level logger
+  - Updated 9 test call sites in test_rag_pipeline.py
+
+- [x] 4.3: Extract ChatPage hooks (frontend/src/pages/ChatPage.tsx) [MEDIUM]
+  - Created useChatHistory.ts (61 lines) + useSendMessage.ts (178 lines)
+  - ChatPage.tsx reduced from 460 to 307 lines (JSX-focused)
+
+- [x] 4.4: Extract MemoryPage hooks (frontend/src/pages/MemoryPage.tsx) [SMALL]
+  - Created useMemorySearch.ts (81 lines) + useMemoryCrud.ts (146 lines)
+  - MemoryPage.tsx reduced from 339 to 207 lines
+
+- [x] 4.5: Extract shared formatters (frontend/src/pages/DocumentsPage.tsx) [SMALL]
+  - Created lib/formatters.ts (formatFileSize, formatDate)
+  - Created components/shared/StatusBadge.tsx (status badge component)
+  - DocumentsPage.tsx reduced from 427 to ~377 lines
+
+- [CANCELLED] 4.6: Split vault store — 84 lines, already clean; splitting adds unnecessary complexity
+
+- [x] 4.7: Verify frontend build passes — npm run build succeeds (600 KB bundle)
+
+- [x] 4.8: Verify all backend tests pass — 171/171 passing
 
 ---
-## Phase 5: Validation & Cleanup [COMPLETE]
-- [x] 5.1: Add Authentication/Authorization (Basic Auth or Token) [SMALL]
-- [x] 5.2: Comprehensive Regression Testing [SMALL] — 129/129 tests passing
-- [x] 5.3: Final Codebase Polish (Docstrings, Type Hints) [SMALL] — Pydantic V2, datetime.UTC, 0 warnings
+
+## Phase 5: Frontend Polish [COMPLETE]
+
+- [x] 5.1: Deduplicate health check logic (App.tsx + SettingsPage.tsx) [SMALL]
+  - Extracted useHealthCheck hook (50 lines); App.tsx 72→38 lines; SettingsPage simplified
+
+- [CANCELLED] 5.2: Load settings defaults — initializeForm already overwrites defaults from server values on mount
+
+- [x] 5.3: Add API client interceptors (frontend/src/lib/api.ts) [SMALL]
+  - Added response interceptor for error normalization; removed redundant try/catch from 3 functions
+
+- [CANCELLED] 5.4: Upload progress — already handled: onProgress(0) triggers "Uploading..." text in UI
+
+- [x] 5.5: Verify frontend build + backend tests — Build succeeds, 171/171 tests passing
 
 ---
-## Phase 6: Multi-Vault Support [COMPLETE]
 
-### Design Decisions
-- Vector store: Single LanceDB "chunks" table + vault_id column + filter_expr (already supported)
-- Memories: Hybrid — vault_id nullable; NULL = global, set = vault-scoped
-- Chat sessions: Vault-scoped via vault_id FK
-- Default behavior: Omitted vault_id → default vault (id=1) for backward compat
-- Migration: Create "Default" vault (id=1), backfill existing rows, THEN add FK constraints
-- Vault names: UNIQUE, flat (no hierarchy)
-- Vault deletion: Cascade cleanup — delete files, chunks, sessions; reassign memories to global
-- Security: Single-user app, vault isolation is per-vault filtering (not per-user ACL)
+## Phase 6: Final Validation [COMPLETE]
 
-### 6.1: Backend — Schema & Migration [COMPLETE]
-- [x] 6.1.1: Add `vaults` table + `vault_id` columns to files, memories, chat_sessions [SMALL]
-- [x] 6.1.2: Add `vault_id` column to LanceDB chunks schema [SMALL]
-- [x] 6.1.3: Migration logic — create Default vault, backfill existing data, re-index chunks [SMALL]
+- [x] 6.1: Full regression test suite [SMALL] (depends: all prior phases)
+  - pytest 171/171 passing + npm run build succeeds
 
-### 6.2: Backend — Vault CRUD API [COMPLETE]
-- [x] 6.2.1: Create vault routes (GET/POST/PUT/DELETE /api/vaults) with cascade delete [SMALL]
-- [x] 6.2.2: Wire vault routes into main app router [SMALL]
-
-### 6.3: Backend — Vault-Scoped Services [COMPLETE]
-- [x] 6.3.1: Update VectorStore — vault_id in add_chunks + filter_expr in search [SMALL] (depends: 6.1.2)
-- [x] 6.3.2: Update DocumentProcessor — accept vault_id, pass to file record + chunks [SMALL] (depends: 6.3.1)
-- [x] 6.3.3: Update RAGEngine.query() — accept vault_id, pass to vector search + memory search [SMALL] (depends: 6.3.1)
-- [x] 6.3.4: Update MemoryStore — add optional vault_id to add/search [SMALL] (depends: 6.1.1)
-
-### 6.4: Backend — Vault-Scoped Routes [COMPLETE]
-- [x] 6.4.1: Update chat routes — add vault_id to ChatRequest/ChatStreamRequest [SMALL] (depends: 6.3.3)
-- [x] 6.4.2: Update document routes — add vault_id to list/upload/delete [SMALL] (depends: 6.3.2)
-- [x] 6.4.3: Update memory routes — add vault_id to create/search/list [SMALL] (depends: 6.3.4)
-- [x] 6.4.4: Update search routes — add vault_id to search endpoint [SMALL] (depends: 6.3.3)
-
-### 6.5: Backend — Tests [COMPLETE]
-- [x] 6.5.1: Add vault CRUD + isolation tests [SMALL] (depends: 6.2) — 30 tests (CRUD, cascade, edge cases)
-- [x] 6.5.2: Add vault-scoped chat/document/search tests [SMALL] (depends: 6.4) — 12 tests (route filtering, passthrough)
-- [x] 6.5.3: Verify existing 129 tests still pass (backward compat) [SMALL] (depends: 6.4) — 171/171 passing
-
-### 6.6: Frontend — Vault UI [COMPLETE]
-- [x] 6.6.1: Add vault API functions + types to api.ts [SMALL] (depends: 6.2)
-- [x] 6.6.2: Create useVaults hook + vault context with localStorage persistence [SMALL]
-- [x] 6.6.3: Add VaultSelector component (dropdown on ChatPage + DocumentsPage) [SMALL]
-- [x] 6.6.4: Add VaultsPage for vault management (create/edit/delete) [SMALL]
-- [x] 6.6.5: Update NavigationRail — add Vaults nav item [SMALL]
-- [x] 6.6.6: Update ChatPage — wire vault_id into chat requests [SMALL] (depends: 6.6.2, 6.6.3)
-- [x] 6.6.7: Update DocumentsPage — filter by vault, upload to vault [SMALL] (depends: 6.6.2, 6.6.3)
-- [x] 6.6.8: Verify frontend build passes [SMALL]
+- [x] 6.2: Update inline docstrings for changed public APIs [SMALL] (depends: 6.1)
+  - Added docstrings to deps.py (get_toggle_manager, get_secret_manager)
+  - Added JSDoc to 6 new frontend hooks + 3 helper functions + StatusBadge component
+  - 171/171 tests passing, frontend build clean

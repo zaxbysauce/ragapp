@@ -29,7 +29,7 @@ class LLMClient:
         self.timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
     
-    def start(self):
+    async def start(self):
         """Start the HTTP client. Must be called before using the client."""
         # Configure limits for connection pooling with keep-alive
         limits = httpx.Limits(
@@ -214,7 +214,3 @@ class LLMClient:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
-
-
-# Singleton instance for convenience
-llm_client = LLMClient()

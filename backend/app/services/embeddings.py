@@ -1,6 +1,7 @@
 """
 Dual-provider embedding client service supporting Ollama and OpenAI-compatible APIs.
 """
+import asyncio
 import httpx
 from typing import List
 from urllib.parse import urlparse
@@ -193,23 +194,39 @@ class EmbeddingService:
 
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """
-        Generate embeddings for a batch of texts sequentially.
+        Generate embeddings for a batch of texts concurrently.
+
+        Uses asyncio.gather with a semaphore to limit concurrency.
+        Processes texts in sub-batches of up to 64, with up to 10
+        concurrent requests per sub-batch.
 
         Args:
             texts: List of texts to embed.
 
         Returns:
-            List of embedding vectors, one for each input text.
+            List of embedding vectors, one for each input text, in order.
 
         Raises:
             EmbeddingError: If any API request fails.
         """
-        # Process sequentially - no concurrency as per spec
-        embeddings = []
-        for text in texts:
-            embedding = await self.embed_single(text)
-            embeddings.append(embedding)
-        return embeddings
+        if not texts:
+            return []
+        
+        semaphore = asyncio.Semaphore(10)
+        
+        async def _embed_with_limit(text: str) -> List[float]:
+            async with semaphore:
+                return await self.embed_single(text)
+        
+        # Process in sub-batches of 64 to avoid overwhelming the server
+        all_embeddings: List[List[float]] = []
+        batch_size = 64
+        for i in range(0, len(texts), batch_size):
+            sub_batch = texts[i:i + batch_size]
+            results = await asyncio.gather(*[_embed_with_limit(t) for t in sub_batch])
+            all_embeddings.extend(results)
+        
+        return all_embeddings
 
 
 

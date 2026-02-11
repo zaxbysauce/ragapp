@@ -14,6 +14,7 @@ from .document_processor import DocumentProcessor, DocumentProcessingError
 from .vector_store import VectorStore
 from .embeddings import EmbeddingService
 from .maintenance import MaintenanceService
+from ..models.database import SQLiteConnectionPool
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ def get_background_processor(
     vector_store: Optional[VectorStore] = None,
     embedding_service: Optional[EmbeddingService] = None,
     maintenance_service: Optional[MaintenanceService] = None,
+    pool: Optional["SQLiteConnectionPool"] = None,
 ) -> "BackgroundProcessor":
     """
     Get or create the singleton BackgroundProcessor instance.
@@ -46,6 +48,7 @@ def get_background_processor(
         vector_store: VectorStore instance for document storage
         embedding_service: EmbeddingService instance for generating embeddings
         maintenance_service: MaintenanceService instance for maintenance mode checks
+        pool: SQLiteConnectionPool instance for database connections
 
     Returns:
         The singleton BackgroundProcessor instance
@@ -60,6 +63,7 @@ def get_background_processor(
             vector_store=vector_store,
             embedding_service=embedding_service,
             maintenance_service=maintenance_service,
+            pool=pool,
         )
         logger.info("Created singleton BackgroundProcessor instance")
     return _processor_instance
@@ -114,6 +118,7 @@ class BackgroundProcessor:
         vector_store: Optional[VectorStore] = None,
         embedding_service: Optional[EmbeddingService] = None,
         maintenance_service: Optional[MaintenanceService] = None,
+        pool: Optional["SQLiteConnectionPool"] = None,
     ):
         """
         Initialize the background processor.
@@ -125,6 +130,8 @@ class BackgroundProcessor:
             chunk_overlap: Overlap between chunks for DocumentProcessor
             vector_store: VectorStore instance for document storage
             embedding_service: EmbeddingService instance for generating embeddings
+            maintenance_service: MaintenanceService instance for maintenance mode
+            pool: SQLiteConnectionPool instance for database connections
         """
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -134,7 +141,8 @@ class BackgroundProcessor:
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             vector_store=vector_store,
-            embedding_service=embedding_service
+            embedding_service=embedding_service,
+            pool=pool,
         )
         self._worker_task: Optional[asyncio.Task] = None
         self._running = False

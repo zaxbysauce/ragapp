@@ -1,9 +1,10 @@
 """Admin routes for managing feature toggles."""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import hmac
 import hashlib
+import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
@@ -30,7 +31,7 @@ def require_admin_scope(scope: str):
         if not authorization.lower().startswith("bearer "):
             raise HTTPException(status_code=403, detail="Invalid auth token")
         token = authorization.split(" ", 1)[1]
-        if token != settings.admin_secret_token:
+        if not secrets.compare_digest(token, settings.admin_secret_token):
             raise HTTPException(status_code=403, detail="Unauthorized")
         scopes = [s.strip().lower() for s in x_scopes.split(",") if s.strip()]
         if scope.lower() not in scopes:
@@ -41,7 +42,7 @@ def require_admin_scope(scope: str):
 
 
 def _compute_hmac(key: bytes, feature: str, enabled: bool, user_id: str | None, ip: str | None) -> tuple[str, str]:
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
     message = f"{feature}|{int(enabled)}|{user_id or ''}|{ip or ''}|{timestamp}"
     digest = hmac.new(key, message.encode("utf-8"), hashlib.sha256).hexdigest()
     return digest, timestamp

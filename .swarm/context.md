@@ -2,180 +2,22 @@
 
 **Project:** KnowledgeVault - Self-Hosted RAG Knowledge Base  
 **Swarm:** paid  
-**Current Phase:** 7 (Complete)
-**Last Updated:** 2026-02-04
+**Current Phase:** Code Review Remediation — ALL 6 PHASES COMPLETE ✅
+**Last Updated:** 2026-02-11
 
 ---
 
 ## Current State
 
-Phase 7 Frontend Scaffold is COMPLETE. React project initialized with Vite and TypeScript. shadcn/ui installed and configured with custom theme system following Material 3 principles. Navigation rail component created for primary navigation. API client integration implemented for backend communication. Tailwind CSS and PostCSS configured with custom color tokens. All UI pages implemented: Chat with streaming display, Search with filters, Documents with upload and management, Memory management, and Settings configuration. React Router integrated for navigation. State management with React hooks and context.
+Full 6-category code review COMPLETE. 36 findings across backend and frontend:
+- 1 CRITICAL (no-op rate limit bypass decorator)
+- 17 HIGH (bugs, tech debt, DI inconsistencies, performance)
+- 13 MEDIUM (refactoring, enhancements)
+- 5 LOW (polish items)
 
-Phase 6 API Layer is complete. FastAPI application with lifespan management and dependency wiring is in place. API routes implemented for health checks, chat (streaming and non-streaming), search, documents, memories, and settings. All routes wire into the underlying RAG engine and services. API documentation (OpenAPI) and integration tests are complete.
+Remediation plan: Phases 1-4 COMPLETE. Phase 5 (frontend polish) pending. Phase 6 (final validation) pending.
 
-**Docker Verification COMPLETE:** `docker compose up --build` succeeded. Health check endpoint `/health` returned status "ok". Backend and frontend containers are running successfully.
-
-**Manual API Checks COMPLETE:**
-- `/health` - Status: ok
-- `/api/memories` - CRUD operations tested successfully (POST, GET, PUT, DELETE)
-- `/api/documents/upload` - File upload tested successfully
-- `/api/documents/stats` - Document statistics endpoint tested successfully
-
-**Backend Test Suite COMPLETE:** `pytest backend/tests/` ran successfully with all tests passing (deprecation warnings present but non-blocking).
-
-**Documentation COMPLETE:** Comprehensive README.md created with setup instructions, API documentation, and usage guide. Additional guides include deployment and architecture documentation.
-
-**End-to-End RAG Query (blocked):** Non-stream `/api/chat` and `/api/search` calls fail with 500 because the configured Ollama models (gemini-3-flash-preview) are not pulled locally. The pipeline is ready, but run `ollama pull gemini-3-flash-preview` or configure another accessible model before rerunning the full RAG workflow.
-
-**Note:** Ollama is an external dependency (user-managed). The health check or LLM endpoints may show "LLM unavailable" when Ollama is not running - this is expected behavior, not a blocker.
-
-**Files Present:**
-- `.swarm/plan.md` - This implementation plan
-- `.swarm/context.md` - This context file
-- `KnowledgeVault-Implementation-Plan.md` - Original specification document
-- `docker-compose.yml` - Main Docker Compose configuration
-- `docker-compose.override.yml` - Local development overrides
-- `Dockerfile` - Multi-stage backend build
-- `frontend/Dockerfile` - Frontend production build
-- `backend/requirements.txt` - Python dependencies
-- `backend/__init__.py` - Backend package init
-- `backend/app/__init__.py` - App package init
-- `backend/app/config.py` - Application configuration (Pydantic Settings)
-- `backend/app/models/database.py` - SQLite database models and FTS5 setup
-- `backend/app/services/vector_store.py` - LanceDB vector store service
-- `backend/app/services/chunking.py` - Document chunking service
-- `backend/app/services/schema_parser.py` - Schema parsing service
-- `backend/app/services/background_tasks.py` - Background task processing
-- `backend/app/services/file_watcher.py` - File system watcher
-- `backend/app/services/embeddings.py` - Ollama embedding client
-- `backend/app/services/llm_client.py` - OpenAI-compatible LLM chat client
-- `backend/app/services/llm_health.py` - LLM health monitoring service
-- `backend/app/services/model_checker.py` - Ollama model availability checker
-- `backend/app/services/memory_store.py` - SQLite memory store with FTS lookup
-- `backend/app/services/document_processor.py` - Document processing service
-- `backend/app/services/rag_engine.py` - RAG orchestration engine
-- `backend/app/main.py` - FastAPI application with lifespan and dependency injection
-- `backend/app/api/routes/health.py` - Health check endpoints
-- `backend/app/api/routes/chat.py` - Chat endpoints (streaming and non-streaming)
-- `backend/app/api/routes/search.py` - Search endpoints
-- `backend/app/api/routes/documents.py` - Document CRUD endpoints
-- `backend/app/api/routes/memories.py` - Memory management endpoints
-- `backend/app/api/routes/settings.py` - Application settings endpoints
-- `backend/app/utils/file_utils.py` - File utility functions
-- `backend/tests/test_llm_integration.py` - LLM integration tests
-- `backend/tests/test_rag_engine.py` - RAG engine tests
-- `backend/tests/test_config.py` - Configuration tests
-- `backend/tests/test_document_processor.py` - Document processor tests
-- `backend/tests/test_database.py` - Database model tests
-- `backend/tests/test_memory_store.py` - Memory store tests
-- `backend/tests/test_api.py` - API integration tests
-- `frontend/package.json` - Node.js dependencies
-- `frontend/components.json` - shadcn/ui configuration
-- `frontend/tailwind.config.js` - Tailwind CSS configuration with custom theme
-- `frontend/postcss.config.js` - PostCSS configuration
-- `frontend/vite.config.ts` - Vite build configuration
-- `frontend/tsconfig.json` - TypeScript configuration
-- `frontend/tsconfig.node.json` - TypeScript configuration for Node
-- `frontend/index.html` - HTML entry point
-- `frontend/src/App.tsx` - Main React application component
-- `frontend/src/main.tsx` - React application entry point
-- `frontend/src/vite-env.d.ts` - Vite environment type declarations
-- `frontend/src/components/layout/NavigationRail.tsx` - Primary navigation component
-- `frontend/src/components/layout/PageShell.tsx` - Page layout wrapper
-- `frontend/src/lib/api.ts` - API client for backend communication
-- `frontend/src/components/ui/` - shadcn/ui components (button, card, input, dialog, dropdown-menu, progress, tooltip, scroll-area, tabs, badge, textarea, etc.)
-- `frontend/src/lib/utils.ts` - Utility functions (cn helper)
-- `frontend/src/index.css` - Global styles with CSS variables
-- `.env.example` - Environment variable template
-
-**Directory Structure Created:**
-```
-/
-├── .swarm/
-├── backend/
-│   ├── __init__.py
-│   ├── requirements.txt
-│   ├── tests/
-│   │   ├── test_config.py
-│   │   ├── test_database.py
-│   │   ├── test_document_processor.py
-│   │   ├── test_llm_integration.py
-│   │   ├── test_rag_engine.py
-│   │   └── test_memory_store.py
-│   └── app/
-│       ├── __init__.py
-│       ├── main.py
-│       ├── config.py
-│       ├── models/
-│       │   └── database.py
-│       ├── api/
-│       │   └── routes/
-│       │       ├── health.py
-│       │       ├── chat.py
-│       │       ├── search.py
-│       │       ├── documents.py
-│       │       ├── memories.py
-│       │       └── settings.py
-│       ├── services/
-│       │   ├── vector_store.py
-│       │   ├── chunking.py
-│       │   ├── schema_parser.py
-│       │   ├── background_tasks.py
-│       │   ├── file_watcher.py
-│       │   ├── embeddings.py
-│       │   ├── llm_client.py
-│       │   ├── llm_health.py
-│       │   ├── model_checker.py
-│       │   ├── memory_store.py
-│       │   ├── document_processor.py
-│       │   └── rag_engine.py
-│       └── utils/
-│           └── file_utils.py
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── layout/
-│   │   │   │   ├── NavigationRail.tsx
-│   │   │   │   └── PageShell.tsx
-│   │   │   └── ui/
-│   │   │       ├── button.tsx
-│   │   │       ├── card.tsx
-│   │   │       ├── input.tsx
-│   │   │       ├── dialog.tsx
-│   │   │       ├── dropdown-menu.tsx
-│   │   │       └── ... (shadcn/ui components)
-│   │   ├── lib/
-│   │   │   ├── utils.ts
-│   │   │   └── api.ts
-│   │   └── index.css
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── components.json
-│   ├── tailwind.config.js
-│   └── postcss.config.js
-├── docker-compose.yml
-├── docker-compose.override.yml
-├── Dockerfile
-└── .env.example
-```
-
-**Files Added (Phase 7 Complete):**
-- `frontend/src/pages/ChatPage.tsx` - Chat interface with streaming display
-- `frontend/src/pages/SearchPage.tsx` - Search with filters and results
-- `frontend/src/pages/DocumentsPage.tsx` - Document upload and management
-- `frontend/src/pages/MemoryPage.tsx` - Memory management interface
-- `frontend/src/pages/SettingsPage.tsx` - Application settings
-- `frontend/src/hooks/useChat.ts` - Chat state management hook
-- `frontend/src/hooks/useDocuments.ts` - Document management hook
-- `frontend/src/hooks/useSearch.ts` - Search state management hook
-- `frontend/src/hooks/useMemory.ts` - Memory management hook
-- `frontend/src/hooks/useSettings.ts` - Settings management hook
-- `frontend/src/context/AppContext.tsx` - Global application context
-- `frontend/src/components/chat/ChatMessage.tsx` - Individual chat message component
-- `frontend/src/components/chat/CitationsPanel.tsx` - RAG source references panel
-- `frontend/src/components/chat/StreamingText.tsx` - Streaming text display
-- `frontend/src/components/documents/UploadDialog.tsx` - Document upload dialog
-- `frontend/src/components/search/SearchFilters.tsx` - Search filter controls
+Previous work: Phases 1-6 of original implementation complete (security, DI, async, frontend, validation, multi-vault). 171/171 tests passing.
 
 ---
 
@@ -183,15 +25,28 @@ Phase 6 API Layer is complete. FastAPI application with lifespan management and 
 
 | Date | Decision | Rationale | Status |
 |------|----------|-----------|--------|
-| | | | |
+| 2026-02-11 | Phase order: bugs → DI → perf → cleanup → polish → validation | Fix broken things first, consolidate architecture, then optimize and clean | Pending approval |
+| 2026-02-11 | Keep SQLite connection-per-request pattern (not pooling) | SQLite connections are cheap; true connection pool adds complexity for embedded DB | Confirmed by SME |
+| 2026-02-11 | Make LLMClient.start() async | It creates httpx.AsyncClient; must be awaitable. All callers already use await. | Confirmed by SME |
+| 2026-02-11 | Remove ALL module-level singletons | Contradicts DI pattern in deps.py; causes test isolation issues | Confirmed by SME |
 
 ---
 
 ## SME Cache
 
-| Domain | Expert | Last Consulted | Key Insights |
-|--------|--------|----------------|--------------|
-| | | | |
+### Python/FastAPI (consulted 2026-02-11)
+
+1. **No-op decorator fix**: Whitelisted branch should return `await func()` directly; non-whitelisted branch should apply rate limiter via `async with rate_limiter`. Single wrapper, path-based decision.
+
+2. **Sync/async mismatch**: Make `LLMClient.start()` async since it creates `httpx.AsyncClient`. Call once at startup, not per-request. Register close in shutdown hook.
+
+3. **Singletons → DI**: Replace module-level `llm_client = LLMClient()` with `@lru_cache` factory in deps.py. Use `app.dependency_overrides` in tests. Watch for import cycles — keep deps.py imports minimal.
+
+4. **DB connections in services**: Pass connection via constructor, not internal `get_db_connection()`. For background tasks, pass connection explicitly via `background_tasks.add_task(fn, db)`. Use `check_same_thread=False` for async usage.
+
+5. **N+1 query fix**: Use `LEFT JOIN messages ON session_id GROUP BY session_id` with `COUNT(m.id)`. Add index `CREATE INDEX idx_messages_session_id ON messages(session_id)`.
+
+6. **Embedding batching**: Use `asyncio.gather` with `Semaphore(10)` for concurrent HTTP calls. Preserve ordering. Chunk into sub-batches of 64. Handle individual failures with try/except.
 
 ---
 
@@ -199,105 +54,109 @@ Phase 6 API Layer is complete. FastAPI application with lifespan management and 
 
 | Pattern | Description | Used In |
 |---------|-------------|---------|
-| | | |
+| FastAPI DI | `Depends(get_X)` from deps.py | All route files |
+| Test overrides | `app.dependency_overrides[get_X] = lambda: fake` | All test files |
+| Connection pool | `SQLiteConnectionPool` in database.py | main.py lifespan |
+| Pydantic V2 | `@field_validator`, `ConfigDict` | config.py, models |
+| Auth opt-in | `require_auth` with Bearer token, constant-time compare | security.py |
+| Custom hooks | Extract logic from pages into hooks/ directory | ChatPage, MemoryPage |
+| Shared formatters | Pure functions in lib/formatters.ts | DocumentsPage |
+| Shared components | Reusable UI in components/shared/ | StatusBadge, MessageContent |
 
 ---
 
-## Technical Notes
+## Key Files
 
-### Architecture Decisions (from spec)
-
-| Component | Decision |
-|-----------|----------|
-| **Architecture** | Self-hosted web service (FastAPI + React) |
-| **Deployment** | Docker Compose (app only, Ollama external) |
-| **Vector DB** | LanceDB (embedded, bundled) |
-| **Memory DB** | SQLite with FTS5 (embedded, bundled) |
-| **Document Processing** | Python + Unstructured (bundled in container) |
-| **Chunking Strategy** | Semantic/structure-aware, 256-512 tokens |
-| **Embedding Model** | nomic-embed-text (user provides via Ollama) |
-| **Chat Model** | User's choice via Ollama/vLLM/LM Studio |
-| **LLM Connection** | External Ollama (user manages separately) |
-| **Document Storage** | Configurable server path, web upload + filesystem scan |
-| **Knowledge Base** | Shared across all users |
-| **Authentication** | None (user handles network security) |
-| **UI Framework** | React + shadcn/ui + Tailwind + Material 3 principles |
-
-### Data Directory Structure
-
-```
-/data/knowledgevault/                    # Configurable via settings
-├── documents/                           # Raw document storage
-│   ├── uploads/                         # User uploads via web UI
-│   └── library/                         # Admin can drop files here directly
-├── processing/                          # Temp files during ingestion
-├── lancedb/                             # Vector embeddings (auto-managed)
-│   └── chunks.lance/                    # Chunk vectors and metadata
-├── knowledgevault.db                    # SQLite: memories, settings, file index
-└── logs/                                # Application logs
-    └── knowledgevault.log
-```
-
-### Recommended Models
-
-**Embedding:** nomic-embed-text
-- 768 dimensions
-- 8192 token context
-- ~0.5GB VRAM
-- Outperforms OpenAI ada-002 on technical content
-
-**Chat:** Qwen 2.5 32B or 72B (Q4_K_M quantization)
-- Run on CPU with 380GB RAM
-- 32B: ~22GB RAM, ~15 tok/s
-- 72B: ~45GB RAM, ~10 tok/s
-- Excellent technical reasoning
+| File | Purpose | Lines |
+|------|---------|-------|
+| backend/app/main.py | FastAPI app, lifespan, middleware | 197 |
+| backend/app/api/deps.py | DI dependency functions | 88 |
+| backend/app/config.py | Pydantic Settings | 98 |
+| backend/app/security.py | Auth, CSRF, tokens | 213 |
+| backend/app/limiter.py | Rate limiting | 87 |
+| backend/app/models/database.py | Schema, migrations, pool | 504 |
+| backend/app/services/llm_client.py | LLM chat client | 221 |
+| backend/app/services/embeddings.py | Embedding service | 216 |
+| backend/app/services/rag_engine.py | RAG orchestration | 253 |
+| backend/app/services/vector_store.py | LanceDB vector store | 455 |
+| backend/app/services/document_processor.py | Doc processing | 436 |
+| backend/app/api/routes/chat.py | Chat + sessions | 485 |
+| backend/app/api/routes/documents.py | Upload, scan, delete | 617 |
+| backend/app/api/routes/vaults.py | Vault CRUD | 431 |
 
 ---
 
-## Blockers
+## Findings Summary (36 total)
 
-| Issue | Impact | Resolution |
-|-------|--------|------------|
-| Required Ollama models not pulled | `/api/chat` and `/api/search` fail because the configured embedding/chat models (gemini-3-flash-preview:latest) are missing | Run `ollama pull gemini-3-flash-preview` (and any other models referenced in `.env`) or update `docker-compose.yml` to use locally-available Ollama models before rerunning the RAG workflow |
+### Category 1: Stubs/Placeholders (1)
+- test_integration.py:619 — placeholder auth test
 
----
+### Category 2: Bugs/Partial Implementations (5)
+- limiter.py:42-86 — CRITICAL: no-op health check bypass
+- llm_health.py:79 — HIGH: sync/async mismatch
+- health.py:31-32 — HIGH: per-request instantiation
+- security.py:41 — HIGH: CSRF token validation broken
+- admin.py:44 — MEDIUM: deprecated datetime.utcnow()
 
-## Next Actions
+### Category 3: AI Slop/Redundancy (7)
+- rag_engine.py:40-41 — HIGH: redundant constructor params
+- rag_engine.py:144 — HIGH: test code in production
+- vaults.py (6 places) — HIGH: copy-pasted JOIN query
+- ChatPage.tsx:67-73 — MEDIUM: duplicate parseInt logic
+- ChatPage.tsx:181-196 — MEDIUM: duplicate load pattern
+- MemoryPage.tsx:35-62 — MEDIUM: mixed search/list handler
+- DocumentsPage.tsx:155-161 — LOW: inline search filter
 
-Phase 7 Tasks COMPLETED:
-- 7.6. Streaming chat display with progress indicators
-- 7.7. Citations panel for RAG source references
-- 7.8. Documents management page with upload and list
-- 7.9. Memory management page
-- 7.10. Settings/configuration page
-- 7.11. Search page with filters
-- 7.12. Routing and state management
-- 7.13. Final integration and testing
+### Category 4: Tech Debt (9)
+- document_processor.py:363 — HIGH: own DB connection
+- maintenance.py — HIGH: own DB connections
+- memory_store.py — HIGH: own DB connections
+- file_watcher.py:149 — HIGH: own DB connection
+- toggle_manager.py:34,48 — HIGH: own DB connections
+- Module singletons (4 files) — HIGH: contradicts DI
+- useSettingsStore.ts:61-68 — MEDIUM: hardcoded defaults
+- App.tsx + SettingsPage.tsx — MEDIUM: duplicate health check
+- useVaultStore.ts:6-8 — LOW: unvalidated localStorage
 
-**Next Actions (Optional Follow-ups):**
-1. **End-to-End RAG Test:** Run full RAG workflow test with Ollama configured to verify document ingestion, embedding generation, and chat responses with citations
-2. **Performance Testing:** Load test with large document collections to validate system performance on the target hardware (380GB RAM, Dual Xeon)
+### Category 5: Enhancement Opportunities (7)
+- chat.py:246-251 — HIGH: N+1 query
+- embeddings.py:207-211 — HIGH: sequential batching
+- documents.py:563-576 — HIGH: connect/close disruption
+- ChatPage.tsx:43-57 — MEDIUM: excessive reloading
+- DocumentsPage.tsx:33-49 — MEDIUM: no cache layer
+- api.ts:4-10 — MEDIUM: no interceptors
+- DocumentsPage.tsx:67-93 — LOW: per-file progress only
+
+### Category 6: Refactoring Targets (7)
+- ChatPage.tsx:67-149 — HIGH: 83-line handleSend
+- MemoryPage.tsx:35-73 — HIGH: mixed function
+- useVaultStore.ts:25-77 — HIGH: multi-responsibility store
+- DocumentsPage.tsx:163-213 — MEDIUM: inline formatters
+- ChatPage.tsx:42-57 — MEDIUM: inline history loading
+- SettingsPage.tsx:16-33 — MEDIUM: monolithic component
+- useSettingsStore.ts:20-59 — LOW: coupled types
 
 ---
 
 ## Environment
 
 - **Host:** Dual Xeon 5218, 380GB RAM, RTX A1000 8GB
-- **OS:** Linux (Docker host)
+- **OS:** Windows (dev), Linux (Docker host)
 - **External Dependencies:** Ollama (user-managed)
-- **Target Port:** 8080
+- **Test Suite:** 171 backend tests, frontend verified via npm run build
 
 ## Agent Activity
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| read | 45 | 45 | 0 | 3ms |
-| edit | 20 | 20 | 0 | 239ms |
-| bash | 17 | 17 | 0 | 2450ms |
-| apply_patch | 10 | 10 | 0 | 13ms |
-| task | 10 | 10 | 0 | 68871ms |
-| invalid | 6 | 6 | 0 | 1ms |
-| todowrite | 5 | 5 | 0 | 2ms |
-| grep | 5 | 5 | 0 | 221ms |
-| skill | 1 | 1 | 0 | 14ms |
-| write | 1 | 1 | 0 | 3ms |
+| read | 100 | 100 | 0 | 4ms |
+| edit | 34 | 34 | 0 | 118ms |
+| bash | 28 | 28 | 0 | 3488ms |
+| glob | 21 | 21 | 0 | 27ms |
+| grep | 14 | 14 | 0 | 1732ms |
+| task | 12 | 12 | 0 | 49579ms |
+| todowrite | 6 | 6 | 0 | 2ms |
+| write | 4 | 4 | 0 | 143ms |
+| apply_patch | 4 | 4 | 0 | 3ms |
+| memory_set | 1 | 1 | 0 | 5ms |
+| detect_domains | 1 | 1 | 0 | 1ms |

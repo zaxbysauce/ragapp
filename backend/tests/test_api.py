@@ -52,6 +52,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.api.deps import get_llm_health_checker, get_model_checker
 
 
 class TestAPI(unittest.TestCase):
@@ -68,38 +69,42 @@ class TestAPI(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["status"], "ok")
 
-    @patch("app.api.routes.health.LLMHealthChecker")
-    @patch("app.api.routes.health.ModelChecker")
-    def test_get_api_health_returns_status_ok_with_llm_models(
-        self, mock_model_checker, mock_llm_checker
-    ):
+    def test_get_api_health_returns_status_ok_with_llm_models(self):
         """Test GET /api/health returns status ok with llm and models data."""
-        # Configure mocks to return deterministic values matching actual service structure
-        mock_llm_instance = mock_llm_checker.return_value
-        mock_llm_instance.check_all = AsyncMock(return_value={
+        # Configure mock checkers to return deterministic values matching actual service structure
+        mock_llm_checker = AsyncMock()
+        mock_llm_checker.check_all = AsyncMock(return_value={
             "ok": True,
             "embeddings": {"ok": True, "error": None},
             "chat": {"ok": True, "error": None},
             "error": None
         })
 
-        mock_model_instance = mock_model_checker.return_value
-        mock_model_instance.check_models = AsyncMock(return_value={
+        mock_model_checker = AsyncMock()
+        mock_model_checker.check_models = AsyncMock(return_value={
             "embedding_model": {"available": True, "error": None},
             "chat_model": {"available": True, "error": None}
         })
 
-        response = self.client.get("/api/health")
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["status"], "ok")
-        self.assertIn("llm", data)
-        self.assertIn("models", data)
-        self.assertEqual(data["llm"]["ok"], True)
-        self.assertEqual(data["llm"]["embeddings"]["ok"], True)
-        self.assertEqual(data["llm"]["chat"]["ok"], True)
-        self.assertEqual(data["models"]["embedding_model"]["available"], True)
-        self.assertEqual(data["models"]["chat_model"]["available"], True)
+        # Override dependencies with mocks
+        app.dependency_overrides[get_llm_health_checker] = lambda: mock_llm_checker
+        app.dependency_overrides[get_model_checker] = lambda: mock_model_checker
+
+        try:
+            response = self.client.get("/api/health")
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["status"], "ok")
+            self.assertIn("llm", data)
+            self.assertIn("models", data)
+            self.assertEqual(data["llm"]["ok"], True)
+            self.assertEqual(data["llm"]["embeddings"]["ok"], True)
+            self.assertEqual(data["llm"]["chat"]["ok"], True)
+            self.assertEqual(data["models"]["embedding_model"]["available"], True)
+            self.assertEqual(data["models"]["chat_model"]["available"], True)
+        finally:
+            app.dependency_overrides.pop(get_llm_health_checker, None)
+            app.dependency_overrides.pop(get_model_checker, None)
 
     def test_get_api_settings_returns_expected_keys(self):
         """Test GET /api/settings returns expected configuration keys."""

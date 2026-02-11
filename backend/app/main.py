@@ -30,6 +30,8 @@ from app.services.toggle_manager import ToggleManager
 from app.services.maintenance import MaintenanceService
 from app.services.background_tasks import get_background_processor
 from app.services.file_watcher import FileWatcher
+from app.services.llm_health import LLMHealthChecker
+from app.services.model_checker import ModelChecker
 from app.limiter import limiter
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.maintenance import MaintenanceMiddleware
@@ -97,16 +99,18 @@ async def lifespan(app: FastAPI):
     _load_persisted_settings(str(settings.sqlite_path))
     app.state.db_pool = get_pool(str(settings.sqlite_path), max_size=10)
     app.state.llm_client = LLMClient()
-    app.state.llm_client.start()
+    await app.state.llm_client.start()
     app.state.embedding_service = EmbeddingService()
     app.state.vector_store = VectorStore()
     app.state.vector_store.connect()
     app.state.vector_store.migrate_add_vault_id()
-    app.state.memory_store = MemoryStore()
+    app.state.memory_store = MemoryStore(app.state.db_pool)
     app.state.secret_manager = SecretManager()
-    app.state.toggle_manager = ToggleManager(str(settings.sqlite_path))
+    app.state.toggle_manager = ToggleManager(app.state.db_pool)
     app.state.csrf_manager = CSRFManager(settings.redis_url, settings.csrf_token_ttl)
-    app.state.maintenance_service = MaintenanceService(str(settings.sqlite_path))
+    app.state.maintenance_service = MaintenanceService(app.state.db_pool)
+    app.state.llm_health_checker = LLMHealthChecker()
+    app.state.model_checker = ModelChecker()
     app.state.model_validation = (
         settings.enable_model_validation
         or app.state.toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
@@ -120,11 +124,12 @@ async def lifespan(app: FastAPI):
         vector_store=app.state.vector_store,
         embedding_service=app.state.embedding_service,
         maintenance_service=app.state.maintenance_service,
+        pool=app.state.db_pool,
     )
     await app.state.background_processor.start()
     
     # Start FileWatcher for auto-scanning directories
-    app.state.file_watcher = FileWatcher(app.state.background_processor)
+    app.state.file_watcher = FileWatcher(app.state.background_processor, pool=app.state.db_pool)
     await app.state.file_watcher.start()
     
     # Start LLM keep-alive task to prevent LM Studio from unloading model

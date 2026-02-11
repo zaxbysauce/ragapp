@@ -224,8 +224,11 @@ def setup_app_state(app, **overrides):
     settings.data_dir = test_data_dir
     
     # Now initialize the database (it will use settings.sqlite_path)
-    from app.models.database import init_db
+    from app.models.database import init_db, get_pool
     init_db(str(settings.sqlite_path))
+
+    # Create db_pool for testing
+    db_pool = get_pool(str(settings.sqlite_path), max_size=2)
     
     # Create uploads directory
     uploads_dir = test_data_dir / "uploads"
@@ -241,6 +244,7 @@ def setup_app_state(app, **overrides):
     )
     
     # Initialize app state
+    app.state.db_pool = db_pool
     app.state.maintenance_service = overrides.get('maintenance_service', mock_maintenance)
     app.state.limiter = overrides.get('limiter', NoOpLimiter())
     app.state.embedding_service = overrides.get('embedding_service', FakeEmbeddingService())
@@ -807,41 +811,47 @@ class TestIntegration(unittest.TestCase):
     # ==========================================================================
     # Test: Health and Status Endpoints
     # ==========================================================================
-    
-    @patch("app.api.routes.health.LLMHealthChecker")
-    @patch("app.api.routes.health.ModelChecker")
-    def test_health_endpoint_during_degraded_state(self, mock_model_checker, mock_llm_checker):
+
+    def test_health_endpoint_during_degraded_state(self):
         """Test health endpoint reflects degraded service state."""
         from fastapi.testclient import TestClient
         from app.main import app
-        
+        from app.api.deps import get_llm_health_checker, get_model_checker
+
         # Setup mocks for app state
         setup_app_state(app)
-        
+
         client = TestClient(app)
-        
+
         # Configure mocks to return degraded state
-        mock_llm_instance = mock_llm_checker.return_value
-        mock_llm_instance.check_all = AsyncMock(return_value={
+        mock_llm_checker = MagicMock()
+        mock_llm_checker.check_all = AsyncMock(return_value={
             "ok": False,
             "embeddings": {"ok": False, "error": "Connection refused"},
             "chat": {"ok": True, "error": None},
             "error": "Embedding service unavailable"
         })
-        
-        mock_model_instance = mock_model_checker.return_value
-        mock_model_instance.check_models = AsyncMock(return_value={
+
+        mock_model_checker = MagicMock()
+        mock_model_checker.check_models = AsyncMock(return_value={
             "embedding_model": {"available": False, "error": "Model not found"},
             "chat_model": {"available": True, "error": None}
         })
-        
-        response = client.get("/api/health")
-        self.assertEqual(response.status_code, 200)
-        
-        data = response.json()
-        self.assertEqual(data["status"], "ok")
-        self.assertEqual(data["llm"]["ok"], False)
-        self.assertEqual(data["models"]["embedding_model"]["available"], False)
+
+        app.dependency_overrides[get_llm_health_checker] = lambda: mock_llm_checker
+        app.dependency_overrides[get_model_checker] = lambda: mock_model_checker
+
+        try:
+            response = client.get("/api/health")
+            self.assertEqual(response.status_code, 200)
+
+            data = response.json()
+            self.assertEqual(data["status"], "ok")
+            self.assertEqual(data["llm"]["ok"], False)
+            self.assertEqual(data["models"]["embedding_model"]["available"], False)
+        finally:
+            app.dependency_overrides.pop(get_llm_health_checker, None)
+            app.dependency_overrides.pop(get_model_checker, None)
     
     # ==========================================================================
     # Test: Memory Management

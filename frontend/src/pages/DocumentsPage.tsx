@@ -7,11 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FileText, Upload, Search, Trash2, ScanLine, AlertCircle, CheckCircle, Clock, Loader2 } from "lucide-react";
+import { FileText, Upload, Search, Trash2, ScanLine, AlertCircle, Loader2 } from "lucide-react";
 import { listDocuments, uploadDocument, scanDocuments, deleteDocument, getDocumentStats, type Document, type DocumentStatsResponse } from "@/lib/api";
+import { formatFileSize, formatDate } from "@/lib/formatters";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
+import { StatusBadge } from "@/components/shared/StatusBadge";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
@@ -159,58 +161,6 @@ export default function DocumentsPage() {
     ),
     [documents, debouncedSearchQuery]
   );
-
-  const getStatusBadge = (status?: string) => {
-    switch (status) {
-      case "processed":
-        return (
-          <Badge variant="default" className="bg-green-500">
-            <CheckCircle className="w-3 h-3 mr-1" />
-            Processed
-          </Badge>
-        );
-      case "processing":
-        return (
-          <Badge variant="secondary">
-            <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-            Processing
-          </Badge>
-        );
-      case "pending":
-        return (
-          <Badge variant="outline">
-            <Clock className="w-3 h-3 mr-1" />
-            Pending
-          </Badge>
-        );
-      case "error":
-        return (
-          <Badge variant="destructive">
-            <AlertCircle className="w-3 h-3 mr-1" />
-            Error
-          </Badge>
-        );
-      default:
-        return <Badge variant="outline">Unknown</Badge>;
-    }
-  };
-
-  const formatFileSize = (bytes?: number) => {
-    if (!bytes) return "0 B";
-    const units = ["B", "KB", "MB", "GB"];
-    let size = bytes;
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-    return `${size.toFixed(1)} ${units[unitIndex]}`;
-  };
-
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return "Unknown";
-    return new Date(dateStr).toLocaleDateString();
-  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -404,7 +354,7 @@ export default function DocumentsPage() {
                           <span className="font-medium truncate max-w-[200px]">{doc.filename}</span>
                         </div>
                       </td>
-                      <td className="p-4">{getStatusBadge(doc.metadata?.status as string)}</td>
+                      <td className="p-4"><StatusBadge status={doc.metadata?.status as string} /></td>
                       <td className="p-4">{String(doc.metadata?.chunk_count ?? 0)}</td>
                       <td className="p-4">{formatFileSize(doc.size)}</td>
                       <td className="p-4 text-muted-foreground">{formatDate(doc.created_at)}</td>

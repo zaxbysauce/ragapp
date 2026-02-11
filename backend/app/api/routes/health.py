@@ -3,8 +3,9 @@ Health check API route.
 
 Provides a health endpoint to check the status of LLM services and model availability.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.deps import get_llm_health_checker, get_model_checker
 from app.services.llm_health import LLMHealthChecker
 from app.services.model_checker import ModelChecker
 
@@ -13,7 +14,10 @@ router = APIRouter()
 
 
 @router.get("/health")
-async def health_check():
+async def health_check(
+    llm_checker: LLMHealthChecker = Depends(get_llm_health_checker),
+    model_checker: ModelChecker = Depends(get_model_checker),
+):
     """
     Health check endpoint.
 
@@ -28,8 +32,6 @@ async def health_check():
         - services: Frontend-compatible health badge booleans
           { backend: boolean, embeddings: boolean, chat: boolean }
     """
-    llm_checker = LLMHealthChecker()
-    model_checker = ModelChecker()
     
     llm_status = await llm_checker.check_all()
     models_status = await model_checker.check_models()
