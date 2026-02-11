@@ -300,6 +300,14 @@ export async function deleteMemory(id: string): Promise<void> {
   }
 }
 
+export async function listMemories(vaultId?: number): Promise<{ memories: MemoryResult[] }> {
+  const response = await apiClient.get<{ memories: MemoryResult[] }>(
+    "/memories",
+    vaultId != null ? { params: { vault_id: vaultId } } : undefined
+  );
+  return response.data;
+}
+
 export async function listDocuments(vaultId?: number): Promise<ListDocumentsResponse> {
   const response = await apiClient.get<ListDocumentsResponse>("/documents", vaultId != null ? { params: { vault_id: vaultId } } : undefined);
   return response.data;
