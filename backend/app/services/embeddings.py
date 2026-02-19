@@ -28,7 +28,7 @@ class EmbeddingService:
 
         # Detect provider mode based on URL path
         self.provider_mode, self.embeddings_url = self._detect_provider_mode(base_url)
-        self.timeout = 30.0
+        self.timeout = 180.0
     
     def _detect_provider_mode(self, base_url: str) -> tuple:
         """
@@ -197,7 +197,7 @@ class EmbeddingService:
         Generate embeddings for a batch of texts concurrently.
 
         Uses asyncio.gather with a semaphore to limit concurrency.
-        Processes texts in sub-batches of up to 64, with up to 10
+        Processes texts in sub-batches of up to 64, with up to 4
         concurrent requests per sub-batch.
 
         Args:
@@ -212,7 +212,7 @@ class EmbeddingService:
         if not texts:
             return []
         
-        semaphore = asyncio.Semaphore(10)
+        semaphore = asyncio.Semaphore(4)
         
         async def _embed_with_limit(text: str) -> List[float]:
             async with semaphore:
