@@ -110,7 +110,8 @@ Configure email ingestion via environment variables in your `.env` file:
 |----------|------|---------|-------------|
 | `IMAP_ENABLED` | boolean | `False` | Enable/disable email ingestion service |
 | `IMAP_HOST` | string | `""` | IMAP server hostname or IP address |
-| `IMAP_PORT` | integer | `993` | IMAP SSL port (usually 993 for SSL) |
+| `IMAP_PORT` | integer | `993` | IMAP server port (993 for SSL, 143 for non-SSL) |
+| `IMAP_USE_SSL` | boolean | `True` | Use SSL/TLS encryption (set to `false` for port 143) |
 | `IMAP_USERNAME` | string | `""` | IMAP account username |
 | `IMAP_PASSWORD` | string | `""` | IMAP account password (use SecretStr for .env) |
 | `IMAP_MAILBOX` | string | `"INBOX"` | IMAP mailbox to poll (default: INBOX) |
@@ -140,15 +141,18 @@ Configure email ingestion via environment variables in your `.env` file:
 
 ### Example Configuration
 
+#### With SSL (Recommended - Port 993)
+
 ```bash
 # .env file
 
 # Enable email ingestion
 IMAP_ENABLED=True
 
-# IMAP server settings
+# IMAP server settings with SSL
 IMAP_HOST=mail.yourdomain.com
 IMAP_PORT=993
+IMAP_USE_SSL=True
 IMAP_USERNAME=knowledgevault@yourdomain.com
 IMAP_PASSWORD=your_secure_password_here
 
@@ -163,6 +167,26 @@ IMAP_MAX_ATTACHMENT_SIZE=10485760
 
 # Allowed MIME types (whitelist)
 IMAP_ALLOWED_MIME_TYPES=application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document
+```
+
+#### Without SSL (Internal Networks - Port 143)
+
+```bash
+# .env file
+
+# Enable email ingestion
+IMAP_ENABLED=True
+
+# IMAP server settings without SSL
+IMAP_HOST=172.16.50.114
+IMAP_PORT=143
+IMAP_USE_SSL=False
+IMAP_USERNAME=afmostrag
+IMAP_PASSWORD=your_password_here
+
+# Mailbox settings
+IMAP_MAILBOX=INBOX
+IMAP_POLL_INTERVAL=60
 ```
 
 ### Important Notes

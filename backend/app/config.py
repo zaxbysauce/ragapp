@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     imap_port: int = 993
     imap_username: str = ""
     imap_password: SecretStr = SecretStr("")
+    imap_use_ssl: bool = True
     imap_mailbox: str = "INBOX"
     imap_poll_interval: int = 60  # seconds
     imap_max_attachment_size: int = 10 * 1024 * 1024  # 10MB

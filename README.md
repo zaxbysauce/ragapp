@@ -140,7 +140,8 @@ Open your browser to: `http://localhost:8080`
 | `AUTO_SCAN_INTERVAL_MINUTES` | 60 | Scan interval |
 | `IMAP_ENABLED` | false | Enable email ingestion |
 | `IMAP_HOST` | - | IMAP server hostname |
-| `IMAP_PORT` | 993 | IMAP SSL port |
+| `IMAP_PORT` | 993 | IMAP server port (993 for SSL, 143 for non-SSL) |
+| `IMAP_USE_SSL` | true | Use SSL/TLS for IMAP connection |
 | `IMAP_USERNAME` | - | IMAP account username |
 | `IMAP_PASSWORD` | - | IMAP account password |
 | `IMAP_POLL_INTERVAL` | 60 | Email poll interval (seconds) |

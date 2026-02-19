@@ -15,7 +15,7 @@ import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import aioimaplib
 import bleach
@@ -228,7 +228,7 @@ class EmailIngestionService:
                 except Exception as e:
                     logger.warning(f"Error closing IMAP connection: {e}")
 
-    async def _connect_with_backoff(self) -> aioimaplib.IMAP4_SSL:
+    async def _connect_with_backoff(self) -> Union[aioimaplib.IMAP4_SSL, aioimaplib.IMAP4]:
         """
         Connect to IMAP server with exponential backoff.
 
@@ -255,11 +255,18 @@ class EmailIngestionService:
                     f"{self.settings.imap_port} (attempt {attempts})"
                 )
 
-                imap_client = aioimaplib.IMAP4_SSL(
-                    host=self.settings.imap_host,
-                    port=self.settings.imap_port,
-                    timeout=30  # 30 second timeout for IMAP operations
-                )
+                if self.settings.imap_use_ssl:
+                    imap_client = aioimaplib.IMAP4_SSL(
+                        host=self.settings.imap_host,
+                        port=self.settings.imap_port,
+                        timeout=30
+                    )
+                else:
+                    imap_client = aioimaplib.IMAP4(
+                        host=self.settings.imap_host,
+                        port=self.settings.imap_port,
+                        timeout=30
+                    )
 
                 # Authenticate (never log password)
                 result = await imap_client.wait_hello_from_server()

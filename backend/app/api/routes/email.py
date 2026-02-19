@@ -78,11 +78,19 @@ async def _get_unseen_count(
 
     imap_client = None
     try:
-        imap_client = aioimaplib.IMAP4_SSL(
-            host=email_service.settings.imap_host,
-            port=email_service.settings.imap_port,
-            timeout=30  # 30 second timeout
-        )
+        # Connect with or without SSL based on settings
+        if email_service.settings.imap_use_ssl:
+            imap_client = aioimaplib.IMAP4_SSL(
+                host=email_service.settings.imap_host,
+                port=email_service.settings.imap_port,
+                timeout=30
+            )
+        else:
+            imap_client = aioimaplib.IMAP4(
+                host=email_service.settings.imap_host,
+                port=email_service.settings.imap_port,
+                timeout=30
+            )
 
         # Authenticate
         result = await imap_client.wait_hello_from_server()
