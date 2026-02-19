@@ -14,6 +14,7 @@ from starlette.responses import Response
 from app.api.routes.admin import router as admin_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.documents import router as documents_router
+from app.api.routes.email import router as email_router
 from app.api.routes.health import router as health_router
 from app.api.routes.memories import router as memories_router
 from app.api.routes.search import router as search_router
@@ -194,6 +195,7 @@ app.include_router(documents_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(vaults_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(email_router, prefix="/api")
 
 # Register exception handler for validation errors (empty filename)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)

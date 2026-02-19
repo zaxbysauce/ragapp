@@ -78,6 +78,8 @@ class EmailIngestionService:
         self._polling_task: Optional[asyncio.Task] = None
         self._running = False
         self._last_error: Optional[str] = None
+        self._last_poll_time: Optional[datetime] = None
+        self._current_backoff_delay: Optional[int] = None
 
     async def start_polling(self) -> None:
         """
@@ -121,6 +123,24 @@ class EmailIngestionService:
             True if the service is running without recent errors, False otherwise
         """
         return self._running and self._last_error is None
+
+    def get_last_poll_time(self) -> Optional[datetime]:
+        """
+        Get the timestamp of the last successful poll.
+
+        Returns:
+            Datetime of last poll, or None if no poll has completed
+        """
+        return self._last_poll_time
+
+    def get_current_backoff_delay(self) -> Optional[int]:
+        """
+        Get the current backoff delay in seconds.
+
+        Returns:
+            Current backoff delay in seconds, or None if not in backoff
+        """
+        return self._current_backoff_delay
 
     async def _polling_loop(self) -> None:
         """
@@ -194,6 +214,9 @@ class EmailIngestionService:
                     logger.error(f"Error processing email UID {uid_str}: {e}", exc_info=True)
                     # Continue to next email even if one fails
 
+            # Update last poll time on successful completion
+            self._last_poll_time = datetime.now()
+
         except Exception as e:
             logger.error(f"Error during poll iteration: {e}", exc_info=True)
             raise
@@ -224,6 +247,8 @@ class EmailIngestionService:
 
         while not self._stop_event.is_set():
             attempts += 1
+            # Track current backoff delay for status endpoint
+            self._current_backoff_delay = delay if attempts > 1 else None
             try:
                 logger.debug(
                     f"Connecting to IMAP server {self.settings.imap_host}:"
@@ -252,6 +277,8 @@ class EmailIngestionService:
                     raise Exception(error_msg)
 
                 logger.info(f"IMAP connection established after {attempts} attempt(s)")
+                # Clear backoff delay on successful connection
+                self._current_backoff_delay = None
                 return imap_client
 
             except Exception as e:
