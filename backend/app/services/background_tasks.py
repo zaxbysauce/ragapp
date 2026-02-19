@@ -86,9 +86,15 @@ class TaskItem:
     Attributes:
         file_path: Path to the file to process
         attempt: Current attempt count (starts at 1)
+        source: Source of the file ('upload', 'scan', 'email')
+        email_subject: Subject line for email-sourced files
+        email_sender: Sender address for email-sourced files
     """
     file_path: str
     attempt: int = 1
+    source: str = 'upload'
+    email_subject: Optional[str] = None
+    email_sender: Optional[str] = None
 
 
 class BackgroundProcessor:
@@ -195,12 +201,21 @@ class BackgroundProcessor:
         self._running = False
         logger.info("Background processor stopped")
 
-    async def enqueue(self, file_path: str) -> None:
+    async def enqueue(
+        self,
+        file_path: str,
+        source: str = 'upload',
+        email_subject: Optional[str] = None,
+        email_sender: Optional[str] = None,
+    ) -> None:
         """
         Add a file to the processing queue.
 
         Args:
             file_path: Path to the file to process
+            source: Source of the file ('upload', 'scan', 'email')
+            email_subject: Subject line for email-sourced files
+            email_sender: Sender address for email-sourced files
 
         Note:
             If the processor is not running, the item will still be queued
@@ -210,7 +225,13 @@ class BackgroundProcessor:
             flag = self.maintenance_service.get_flag()
             if flag and flag.enabled:
                 raise DocumentProcessingError("Maintenance mode prevents enqueueing")
-        task = TaskItem(file_path=file_path, attempt=1)
+        task = TaskItem(
+            file_path=file_path,
+            attempt=1,
+            source=source,
+            email_subject=email_subject,
+            email_sender=email_sender,
+        )
         await self.queue.put(task)
         logger.debug(f"Enqueued file: {file_path}")
 
@@ -258,7 +279,7 @@ class BackgroundProcessor:
         Process a single task with retry logic.
 
         Args:
-            task: TaskItem containing file path and attempt count
+            task: TaskItem containing file path, attempt count, and optional email metadata
 
         On failure, requeues the task with incremented attempt count
         and exponential backoff delay if retries remain.
@@ -266,7 +287,12 @@ class BackgroundProcessor:
         logger.info(f"Processing file: {task.file_path} (attempt {task.attempt})")
 
         try:
-            await self.processor.process_file(task.file_path)
+            await self.processor.process_file(
+                task.file_path,
+                source=task.source,
+                email_subject=task.email_subject,
+                email_sender=task.email_sender,
+            )
             logger.info(f"Successfully processed: {task.file_path}")
 
         except DocumentProcessingError as e:
@@ -299,10 +325,13 @@ class BackgroundProcessor:
             # Wait before requeuing
             await asyncio.sleep(delay)
 
-            # Requeue with incremented attempt count
+            # Requeue with incremented attempt count, preserving metadata
             new_task = TaskItem(
                 file_path=task.file_path,
-                attempt=task.attempt + 1
+                attempt=task.attempt + 1,
+                source=task.source,
+                email_subject=task.email_subject,
+                email_sender=task.email_sender,
             )
             await self.queue.put(new_task)
         else:

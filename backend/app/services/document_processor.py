@@ -165,7 +165,10 @@ class DocumentProcessor:
         file_path: str,
         file_hash: str,
         conn: sqlite3.Connection,
-        vault_id: int = 1
+        vault_id: int = 1,
+        source: str = 'upload',
+        email_subject: Optional[str] = None,
+        email_sender: Optional[str] = None,
     ) -> int:
         """
         Insert a new file record or update existing one, returning the file ID.
@@ -175,6 +178,9 @@ class DocumentProcessor:
             file_hash: Computed hash of the file
             conn: Database connection
             vault_id: The vault ID for the file (defaults to 1)
+            source: Source of the file ('upload', 'scan', 'email')
+            email_subject: Subject line for email-sourced files
+            email_sender: Sender address for email-sourced files
 
         Returns:
             The file ID (database row ID)
@@ -210,19 +216,20 @@ class DocumentProcessor:
                 conn.execute(
                     """UPDATE files
                        SET file_hash = ?, file_size = ?, file_type = ?, vault_id = ?,
+                           source = ?, email_subject = ?, email_sender = ?,
                            status = 'pending', error_message = NULL,
                            modified_at = ?, processed_at = NULL
                        WHERE id = ?""",
-                    (file_hash, file_size, file_type, vault_id, now, file_id)
+                    (file_hash, file_size, file_type, vault_id, source, email_subject, email_sender, now, file_id)
                 )
             else:
                 # Insert new record
                 cursor = conn.execute(
                     """INSERT INTO files
                        (file_path, file_name, file_hash, file_size, file_type, vault_id,
-                        status, created_at, modified_at)
-                       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
-                    (path_str, file_name, file_hash, file_size, file_type, vault_id, now, now)
+                        source, email_subject, email_sender, status, created_at, modified_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                    (path_str, file_name, file_hash, file_size, file_type, vault_id, source, email_subject, email_sender, now, now)
                 )
                 lastrowid = cursor.lastrowid
                 if lastrowid is None:
@@ -341,13 +348,23 @@ class DocumentProcessor:
         elements = await asyncio.to_thread(self.parser.parse, file_path)
         return await asyncio.to_thread(self.chunker.chunk_elements, elements)
 
-    async def process_file(self, file_path: str, vault_id: int = 1) -> ProcessedDocument:
+    async def process_file(
+        self,
+        file_path: str,
+        vault_id: int = 1,
+        source: str = 'upload',
+        email_subject: Optional[str] = None,
+        email_sender: Optional[str] = None,
+    ) -> ProcessedDocument:
         """
         Process a file with status tracking and deduplication.
 
         Args:
             file_path: Path to the file to process
             vault_id: The vault ID to associate the file with (defaults to 1)
+            source: Source of the file ('upload', 'scan', 'email')
+            email_subject: Subject line for email-sourced files
+            email_sender: Sender address for email-sourced files
 
         Returns:
             ProcessedDocument containing file_id and chunks
@@ -380,7 +397,9 @@ class DocumentProcessor:
                 )
 
             # Insert or get file record (handles its own commit)
-            file_id = self._insert_or_get_file_record(file_path, file_hash, conn, vault_id)
+            file_id = self._insert_or_get_file_record(
+                file_path, file_hash, conn, vault_id, source, email_subject, email_sender
+            )
 
             try:
                 # Update status to processing

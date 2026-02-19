@@ -362,7 +362,12 @@ class EmailIngestionService:
             file_path = await self._save_attachment(part)
 
             # Enqueue for processing
-            await self.background_processor.enqueue(file_path)
+            await self.background_processor.enqueue(
+                file_path=file_path,
+                source='email',
+                email_subject=subject,
+                email_sender=sender,
+            )
             processed_attachments += 1
             logger.info(f"Enqueued attachment for processing: {file_path}")
 

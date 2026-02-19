@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS files (
     chunk_count INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'indexed', 'error')),
     error_message TEXT,
+    source TEXT DEFAULT 'upload',
+    email_subject TEXT,
+    email_sender TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     processed_at TIMESTAMP,
     modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -201,6 +204,7 @@ def run_migrations(sqlite_path: str) -> None:
     """
     init_db(sqlite_path)
     migrate_add_vaults(sqlite_path)
+    migrate_add_email_columns(sqlite_path)
 
 
 def migrate_add_vaults(sqlite_path: str) -> None:
@@ -257,6 +261,42 @@ def migrate_add_vaults(sqlite_path: str) -> None:
         conn.execute("UPDATE chat_sessions SET vault_id = 1 WHERE vault_id IS NULL")
         # memories: NULL vault_id is intentional (global), no backfill needed
         
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def migrate_add_email_columns(sqlite_path: str) -> None:
+    """
+    Migration: Add email tracking columns to files table.
+
+    Adds source, email_subject, and email_sender columns to track
+    documents ingested via email.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+    """
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        def _column_exists(table: str, column: str) -> bool:
+            cursor = conn.execute(f"PRAGMA table_info({table})")
+            return any(row[1] == column for row in cursor.fetchall())
+
+        # Add source column (track upload, scan, email)
+        if not _column_exists("files", "source"):
+            conn.execute("ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_source ON files(source)")
+
+        # Add email_subject column (nullable)
+        if not _column_exists("files", "email_subject"):
+            conn.execute("ALTER TABLE files ADD COLUMN email_subject TEXT")
+
+        # Add email_sender column (nullable)
+        if not _column_exists("files", "email_sender"):
+            conn.execute("ALTER TABLE files ADD COLUMN email_sender TEXT")
+
         conn.commit()
     finally:
         conn.close()
