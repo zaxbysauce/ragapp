@@ -32,6 +32,7 @@ from app.services.background_tasks import get_background_processor
 from app.services.file_watcher import FileWatcher
 from app.services.llm_health import LLMHealthChecker
 from app.services.model_checker import ModelChecker
+from app.services.email_service import EmailIngestionService
 from app.limiter import limiter
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.maintenance import MaintenanceMiddleware
@@ -128,6 +129,14 @@ async def lifespan(app: FastAPI):
     )
     await app.state.background_processor.start()
     
+    # Initialize email ingestion service if enabled
+    app.state.email_service = EmailIngestionService(
+        settings=settings,
+        pool=app.state.db_pool,
+        background_processor=app.state.background_processor,
+    )
+    await app.state.email_service.start_polling()
+    
     # Start FileWatcher for auto-scanning directories
     app.state.file_watcher = FileWatcher(app.state.background_processor, pool=app.state.db_pool)
     await app.state.file_watcher.start()
@@ -138,6 +147,8 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown: Cancel keepalive, stop file watcher, and close services
+    # Stop email ingestion service
+    app.state.email_service.stop_polling()
     keepalive_task.cancel()
     try:
         await keepalive_task

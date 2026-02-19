@@ -18,6 +18,7 @@ from app.services.background_tasks import BackgroundProcessor
 from app.services.maintenance import MaintenanceService
 from app.services.llm_health import LLMHealthChecker
 from app.services.model_checker import ModelChecker
+from app.services.email_service import EmailIngestionService
 from app.security import get_csrf_manager
 
 
@@ -104,3 +105,8 @@ def get_llm_health_checker(request: Request) -> LLMHealthChecker:
 def get_model_checker(request: Request) -> ModelChecker:
     """Return the model checker from app state."""
     return request.app.state.model_checker
+
+
+def get_email_service(request: Request) -> EmailIngestionService:
+    """Return the email ingestion service from app state."""
+    return request.app.state.email_service
