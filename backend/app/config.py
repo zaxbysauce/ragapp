@@ -2,6 +2,7 @@
 Application configuration using Pydantic Settings.
 """
 from pathlib import Path
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -62,6 +63,31 @@ class Settings(BaseSettings):
         ".txt", ".md", ".pdf", ".docx", ".csv", ".json",
         ".sql", ".py", ".js", ".ts", ".html", ".css",
         ".xml", ".yaml", ".yml"
+    }
+
+    # IMAP Email Ingestion configuration
+    imap_enabled: bool = False
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_username: str = ""
+    imap_password: SecretStr = SecretStr("")
+    imap_mailbox: str = "INBOX"
+    imap_poll_interval: int = 60  # seconds
+    imap_max_attachment_size: int = 10 * 1024 * 1024  # 10MB
+    imap_allowed_mime_types: set[str] = {
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/csv",
+        "application/json",
+        "application/sql",
+        "text/x-python",
+        "application/javascript",
+        "text/html",
+        "text/css",
+        "application/xml",
+        "application/x-yaml",
     }
 
     # CORS settings
