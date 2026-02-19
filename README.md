@@ -21,6 +21,7 @@ KnowledgeVault enables you to:
 | **Memory System** | SQLite FTS5-backed memory storage with natural language retrieval |
 | **Streaming Chat** | Real-time AI responses with source citations |
 | **File Watcher** | Automatic detection and processing of new documents |
+| **Email Ingestion** | Ingest documents via email with IMAP polling and vault routing |
 | **Web UI** | Modern React interface with Material 3 design |
 | **API Access** | Full REST API with OpenAPI documentation |
 
@@ -137,6 +138,12 @@ Open your browser to: `http://localhost:8080`
 | `LOG_LEVEL` | INFO | Logging level |
 | `AUTO_SCAN_ENABLED` | true | Enable auto-scanning |
 | `AUTO_SCAN_INTERVAL_MINUTES` | 60 | Scan interval |
+| `IMAP_ENABLED` | false | Enable email ingestion |
+| `IMAP_HOST` | - | IMAP server hostname |
+| `IMAP_PORT` | 993 | IMAP SSL port |
+| `IMAP_USERNAME` | - | IMAP account username |
+| `IMAP_PASSWORD` | - | IMAP account password |
+| `IMAP_POLL_INTERVAL` | 60 | Email poll interval (seconds) |
 
 ### Data Directory Structure
 
@@ -391,6 +398,18 @@ npm run dev
 docker compose -f docker-compose.yml build
 docker compose -f docker-compose.yml up -d
 ```
+
+## Documentation
+
+### Feature Guides
+
+- **[Email Ingestion](docs/email-ingestion.md)** - Ingest documents via email with IMAP polling and automatic vault routing
+
+### Administration
+
+- **[Admin Guide](docs/admin-guide.md)** - Administrative tasks and configuration
+- **[Release Process](docs/release.md)** - Deployment and release procedures
+- **[Non-Technical Setup](docs/non-technical-setup.md)** - Setup guide for non-technical users
 
 ## License
 
