@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.models.database import SQLiteConnectionPool
+from app.utils.retry import with_retry
 
 
 @dataclass
@@ -25,6 +26,7 @@ class ToggleManager:
         self._cache: dict[str, ToggleCacheEntry] = {}
         self._lock = threading.Lock()
 
+    @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def get_toggle(self, feature: str, default: bool = False) -> bool:
         now = time.time()
         with self._lock:
@@ -44,6 +46,7 @@ class ToggleManager:
             self._cache[feature] = ToggleCacheEntry(timestamp=now, enabled=value)
         return value
 
+    @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def set_toggle(self, feature: str, enabled: bool) -> None:
         conn = self.pool.get_connection()
         try:

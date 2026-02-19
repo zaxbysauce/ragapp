@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 
 from app.config import settings
 from app.models.database import SQLiteConnectionPool, get_pool
+from app.utils.retry import with_retry
 
 
 class MemoryStoreError(Exception):
@@ -45,6 +46,7 @@ class MemoryStore:
             pool = get_pool(str(settings.sqlite_path), max_size=2)
         self.pool = pool
 
+    @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def add_memory(
         self,
         content: str,
@@ -89,6 +91,7 @@ class MemoryStore:
             updated_at=updated_at,
         )
 
+    @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def search_memories(self, query: str, limit: int = 5, vault_id: Optional[int] = None) -> List[MemoryRecord]:
         if not query or not query.strip():
             return []

@@ -19,6 +19,7 @@ from unstructured.partition.auto import partition
 from ..config import settings
 from ..models.database import SQLiteConnectionPool, get_pool
 from ..utils.file_utils import compute_file_hash
+from ..utils.retry import with_retry
 from .chunking import SemanticChunker, ProcessedChunk
 from .embeddings import EmbeddingService
 from .schema_parser import SchemaParser
@@ -139,6 +140,7 @@ class DocumentProcessor:
         self.vector_store = vector_store
         self.embedding_service = embedding_service
 
+    @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def _check_duplicate(self, file_hash: str, conn: sqlite3.Connection, vault_id: int = 1) -> Optional[sqlite3.Row]:
         """
         Check if a file with the given hash already exists and is indexed.
@@ -157,6 +159,7 @@ class DocumentProcessor:
         )
         return cursor.fetchone()
 
+    @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def _insert_or_get_file_record(
         self,
         file_path: str,
@@ -239,6 +242,7 @@ class DocumentProcessor:
                 f"Database error while inserting/updating file record for '{path_str}': {str(e)}"
             ) from e
 
+    @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def _update_status(
         self,
         file_id: int,

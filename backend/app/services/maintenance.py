@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
 from app.models.database import SQLiteConnectionPool
+from app.utils.retry import with_retry
 
 
 class MaintenanceError(Exception):
@@ -28,6 +31,7 @@ class MaintenanceService:
         self.pool = pool
         self._ensure_flag_row()
 
+    @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def _ensure_flag_row(self) -> None:
         conn = self.pool.get_connection()
         try:
@@ -42,6 +46,7 @@ class MaintenanceService:
         finally:
             self.pool.release_connection(conn)
 
+    @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def get_flag(self) -> MaintenanceFlag:
         conn = self.pool.get_connection()
         try:

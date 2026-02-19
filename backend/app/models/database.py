@@ -172,6 +172,8 @@ def init_db(sqlite_path: str) -> None:
     # Connect and execute schema
     conn = sqlite3.connect(sqlite_path)
     try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.executescript(SCHEMA)
         # Ensure default vault exists
@@ -271,6 +273,8 @@ def get_db_connection(sqlite_path: str) -> sqlite3.Connection:
         sqlite3.Connection: Database connection with row factory set.
     """
     conn = sqlite3.connect(sqlite_path)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     return conn
@@ -312,6 +316,8 @@ class SQLiteConnectionPool:
         try:
             conn = sqlite3.connect(self.sqlite_path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=5000;")
             conn.execute("PRAGMA foreign_keys = ON;")
             return conn
         except Exception:
