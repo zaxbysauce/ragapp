@@ -37,9 +37,9 @@ class Settings(BaseSettings):
     
     # Document processing configuration (character-based - NEW)
     chunk_size_chars: int | None = None
-    """Character-based chunk size for document processing."""
+    """Character-based chunk size for document processing. Default ~1500 chars (~375 tokens)."""
     chunk_overlap_chars: int | None = None
-    """Character-based overlap between chunks."""
+    """Character-based overlap between chunks. Default ~150 chars (~37 tokens)."""
     retrieval_top_k: int | None = None
     """Number of top chunks to retrieve (unifies max_context_chunks and vector_top_k)."""
     vector_metric: str = "cosine"
@@ -137,7 +137,7 @@ class Settings(BaseSettings):
                 f"Auto-converting chunk_size={legacy_chunk_size} to chunk_size_chars={legacy_chunk_size * 4}."
             )
             return legacy_chunk_size * 4
-        return 2000
+        return 1500  # ~375 tokens, leaves room for instruction prefix
 
     @field_validator("chunk_overlap_chars", mode="before")
     @classmethod
