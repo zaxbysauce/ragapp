@@ -14,6 +14,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { DocumentCard } from "@/components/shared/DocumentCard";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
@@ -288,41 +289,86 @@ export default function DocumentsPage() {
       </div>
 
       {loading ? (
-        <Card>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="text-left p-4 font-medium">Filename</th>
-                    <th className="text-left p-4 font-medium">Status</th>
-                    <th className="text-left p-4 font-medium">Chunks</th>
-                    <th className="text-left p-4 font-medium">Size</th>
-                    <th className="text-left p-4 font-medium">Uploaded</th>
-                    <th className="text-right p-4 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...Array(5)].map((_, i) => (
-                    <tr key={i} className="border-b">
-                      <td className="p-4">
-                        <div className="flex items-center gap-2">
-                          <Skeleton className="h-4 w-4" />
-                          <Skeleton className="h-4 w-[180px]" />
-                        </div>
-                      </td>
-                      <td className="p-4"><Skeleton className="h-5 w-[80px]" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-[40px]" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-[60px]" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-[80px]" /></td>
-                      <td className="p-4 text-right"><Skeleton className="h-8 w-8 ml-auto" /></td>
+        <>
+          {/* Desktop Table Skeleton (hidden on mobile) */}
+          <Card className="hidden sm:block">
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <caption className="sr-only">Documents List</caption>
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th scope="col" className="text-left p-4 font-medium">Filename</th>
+                      <th scope="col" className="text-left p-4 font-medium">Status</th>
+                      <th scope="col" className="text-left p-4 font-medium">Chunks</th>
+                      <th scope="col" className="text-left p-4 font-medium">Size</th>
+                      <th scope="col" className="text-left p-4 font-medium">Uploaded</th>
+                      <th scope="col" className="text-right p-4 font-medium">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+                  </thead>
+                  <tbody>
+                    {[...Array(5)].map((_, i) => (
+                      <tr key={i} className="border-b">
+                        <td className="p-4">
+                          <div className="flex items-center gap-2">
+                            <Skeleton className="h-4 w-4" />
+                            <Skeleton className="h-4 w-[180px]" />
+                          </div>
+                        </td>
+                        <td className="p-4"><Skeleton className="h-5 w-[80px]" /></td>
+                        <td className="p-4"><Skeleton className="h-4 w-[40px]" /></td>
+                        <td className="p-4"><Skeleton className="h-4 w-[60px]" /></td>
+                        <td className="p-4"><Skeleton className="h-4 w-[80px]" /></td>
+                        <td className="p-4 text-right"><Skeleton className="h-11 w-11 ml-auto" /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Mobile Cards Skeleton (hidden on desktop) */}
+          <div className="grid grid-cols-1 gap-3 sm:hidden">
+            {[...Array(3)].map((_, i) => (
+              <Card key={i} className="w-full">
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <Skeleton className="h-11 w-11 rounded-md" />
+                      <div className="min-w-0">
+                        <Skeleton className="h-5 w-32 mb-1" />
+                        <Skeleton className="h-4 w-24" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-11 w-11 rounded-full" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="space-y-1">
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-6 w-20" />
+                    </div>
+                    <div className="space-y-1">
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 w-16" />
+                    </div>
+                    <div className="space-y-1">
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 w-20" />
+                    </div>
+                    <div className="space-y-1">
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 w-12" />
+                    </div>
+                  </div>
+                  <div className="mt-4 flex sm:hidden">
+                    <Skeleton className="h-11 w-full rounded-md" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </>
       ) : filteredDocuments.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
@@ -333,45 +379,65 @@ export default function DocumentsPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="text-left p-4 font-medium">Filename</th>
-                    <th className="text-left p-4 font-medium">Status</th>
-                    <th className="text-left p-4 font-medium">Chunks</th>
-                    <th className="text-left p-4 font-medium">Size</th>
-                    <th className="text-left p-4 font-medium">Uploaded</th>
-                    <th className="text-right p-4 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredDocuments.map((doc) => (
-                    <tr key={doc.id} className="border-b hover:bg-muted/50">
-                      <td className="p-4">
-                        <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-muted-foreground" />
-                          <span className="font-medium truncate max-w-[200px]">{doc.filename}</span>
-                        </div>
-                      </td>
-                      <td className="p-4"><StatusBadge status={doc.metadata?.status as string} /></td>
-                      <td className="p-4">{String(doc.metadata?.chunk_count ?? 0)}</td>
-                      <td className="p-4">{formatFileSize(doc.size)}</td>
-                      <td className="p-4 text-muted-foreground">{formatDate(doc.created_at)}</td>
-                      <td className="p-4 text-right">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDeleteDocument(String(doc.id))}>
-                          <Trash2 className="w-4 h-4 text-destructive" />
-                        </Button>
-                      </td>
+        <>
+          {/* Desktop Table View (hidden on mobile) */}
+          <Card className="hidden sm:block">
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <caption className="sr-only">Documents List</caption>
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th scope="col" className="text-left p-4 font-medium">Filename</th>
+                      <th scope="col" className="text-left p-4 font-medium">Status</th>
+                      <th scope="col" className="text-left p-4 font-medium">Chunks</th>
+                      <th scope="col" className="text-left p-4 font-medium">Size</th>
+                      <th scope="col" className="text-left p-4 font-medium">Uploaded</th>
+                      <th scope="col" className="text-right p-4 font-medium">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+                  </thead>
+                  <tbody>
+                    {filteredDocuments.map((doc) => (
+                      <tr key={doc.id} className="border-b hover:bg-muted/50">
+                        <td className="p-4">
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-muted-foreground" />
+                            <span className="font-medium truncate max-w-[200px]">{doc.filename}</span>
+                          </div>
+                        </td>
+                        <td className="p-4"><StatusBadge status={doc.metadata?.status as string} /></td>
+                        <td className="p-4">{String(doc.metadata?.chunk_count ?? 0)}</td>
+                        <td className="p-4">{formatFileSize(doc.size)}</td>
+                        <td className="p-4 text-muted-foreground">{formatDate(doc.created_at)}</td>
+                        <td className="p-4 text-right">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="min-w-[44px] min-h-[44px]" 
+                            onClick={() => handleDeleteDocument(String(doc.id))}
+                          >
+                            <Trash2 className="w-4 h-4 text-destructive" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Mobile Cards View (hidden on desktop) */}
+          <div className="grid grid-cols-1 gap-3 sm:hidden">
+            {filteredDocuments.map((doc) => (
+              <DocumentCard
+                key={doc.id}
+                document={doc}
+                onDelete={(id) => handleDeleteDocument(String(id))}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

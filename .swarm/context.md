@@ -175,20 +175,9 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| read | 205 | 205 | 0 | 6ms |
-| bash | 78 | 78 | 0 | 1602ms |
-| glob | 41 | 41 | 0 | 20ms |
-| grep | 34 | 34 | 0 | 80ms |
-| edit | 33 | 33 | 0 | 133ms |
-| task | 28 | 28 | 0 | 96525ms |
-| lint | 11 | 11 | 0 | 2157ms |
-| symbols | 10 | 10 | 0 | 1ms |
-| write | 8 | 8 | 0 | 153ms |
-| todowrite | 8 | 8 | 0 | 3ms |
-| retrieve_summary | 7 | 7 | 0 | 2ms |
-| diff | 6 | 6 | 0 | 13ms |
-| secretscan | 6 | 6 | 0 | 238ms |
-| imports | 5 | 5 | 0 | 4ms |
-| apply_patch | 3 | 3 | 0 | 6ms |
-| test_runner | 3 | 3 | 0 | 1ms |
-| detect_domains | 1 | 1 | 0 | 1ms |
+| read | 9 | 9 | 0 | 5ms |
+| glob | 6 | 6 | 0 | 32ms |
+| edit | 2 | 2 | 0 | 37ms |
+| bash | 1 | 1 | 0 | 108ms |
+| retrieve_summary | 1 | 1 | 0 | 5ms |
+| task | 1 | 1 | 0 | 230322ms |
