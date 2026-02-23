@@ -1,131 +1,200 @@
-# KnowledgeVault Code Review Remediation Plan
+# KnowledgeVault Email Ingestion Feature Plan
 Swarm: paid
-Phase: 6 [COMPLETE] | Updated: 2026-02-11
+Phase: 8 [IN PROGRESS] | Updated: 2026-02-19
+
+## Overview
+Add email ingestion via IMAP polling to allow users to send documents to vaults via email.
+
+**Architecture**: IMAP polling (30-60s) → Parse email → Extract vault from subject tag → Save attachments → Queue for processing
+
+## Phase 8: Email Ingestion Implementation
+
+### 8.1: Add IMAP Settings to Config [SMALL]
+- Add IMAP configuration fields to `backend/app/config.py` from environment variables ONLY:
+  - `IMAP_HOST` (required if enabled), `IMAP_PORT` (default 993), `IMAP_USERNAME`, `IMAP_PASSWORD` (SecretStr)
+  - `IMAP_MAILBOX` (default "INBOX"), `IMAP_POLL_INTERVAL` (default 60)
+  - `IMAP_ENABLED` (boolean toggle, default false)
+  - `IMAP_MAX_ATTACHMENT_SIZE` (default 10MB)
+  - `IMAP_ALLOWED_MIME_TYPES` (list of MIME types, default PDF/DOCX/TXT/etc)
+- Password field MUST use SecretStr - never logged or exposed
+- Add `.env.example` entries with placeholder values
+- Validation: if IMAP_ENABLED=true, host/username/password are required
+
+### 8.2: Create Email Service Module [MEDIUM]
+New file: `backend/app/services/email_service.py`
+
+**Responsibilities:**
+- IMAP connection management (aioimaplib) with exponential backoff
+- Email fetching and parsing (email module)
+- Subject tag extraction: `[VaultName]` or `#vaultname` patterns (first valid tag wins, case-insensitive)
+- HTML body text extraction with bleach sanitization
+- Attachment validation: MIME type whitelist + size limits
+- Secure temp file handling for attachments
+
+**Key Classes:**
+- `EmailIngestionService`: Main service class
+  - `__init__(settings, pool, background_processor)`
+  - `start_polling()`: Entry point, runs infinite poll loop
+  - `stop_polling()`: Graceful shutdown
+  - `_poll_once()`: Single poll iteration with error handling
+  - `_connect_with_backoff()`: IMAP connection with exponential backoff (5s→15s→30s→60s max)
+  - `_process_email()`: Parse single email, validate attachments
+  - `_extract_vault_name()`: Regex to find vault tag, fallback to default vault
+  - `_validate_attachment()`: Check MIME type whitelist + size limit
+  - `_save_attachment()`: Save to secure temp dir
+  - `is_healthy()`: Returns health status for monitoring
+
+**Error Handling:**
+- Connection failures: exponential backoff, max 60s interval
+- Authentication errors: log error, stop polling (requires manual intervention)
+- Parse errors: log and skip email, continue polling
+- Vault not found: log warning, use default vault
+
+**Dependencies:**
+- `aioimaplib>=0.9.0` (add to requirements.txt)
+- `bleach>=6.0.0` (add to requirements.txt)
+
+**Security:**
+- Credentials NEVER logged
+- HTML sanitized with bleach (strip scripts, iframes)
+- Attachment extension validated before saving
+- Temp files created with restrictive permissions
+
+### 8.3: Integrate with Document Pipeline [MEDIUM]
+
+**Integration points:**
+
+1. **deps.py**: Add `get_email_service()` dependency factory
+   - Returns EmailIngestionService with pool + BackgroundProcessor
+
+2. **main.py**: 
+   - Add email service to app.state if `imap_enabled=True`
+   - Start polling on lifespan startup (if enabled)
+   - Graceful stop on shutdown
+
+3. **Vault resolution logic**:
+   - Query database for vault matching extracted name (case-insensitive)
+   - If not found, use vault_id=1 (default)
+   - Log warning when vault not found
+
+4. **Attachment handling**:
+   - Save attachments to temp directory
+   - Call `BackgroundProcessor.enqueue(file_path, vault_id=vault_id)`
+   - Clean up temp files after processing (or use tmpfile cleanup)
+
+### 8.4: Add Email-Ingested Document Tracking [SMALL]
+
+**New database columns** in `files` table:
+- `source` TEXT NOT NULL DEFAULT 'upload': enum('upload', 'scan', 'email')
+- `email_subject` TEXT (nullable): original email subject line
+- `email_sender` TEXT (nullable): sender email address
+
+**Migration details**:
+- Add columns via ALTER TABLE in `backend/app/models/database.py` migrate function
+- Backfill existing rows: SET source='upload' WHERE source IS NULL
+- Update INSERT statements to include source field
+- Update ProcessedDocument model with new fields
+
+**Data flow**:
+- Upload API: source='upload'
+- File watcher: source='scan'
+- Email service: source='email', populate email_subject/sender
+
+### 8.5: Add Email Ingestion Status Endpoint [SMALL]
+
+New endpoint: `GET /api/email/status`
+
+**Response:**
+```json
+{
+  "enabled": true,
+  "last_poll": "2026-02-19T10:30:00Z",
+  "emails_processed_today": 42,
+  "emails_failed_today": 2,
+  "unseen_emails": 5
+}
+```
+
+**Authorization**: Admin only (reuse existing auth patterns)
+
+### 8.6: Error Handling & Monitoring [SMALL]
+
+- Exponential backoff for IMAP connection failures (5s → 15s → 30s → 60s max)
+- Log all email processing (success/failure)
+- Track metrics: emails_processed, attachments_extracted, vault_not_found_errors
+- Alert on repeated connection failures
+
+### 8.7: Tests [MEDIUM]
+
+1. **Unit tests** for EmailIngestionService:
+   - Test vault name extraction regex
+   - Test attachment filtering by extension
+   - Test HTML sanitization
+   - Test email parsing with various multipart structures
+
+2. **Integration tests**:
+   - Mock IMAP server responses
+   - Test end-to-end flow: email → attachment → queued for processing
+
+### 8.8: Documentation [SMALL]
+
+Update `docs/` or README with:
+- Email ingestion setup guide
+- How to format subject lines for vault routing
+- Supported attachment types
+- MailEnable IMAP configuration
+- Security considerations
+
+---
+
+## Dependencies
+
+```
+aioimaplib>=0.9.0
+bleach>=6.0.0
+```
 
 ## Rollback Strategy
-- Git commit after each phase; revert to prior commit if app fails to start
-- Phase 2 (highest risk): commit before AND after each singleton removal; test suite gates each step
-- Frontend: npm run build gates each task; git revert if build breaks
+
+1. Disable via `IMAP_ENABLED=false` in .env (immediate)
+2. Git revert if needed
+3. Database migration is backward compatible (nullable columns)
+
+## Acceptance Criteria
+
+- [ ] IMAP settings loaded from environment variables ONLY
+- [ ] IMAP password uses SecretStr, never logged
+- [ ] Service polls IMAP every N seconds when enabled
+- [ ] Connection failures use exponential backoff (5→15→30→60s max)
+- [ ] Subject tags like `[Finance]` route to correct vault (case-insensitive, first match)
+- [ ] Fallback to default vault when tag not found (logged warning)
+- [ ] Document attachments validated by MIME type whitelist
+- [ ] Non-document attachments are skipped with log
+- [ ] Oversized attachments (>10MB) are rejected gracefully
+- [ ] HTML body sanitized with bleach (scripts/iframes stripped)
+- [ ] Status endpoint shows ingestion metrics + health status
+- [ ] Database migration adds source/email columns with proper defaults
+- [ ] All tests pass (existing + new)
+- [ ] Documentation updated with security considerations
 
 ---
 
-## Phase 1: Bug Fixes (CRITICAL + HIGH) [COMPLETE]
+## Task Order & Dependencies
 
-- [x] 1.1: Fix `exempt_when_health_check` no-op decorator (backend/app/limiter.py) [SMALL]
-  - Replaced broken decorator with WhitelistLimiter._check_request_limit override + hmac.compare_digest
-
-- [x] 1.2: Fix sync/async mismatch in LLMHealthChecker (backend/app/services/llm_client.py:32) [SMALL]
-  - Changed `def start()` to `async def start()`; updated caller in main.py
-
-- [x] 1.3: Fix health endpoint per-request instantiation (backend/app/api/routes/health.py) [SMALL]
-  - Added to app.state + deps.py; health.py now uses Depends()
-
-- [CANCELLED] 1.4: CSRF store token validation — Not broken (presence-based scheme, token is in key not value)
-
-- [x] 1.5: Fix deprecated `datetime.utcnow()` + timing attack in admin.py [SMALL]
-  - Changed to datetime.now(timezone.utc); added secrets.compare_digest for token comparison
-
-- [x] 1.6: Phase 1 verification — 171/171 tests passing
-
----
-
-## Phase 2: DI & Connection Consolidation [COMPLETE]
-Order: Update deps.py first (2.1), then refactor services in dependency order (leaf services first), verify after each.
-
-- [x] 2.1: Remove module-level singletons + update deps.py [MEDIUM] (depends: 1.2, 1.3)
-  - Removed dead singletons from llm_client.py, model_checker.py, llm_health.py
-  - background_tasks.py kept (intentional factory pattern)
-
-- [x] 2.2: Refactor toggle_manager to accept DB via DI (backend/app/services/toggle_manager.py) [SMALL]
-  - Constructor now accepts SQLiteConnectionPool; uses pool.get_connection()/release_connection()
-  - main.py updated to pass app.state.db_pool
-
-- [x] 2.3: Refactor maintenance service to accept DB via DI (backend/app/services/maintenance.py) [SMALL]
-  - Constructor accepts SQLiteConnectionPool; updated test_maintenance.py
-
-- [x] 2.4: Refactor memory_store to accept DB via DI (backend/app/services/memory_store.py) [SMALL]
-  - Optional pool with fallback for backward compat; updated test_memory_store.py + test_api_routes.py
-
-- [x] 2.5: Refactor document_processor to accept DB via DI (backend/app/services/document_processor.py) [SMALL]
-  - Optional pool with fallback; updated background_tasks.py, documents.py, deps.py (new get_db_pool), test files
-
-- [x] 2.6: Refactor file_watcher to accept DB via DI (backend/app/services/file_watcher.py) [SMALL]
-  - Optional pool with lazy init; updated main.py, documents.py scan endpoint
-
-- [x] 2.7: Verify all tests pass after DI consolidation — 171/171 passing
-  - Zero get_db_connection calls remain in services/
-
----
-
-## Phase 3: Performance & Query Fixes [COMPLETE]
-
-- [x] 3.1: Fix N+1 query in list_sessions (backend/app/api/routes/chat.py) [SMALL]
-  - Replaced N+1 loop with single LEFT JOIN + GROUP BY query
-  - Index idx_chat_messages_session_id already existed
-
-- [x] 3.2: Batch embedding API calls (backend/app/services/embeddings.py) [MEDIUM]
-  - embed_batch now uses asyncio.gather + Semaphore(10) + sub-batches of 64
-
-- [x] 3.3: Fix vector_store connect/close in delete endpoint (backend/app/api/routes/documents.py) [SMALL]
-  - Removed connect()/close() calls that disrupted shared VectorStore state
-
-- [x] 3.4: Verify all tests pass — 171/171 passing
-
----
-
-## Phase 4: Code Cleanup (Slop + Refactoring) [COMPLETE]
-
-- [x] 4.1: Extract vault query helper (backend/app/api/routes/vaults.py) [SMALL]
-  - Extracted _row_to_vault_response, _VAULT_WITH_COUNTS_SQL, _fetch_vault_with_counts, _fetch_all_vaults
-  - vaults.py reduced from 431 to 346 lines
-
-- [x] 4.2: Clean up RAG engine cruft (backend/app/services/rag_engine.py) [SMALL]
-  - Removed redundant _instance params, test-only getattr check, replaced self.logger with module-level logger
-  - Updated 9 test call sites in test_rag_pipeline.py
-
-- [x] 4.3: Extract ChatPage hooks (frontend/src/pages/ChatPage.tsx) [MEDIUM]
-  - Created useChatHistory.ts (61 lines) + useSendMessage.ts (178 lines)
-  - ChatPage.tsx reduced from 460 to 307 lines (JSX-focused)
-
-- [x] 4.4: Extract MemoryPage hooks (frontend/src/pages/MemoryPage.tsx) [SMALL]
-  - Created useMemorySearch.ts (81 lines) + useMemoryCrud.ts (146 lines)
-  - MemoryPage.tsx reduced from 339 to 207 lines
-
-- [x] 4.5: Extract shared formatters (frontend/src/pages/DocumentsPage.tsx) [SMALL]
-  - Created lib/formatters.ts (formatFileSize, formatDate)
-  - Created components/shared/StatusBadge.tsx (status badge component)
-  - DocumentsPage.tsx reduced from 427 to ~377 lines
-
-- [CANCELLED] 4.6: Split vault store — 84 lines, already clean; splitting adds unnecessary complexity
-
-- [x] 4.7: Verify frontend build passes — npm run build succeeds (600 KB bundle)
-
-- [x] 4.8: Verify all backend tests pass — 171/171 passing
-
----
-
-## Phase 5: Frontend Polish [COMPLETE]
-
-- [x] 5.1: Deduplicate health check logic (App.tsx + SettingsPage.tsx) [SMALL]
-  - Extracted useHealthCheck hook (50 lines); App.tsx 72→38 lines; SettingsPage simplified
-
-- [CANCELLED] 5.2: Load settings defaults — initializeForm already overwrites defaults from server values on mount
-
-- [x] 5.3: Add API client interceptors (frontend/src/lib/api.ts) [SMALL]
-  - Added response interceptor for error normalization; removed redundant try/catch from 3 functions
-
-- [CANCELLED] 5.4: Upload progress — already handled: onProgress(0) triggers "Uploading..." text in UI
-
-- [x] 5.5: Verify frontend build + backend tests — Build succeeds, 171/171 tests passing
-
----
-
-## Phase 6: Final Validation [COMPLETE]
-
-- [x] 6.1: Full regression test suite [SMALL] (depends: all prior phases)
-  - pytest 171/171 passing + npm run build succeeds
-
-- [x] 6.2: Update inline docstrings for changed public APIs [SMALL] (depends: 6.1)
-  - Added docstrings to deps.py (get_toggle_manager, get_secret_manager)
-  - Added JSDoc to 6 new frontend hooks + 3 helper functions + StatusBadge component
-  - 171/171 tests passing, frontend build clean
+```
+8.1 (config)
+    ↓
+8.2 (email service) ← 8.1
+    ↓
+8.4 (db migration) ← can run parallel with 8.2
+    ↓
+8.3 (integration) ← 8.2, 8.4, existing deps.py patterns
+    ↓
+8.5 (endpoint) ← 8.3
+    ↓
+8.6 (monitoring) ← 8.3
+    ↓
+8.7 (tests) ← all above
+    ↓
+8.8 (docs) ← 8.7
+```

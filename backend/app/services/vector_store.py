@@ -106,6 +106,20 @@ class VectorStore:
         
         return self
     
+    def _get_expected_embedding_dim(self) -> Optional[int]:
+        """Get the expected embedding dimension from the table schema."""
+        if self.table is None:
+            return self._embedding_dim
+        
+        try:
+            schema = self.table.schema
+            embedding_field = schema.field("embedding")
+            if hasattr(embedding_field.type, 'list_size'):
+                return embedding_field.type.list_size
+        except Exception:
+            pass
+        return self._embedding_dim
+    
     def add_chunks(self, records: List[Dict[str, Any]]) -> None:
         """
         Add chunk records to the vector store.
@@ -124,6 +138,9 @@ class VectorStore:
         # Handle empty records
         if not records:
             return
+        
+        # Get expected embedding dimension from table schema
+        expected_dim = self._get_expected_embedding_dim()
         
         # Required fields for validation
         required_fields = ["id", "text", "file_id", "chunk_index", "embedding"]
@@ -145,6 +162,15 @@ class VectorStore:
             elif not isinstance(embedding, list):
                 raise VectorStoreValidationError(
                     f"Embedding must be a list or numpy array, got {type(embedding).__name__}"
+                )
+            
+            # Validate embedding dimension matches table schema
+            actual_dim = len(embedding)
+            if expected_dim is not None and actual_dim != expected_dim:
+                raise VectorStoreValidationError(
+                    f"Embedding dimension mismatch: expected {expected_dim} dimensions, "
+                    f"got {actual_dim}. The table was created with a different embedding model. "
+                    f"Delete the lancedb directory at {self.db_path} and restart to use the new model."
                 )
             
             processed_record = {
