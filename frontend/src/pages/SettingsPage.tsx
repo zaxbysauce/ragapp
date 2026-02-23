@@ -95,10 +95,14 @@ function SettingsPageContent() {
       const updated = await updateSettings({
         chunk_size: formData.chunk_size,
         chunk_overlap: formData.chunk_overlap,
-        max_context_chunks: formData.max_context_chunks,
+        retrieval_top_k: formData.max_context_chunks,
+        max_distance_threshold: formData.rag_relevance_threshold,
         auto_scan_enabled: formData.auto_scan_enabled,
         auto_scan_interval_minutes: formData.auto_scan_interval_minutes,
-        rag_relevance_threshold: formData.rag_relevance_threshold,
+        retrieval_window: formData.retrieval_window,
+        vector_metric: formData.vector_metric,
+        embedding_doc_prefix: formData.embedding_doc_prefix,
+        embedding_query_prefix: formData.embedding_query_prefix,
       });
       setSettings(updated);
       toast.success("Settings saved successfully");
@@ -226,7 +230,7 @@ function SettingsPageContent() {
               <CardContent className="space-y-6">
                 {/* Chunk Size */}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Chunk Size</label>
+                  <label className="text-sm font-medium">Chunk Size (characters)</label>
                   <Input
                     type="number"
                     min={1}
@@ -244,7 +248,7 @@ function SettingsPageContent() {
 
                 {/* Chunk Overlap */}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Chunk Overlap</label>
+                  <label className="text-sm font-medium">Chunk Overlap (characters)</label>
                   <Input
                     type="number"
                     min={1}
@@ -260,9 +264,9 @@ function SettingsPageContent() {
                   </p>
                 </div>
 
-                {/* Max Context Chunks */}
+                {/* Retrieval Top-K */}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Max Context Chunks</label>
+                  <label className="text-sm font-medium">Retrieval Top-K</label>
                   <Input
                     type="number"
                     min={1}
@@ -274,13 +278,13 @@ function SettingsPageContent() {
                     <p className="text-xs text-destructive">{errors.max_context_chunks}</p>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    Maximum number of chunks to include in RAG context
+                    Maximum number of chunks to retrieve and include in context
                   </p>
                 </div>
 
-                {/* RAG Relevance Threshold */}
+                {/* Max Distance Threshold */}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">RAG Relevance Threshold</label>
+                  <label className="text-sm font-medium">Max Distance Threshold</label>
                   <div className="flex items-center gap-4">
                     <Input
                       type="number"
@@ -305,7 +309,7 @@ function SettingsPageContent() {
                     <p className="text-xs text-destructive">{errors.rag_relevance_threshold}</p>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    Minimum relevance score (0-1) for chunks to be included in context
+                    Maximum distance (1-0) for chunks to be included in context (lower = more strict)
                   </p>
                 </div>
 
@@ -348,6 +352,45 @@ function SettingsPageContent() {
                   </div>
                 )}
 
+                {/* Retrieval Window */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Retrieval Window</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={3}
+                    value={formData.retrieval_window}
+                    onChange={(e) => handleInputChange("retrieval_window", e.target.value)}
+                    className={errors.retrieval_window ? "border-destructive" : ""}
+                  />
+                  {errors.retrieval_window && (
+                    <p className="text-xs text-destructive">{errors.retrieval_window}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Number of adjacent chunks to include (0-3)
+                  </p>
+                </div>
+
+                {/* Vector Metric */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Vector Metric</label>
+                  <select
+                    value={formData.vector_metric}
+                    onChange={(e) => handleInputChange("vector_metric", e.target.value)}
+                    className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${errors.vector_metric ? "border-destructive" : ""}`}
+                  >
+                    <option value="cosine">Cosine Similarity</option>
+                    <option value="euclidean">Euclidean Distance</option>
+                    <option value="dot_product">Dot Product</option>
+                  </select>
+                  {errors.vector_metric && (
+                    <p className="text-xs text-destructive">{errors.vector_metric}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Distance metric used for vector similarity search
+                  </p>
+                </div>
+
                 {/* Save Button and Status */}
                 <div className="flex items-center gap-4 pt-4 border-t">
                   <Button
@@ -361,6 +404,47 @@ function SettingsPageContent() {
                   {hasChanges() && (
                     <span className="text-sm text-muted-foreground">You have unsaved changes</span>
                   )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Advanced Embedding Settings */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Advanced Embedding Settings</CardTitle>
+                <CardDescription>Configure embedding prefixes for different content types</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Embedding Document Prefix</label>
+                  <textarea
+                    value={formData.embedding_doc_prefix}
+                    onChange={(e) => handleInputChange("embedding_doc_prefix", e.target.value)}
+                    className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 min-h-[80px] ${errors.embedding_doc_prefix ? "border-destructive" : ""}`}
+                    placeholder="Passage: "
+                  />
+                  {errors.embedding_doc_prefix && (
+                    <p className="text-xs text-destructive">{errors.embedding_doc_prefix}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Prefix added to document chunks before embedding (default: "Passage: ")
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Embedding Query Prefix</label>
+                  <textarea
+                    value={formData.embedding_query_prefix}
+                    onChange={(e) => handleInputChange("embedding_query_prefix", e.target.value)}
+                    className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 min-h-[80px] ${errors.embedding_query_prefix ? "border-destructive" : ""}`}
+                    placeholder="Query: "
+                  />
+                  {errors.embedding_query_prefix && (
+                    <p className="text-xs text-destructive">{errors.embedding_query_prefix}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Prefix added to queries before embedding (default: "Query: ")
+                  </p>
                 </div>
               </CardContent>
             </Card>

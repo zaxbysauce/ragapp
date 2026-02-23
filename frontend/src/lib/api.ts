@@ -97,6 +97,12 @@ export interface SettingsResponse {
   // RAG config (user-configurable)
   rag_relevance_threshold: number;
   vector_top_k: number;
+  retrieval_window: number;
+  vector_metric: string;
+
+  // Embedding prefixes
+  embedding_doc_prefix: string;
+  embedding_query_prefix: string;
 
   // Feature flags
   maintenance_mode: boolean;
@@ -119,6 +125,12 @@ export interface UpdateSettingsRequest {
   auto_scan_enabled?: boolean;
   auto_scan_interval_minutes?: number;
   rag_relevance_threshold?: number;
+  retrieval_top_k?: number;
+  max_distance_threshold?: number;
+  retrieval_window?: number;
+  vector_metric?: string;
+  embedding_doc_prefix?: string;
+  embedding_query_prefix?: string;
 }
 
 export interface SearchMemoriesRequest {

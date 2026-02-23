@@ -8,6 +8,10 @@ export interface SettingsFormData {
   auto_scan_enabled: boolean;
   auto_scan_interval_minutes: number;
   rag_relevance_threshold: number;
+  retrieval_window: number;
+  vector_metric: string;
+  embedding_doc_prefix: string;
+  embedding_query_prefix: string;
 }
 
 export interface SettingsErrors {
@@ -16,6 +20,10 @@ export interface SettingsErrors {
   max_context_chunks?: string;
   auto_scan_interval_minutes?: string;
   rag_relevance_threshold?: string;
+  retrieval_window?: string;
+  vector_metric?: string;
+  embedding_doc_prefix?: string;
+  embedding_query_prefix?: string;
 }
 
 export interface SettingsState {
@@ -65,6 +73,10 @@ const defaultFormData: SettingsFormData = {
   auto_scan_enabled: false,
   auto_scan_interval_minutes: 60,
   rag_relevance_threshold: 0.7,
+  retrieval_window: 1,
+  vector_metric: "cosine",
+  embedding_doc_prefix: "Passage: ",
+  embedding_query_prefix: "Query: ",
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -126,6 +138,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         auto_scan_enabled: settings.auto_scan_enabled ?? false,
         auto_scan_interval_minutes: settings.auto_scan_interval_minutes ?? 60,
         rag_relevance_threshold: settings.rag_relevance_threshold ?? 0.7,
+        retrieval_window: settings.retrieval_window ?? 1,
+        vector_metric: settings.vector_metric ?? "cosine",
+        embedding_doc_prefix: settings.embedding_doc_prefix ?? "Passage: ",
+        embedding_query_prefix: settings.embedding_query_prefix ?? "Query: ",
       },
       loading: false,
       error: null,
@@ -160,6 +176,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       newErrors.rag_relevance_threshold = "Relevance threshold must be between 0 and 1";
     }
 
+    // Validate retrieval window (0-3)
+    if (formData.retrieval_window < 0 || formData.retrieval_window > 3) {
+      newErrors.retrieval_window = "Retrieval window must be between 0 and 3";
+    }
+
+    // Validate vector metric
+    const validMetrics = ["cosine", "euclidean", "dot_product"];
+    if (!validMetrics.includes(formData.vector_metric)) {
+      newErrors.vector_metric = "Vector metric must be cosine, euclidean, or dot_product";
+    }
+
     set({ errors: newErrors });
     return Object.keys(newErrors).length === 0;
   },
@@ -173,7 +200,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       formData.max_context_chunks !== (settings.max_context_chunks ?? 5) ||
       formData.auto_scan_enabled !== (settings.auto_scan_enabled ?? false) ||
       formData.auto_scan_interval_minutes !== (settings.auto_scan_interval_minutes ?? 60) ||
-      formData.rag_relevance_threshold !== (settings.rag_relevance_threshold ?? 0.7)
+      formData.rag_relevance_threshold !== (settings.rag_relevance_threshold ?? 0.7) ||
+      formData.retrieval_window !== (settings.retrieval_window ?? 1) ||
+      formData.vector_metric !== (settings.vector_metric ?? "cosine") ||
+      formData.embedding_doc_prefix !== (settings.embedding_doc_prefix ?? "Passage: ") ||
+      formData.embedding_query_prefix !== (settings.embedding_query_prefix ?? "Query: ")
     );
   },
 
