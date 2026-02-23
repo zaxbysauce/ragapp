@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -46,6 +46,16 @@ export default function ChatPage() {
     };
   }, [messages]);
 
+  // Auto-scroll to bottom of messages
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, isStreaming]);
+
   const handleToggleSource = (sourceId: string) => {
     toggleSource(sourceId);
   };
@@ -76,7 +86,7 @@ export default function ChatPage() {
 
         <TabsContent value="active" className="space-y-4">
           {messages.length > 0 && (
-            <Card className="min-h-[300px] max-h-[500px] overflow-y-auto">
+            <Card ref={messagesContainerRef} className="min-h-[300px] max-h-[500px] overflow-y-auto">
               <CardContent className="space-y-4 pt-6">
                 {messages.map((message, index) => (
                   <div
@@ -123,6 +133,7 @@ export default function ChatPage() {
                     </div>
                   </div>
                 ))}
+                <div ref={messagesEndRef} />
               </CardContent>
             </Card>
           )}
