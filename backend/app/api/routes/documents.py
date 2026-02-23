@@ -453,8 +453,8 @@ async def _do_upload(
         
         # Process file with injected dependencies
         processor = DocumentProcessor(
-            chunk_size=settings_dep.chunk_size,
-            chunk_overlap=settings_dep.chunk_overlap,
+            chunk_size_chars=settings_dep.chunk_size_chars,
+            chunk_overlap_chars=settings_dep.chunk_overlap_chars,
             vector_store=vector_store,
             embedding_service=embedding_service,
             pool=db_pool,

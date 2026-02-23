@@ -25,14 +25,14 @@ def test_singleton_pattern():
 
     # Get first instance
     processor1 = get_background_processor(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
+        chunk_size_chars=settings.chunk_size_chars,
+        chunk_overlap_chars=settings.chunk_overlap_chars,
     )
 
     # Get second instance
     processor2 = get_background_processor(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
+        chunk_size_chars=settings.chunk_size_chars,
+        chunk_overlap_chars=settings.chunk_overlap_chars,
     )
 
     # They should be the same instance
@@ -107,8 +107,8 @@ async def main():
         # Reset for queue test
         reset_background_processor()
         processor = get_background_processor(
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap,
+            chunk_size_chars=settings.chunk_size_chars,
+            chunk_overlap_chars=settings.chunk_overlap_chars,
         )
         await test_processor_queues_items(processor)
 
