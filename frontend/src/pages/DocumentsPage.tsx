@@ -15,6 +15,7 @@ import { useVaultStore } from "@/stores/useVaultStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { DocumentCard } from "@/components/shared/DocumentCard";
+import { EmptyState } from "@/components/shared/EmptyState";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
@@ -480,14 +481,11 @@ export default function DocumentsPage() {
           </div>
         </>
       ) : filteredDocuments.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <FileText className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">
-              {searchQuery ? "No documents match your search" : "No documents yet. Upload some files to get started."}
-            </p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={FileText}
+          title={searchQuery ? "No documents match your search" : "No documents yet"}
+          description={searchQuery ? undefined : "Upload some files to get started."}
+        />
       ) : (
         <>
           {/* Desktop Table View (hidden on mobile) */}

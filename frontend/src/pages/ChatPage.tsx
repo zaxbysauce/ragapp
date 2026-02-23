@@ -33,6 +33,7 @@ import { useChatStore } from "@/stores/useChatStore";
 import { MessageContent } from "@/components/shared/MessageContent";
 import { MessageActions } from "@/components/shared/MessageActions";
 import { KeyboardShortcutsDialog, useKeyboardShortcuts } from "@/components/shared/KeyboardShortcuts";
+import { EmptyState } from "@/components/shared/EmptyState";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
 import { useChatHistory } from "@/hooks/useChatHistory";
@@ -341,13 +342,11 @@ export default function ChatPage() {
                   </p>
                 </div>
               ) : chatHistory.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <MessageSquare className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground">No chat history yet.</p>
-                  <p className="text-xs text-muted-foreground/70 mt-1">
-                    Start a conversation to see it here.
-                  </p>
-                </div>
+                <EmptyState
+                  icon={MessageSquare}
+                  title="No chat history yet"
+                  description="Start a conversation to see it here."
+                />
               ) : (
                 <div className="space-y-4">
                   {chatHistory.map((session) => (

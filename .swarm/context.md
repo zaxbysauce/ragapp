@@ -175,16 +175,17 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| read | 42 | 42 | 0 | 5ms |
-| edit | 21 | 21 | 0 | 101ms |
-| bash | 20 | 20 | 0 | 2031ms |
-| glob | 12 | 12 | 0 | 25ms |
+| read | 50 | 50 | 0 | 5ms |
+| edit | 31 | 31 | 0 | 79ms |
+| bash | 26 | 26 | 0 | 2124ms |
+| glob | 14 | 14 | 0 | 24ms |
+| invalid | 12 | 12 | 0 | 1ms |
 | grep | 6 | 6 | 0 | 44ms |
 | task | 5 | 5 | 0 | 281323ms |
+| write | 4 | 4 | 0 | 111ms |
 | lint | 3 | 3 | 0 | 2274ms |
 | retrieve_summary | 2 | 2 | 0 | 4ms |
 | test_runner | 2 | 2 | 0 | 2ms |
-| write | 2 | 2 | 0 | 190ms |
 | imports | 2 | 2 | 0 | 2ms |
 | todowrite | 1 | 1 | 0 | 3ms |
 | diff | 1 | 1 | 0 | 33ms |
