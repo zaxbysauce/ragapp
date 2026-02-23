@@ -34,12 +34,14 @@ class EmbeddingService:
         self.embedding_doc_prefix = settings.embedding_doc_prefix
         self.embedding_query_prefix = settings.embedding_query_prefix
         
-        # Apply Qwen3 defaults if model contains "qwen" and prefixes are empty
-        if settings.embedding_model.lower().find("qwen") >= 0:
-            if not self.embedding_doc_prefix:
-                self.embedding_doc_prefix = "Instruct: Represent this technical documentation passage for retrieval.\nDocument: "
-            if not self.embedding_query_prefix:
-                self.embedding_query_prefix = "Instruct: Retrieve relevant technical documentation passages.\nQuery: "
+        # Note: Instruction prefixes are disabled by default to stay within token limits
+        # Users can manually configure prefixes in Settings if their model supports it
+        # Uncomment below to auto-apply Qwen3 prefixes (adds ~100 tokens!)
+        # if settings.embedding_model.lower().find("qwen") >= 0:
+        #     if not self.embedding_doc_prefix:
+        #         self.embedding_doc_prefix = "Instruct: Represent this technical documentation passage for retrieval.\nDocument: "
+        #     if not self.embedding_query_prefix:
+        #         self.embedding_query_prefix = "Instruct: Retrieve relevant technical documentation passages.\nQuery: "
     
     def _detect_provider_mode(self, base_url: str) -> tuple:
         """
