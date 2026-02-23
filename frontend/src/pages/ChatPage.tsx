@@ -6,13 +6,28 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MessageSquare, FileText, Plus, ChevronDown, ChevronRight, AlertCircle, BookOpen } from "lucide-react";
+import { MessageSquare, FileText, Plus, ChevronDown, ChevronRight, AlertCircle, BookOpen, MoreVertical, Download, RotateCcw, Edit3 } from "lucide-react";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { type Source } from "@/lib/api";
 import { useChatStore } from "@/stores/useChatStore";
 import { MessageContent } from "@/components/shared/MessageContent";
@@ -33,6 +48,9 @@ export default function ChatPage() {
   const { activeVaultId } = useVaultStore();
 
   const [activeTab, setActiveTab] = useState("active");
+  const [showClearDialog, setShowClearDialog] = useState(false);
+  const [chatTitle, setChatTitle] = useState("");
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
 
   // Chat history logic
   const { chatHistory, isChatLoading, chatHistoryError, handleLoadChat, refreshHistory } =
@@ -77,15 +95,87 @@ export default function ChatPage() {
     toggleSource(sourceId);
   };
 
+  const handleClearChat = () => {
+    useChatStore.getState().clearMessages();
+    setShowClearDialog(false);
+  };
+
+  const handleExportChat = () => {
+    const chatText = messages.map(m => {
+      const role = m.role === "user" ? "User" : "Assistant";
+      return `${role}: ${m.content}`;
+    }).join("\n\n");
+    
+    const blob = new Blob([chatText], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `chat-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSaveTitle = () => {
+    // TODO: Save title to backend when API is available
+    setIsEditingTitle(false);
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Chat</h1>
+          {isEditingTitle ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={chatTitle}
+                onChange={(e) => setChatTitle(e.target.value)}
+                placeholder="Chat title..."
+                className="text-2xl font-bold bg-transparent border-b border-primary focus:outline-none focus:border-primary-foreground"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSaveTitle();
+                  if (e.key === "Escape") setIsEditingTitle(false);
+                }}
+                autoFocus
+              />
+              <Button size="sm" onClick={handleSaveTitle}>Save</Button>
+            </div>
+          ) : (
+            <h1 className="text-3xl font-bold tracking-tight">Chat</h1>
+          )}
           <p className="text-muted-foreground mt-1">Ask questions and get AI-powered answers</p>
         </div>
         <div className="flex items-center gap-2">
           <VaultSelector />
+          
+          {/* Chat Actions Dropdown */}
+          {messages.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" className="min-w-[44px] min-h-[44px]" aria-label="Chat actions">
+                  <MoreVertical className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setIsEditingTitle(true)}>
+                  <Edit3 className="w-4 h-4 mr-2" />
+                  Rename Chat
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportChat}>
+                  <Download className="w-4 h-4 mr-2" />
+                  Export to Text
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setShowClearDialog(true)} className="text-destructive focus:text-destructive">
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Clear Chat
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          
           <Button variant="outline" size="sm" onClick={() => useChatStore.getState().newChat()}>
             <Plus className="w-4 h-4 mr-2" />
             New Chat
@@ -409,6 +499,22 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+
+      {/* Clear Chat Confirmation Dialog */}
+      <Dialog open={showClearDialog} onOpenChange={setShowClearDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Clear Chat</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to clear this conversation? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowClearDialog(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleClearChat}>Clear Chat</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
