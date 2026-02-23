@@ -103,7 +103,7 @@ CREATE TABLE posts (
         self.test_pool = SQLiteConnectionPool(self.temp_db_path, max_size=2)
 
         # Create DocumentProcessor instance with pool
-        self.processor = DocumentProcessor(chunk_size=512, chunk_overlap=50, pool=self.test_pool)
+        self.processor = DocumentProcessor(chunk_size_chars=2000, chunk_overlap_chars=200, pool=self.test_pool)
 
     def tearDown(self):
         """Clean up temporary files."""

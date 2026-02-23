@@ -111,8 +111,8 @@ class DocumentProcessor:
 
     def __init__(
         self,
-        chunk_size: int = 512,
-        chunk_overlap: int = 50,
+        chunk_size_chars: int = 2000,
+        chunk_overlap_chars: int = 200,
         vector_store: Optional[VectorStore] = None,
         embedding_service: Optional[EmbeddingService] = None,
         pool: Optional['SQLiteConnectionPool'] = None,
@@ -121,16 +121,16 @@ class DocumentProcessor:
         Initialize the document processor.
 
         Args:
-            chunk_size: Target chunk size in tokens for semantic chunking
-            chunk_overlap: Overlap between chunks in tokens
+            chunk_size_chars: Target chunk size in characters for semantic chunking
+            chunk_overlap_chars: Overlap between chunks in characters
             vector_store: VectorStore instance for storing chunk embeddings
             embedding_service: EmbeddingService instance for generating embeddings
             pool: SQLiteConnectionPool instance for database connections
         """
         self.parser = DocumentParser()
         self.chunker = SemanticChunker(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
+            chunk_size_chars=chunk_size_chars,
+            chunk_overlap_chars=chunk_overlap_chars
         )
         self.schema_parser = SchemaParser()
         # Fallback to creating a pool from settings if not provided

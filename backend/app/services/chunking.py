@@ -19,42 +19,41 @@ class ProcessedChunk:
         text: The chunk text content
         metadata: Dictionary containing section title, element type, and other metadata
         chunk_index: Sequential index of this chunk in the document
+        chunk_uid: Unique identifier for windowing (format: file_id_chunk_index)
     """
     text: str
     metadata: dict
     chunk_index: int
+    chunk_uid: Optional[str] = None
 
 
 class SemanticChunker:
     """
     Semantic chunker using unstructured's title-based chunking.
     
-    Converts token-based parameters to character-based limits (approx 4x ratio).
+    Uses character-based parameters directly for chunking.
     Preserves tables and code blocks by keeping element text intact.
     """
     
-    # Approximate ratio: 1 token ≈ 4 characters
-    TOKEN_TO_CHAR_RATIO = 4
-    
     def __init__(
         self,
-        chunk_size: int = 512,
-        chunk_overlap: int = 50
+        chunk_size_chars: int = 2000,
+        chunk_overlap_chars: int = 200
     ):
         """
         Initialize the semantic chunker.
         
         Args:
-            chunk_size: Target chunk size in tokens (converted to characters)
-            chunk_overlap: Overlap between chunks in tokens (converted to characters)
+            chunk_size_chars: Target chunk size in characters
+            chunk_overlap_chars: Overlap between chunks in characters
         """
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+        self.chunk_size = chunk_size_chars
+        self.chunk_overlap = chunk_overlap_chars
         
-        # Convert token counts to character counts
-        self.max_characters = chunk_size * self.TOKEN_TO_CHAR_RATIO
-        self.new_after_n_chars = self.max_characters
-        self.overlap = chunk_overlap * self.TOKEN_TO_CHAR_RATIO
+        # Use character counts directly
+        self.max_characters = chunk_size_chars
+        self.new_after_n_chars = chunk_size_chars
+        self.overlap = chunk_overlap_chars
     
     def _get_element_text(self, element: Element) -> str:
         """

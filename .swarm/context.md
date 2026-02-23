@@ -175,14 +175,14 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| read | 26 | 26 | 0 | 6ms |
-| bash | 20 | 20 | 0 | 2529ms |
-| edit | 19 | 19 | 0 | 964ms |
+| read | 32 | 32 | 0 | 8ms |
+| bash | 25 | 25 | 0 | 2668ms |
+| edit | 24 | 24 | 0 | 1224ms |
+| glob | 4 | 4 | 0 | 20ms |
 | grep | 4 | 4 | 0 | 48ms |
+| invalid | 3 | 3 | 0 | 1ms |
 | task | 2 | 2 | 0 | 307828ms |
-| glob | 2 | 2 | 0 | 22ms |
 | write | 2 | 2 | 0 | 463ms |
 | test_runner | 2 | 2 | 0 | 2ms |
 | retrieve_summary | 1 | 1 | 0 | 4ms |
-| invalid | 1 | 1 | 0 | 1ms |
 | lint | 1 | 1 | 0 | 2364ms |
