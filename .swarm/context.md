@@ -149,10 +149,20 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| bash | 31 | 31 | 0 | 2333ms |
-| read | 25 | 25 | 0 | 6ms |
-| edit | 9 | 9 | 0 | 234ms |
-| glob | 7 | 7 | 0 | 789ms |
-| write | 5 | 5 | 0 | 136ms |
-| grep | 2 | 2 | 0 | 57ms |
-| task | 1 | 1 | 0 | 131971ms |
+| read | 117 | 117 | 0 | 5ms |
+| grep | 28 | 28 | 0 | 72ms |
+| bash | 24 | 24 | 0 | 1910ms |
+| glob | 18 | 18 | 0 | 19ms |
+| symbols | 10 | 10 | 0 | 1ms |
+| edit | 10 | 10 | 0 | 260ms |
+| task | 9 | 9 | 0 | 129508ms |
+| retrieve_summary | 6 | 6 | 0 | 2ms |
+| lint | 5 | 5 | 0 | 2173ms |
+| apply_patch | 3 | 3 | 0 | 6ms |
+| diff | 3 | 3 | 0 | 19ms |
+| imports | 3 | 3 | 0 | 3ms |
+| secretscan | 3 | 3 | 0 | 438ms |
+| detect_domains | 1 | 1 | 0 | 1ms |
+| test_runner | 1 | 1 | 0 | 1ms |
+| write | 1 | 1 | 0 | 87ms |
+| todowrite | 1 | 1 | 0 | 4ms |

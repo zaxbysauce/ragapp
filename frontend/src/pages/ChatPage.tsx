@@ -48,7 +48,6 @@ export default function ChatPage() {
 
   // Auto-scroll to bottom of messages
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -86,7 +85,7 @@ export default function ChatPage() {
 
         <TabsContent value="active" className="space-y-4">
           {messages.length > 0 && (
-            <Card ref={messagesContainerRef} className="min-h-[300px] max-h-[500px] overflow-y-auto">
+            <Card className="min-h-[300px] max-h-[500px] overflow-y-auto">
               <CardContent className="space-y-4 pt-6">
                 {messages.map((message, index) => (
                   <div
