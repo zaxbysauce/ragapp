@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import { Navigation } from "./Navigation";
+import { UploadIndicator } from "@/components/shared/UploadIndicator";
 import type { HealthStatus } from "@/types/health";
 import type { NavItemId } from "./navigationTypes";
 
@@ -22,6 +23,9 @@ export function PageShell({ children, activeItem, onItemSelect, healthStatus }: 
           {children}
         </div>
       </main>
+
+      {/* Global Upload Indicator - Shows on all pages */}
+      <UploadIndicator />
     </div>
   );
 }

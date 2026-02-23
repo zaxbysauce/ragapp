@@ -175,18 +175,20 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| read | 50 | 50 | 0 | 5ms |
-| edit | 31 | 31 | 0 | 79ms |
-| bash | 26 | 26 | 0 | 2124ms |
-| glob | 14 | 14 | 0 | 24ms |
-| invalid | 12 | 12 | 0 | 1ms |
-| grep | 6 | 6 | 0 | 44ms |
-| task | 5 | 5 | 0 | 281323ms |
-| write | 4 | 4 | 0 | 111ms |
-| lint | 3 | 3 | 0 | 2274ms |
-| retrieve_summary | 2 | 2 | 0 | 4ms |
-| test_runner | 2 | 2 | 0 | 2ms |
-| imports | 2 | 2 | 0 | 2ms |
-| todowrite | 1 | 1 | 0 | 3ms |
-| diff | 1 | 1 | 0 | 33ms |
-| secretscan | 1 | 1 | 0 | 21ms |
+| read | 220 | 220 | 0 | 6ms |
+| bash | 144 | 144 | 0 | 1798ms |
+| edit | 90 | 90 | 0 | 195ms |
+| glob | 57 | 57 | 0 | 26ms |
+| task | 35 | 35 | 0 | 737923ms |
+| grep | 20 | 20 | 0 | 133ms |
+| invalid | 20 | 20 | 0 | 1ms |
+| write | 18 | 18 | 0 | 197ms |
+| retrieve_summary | 16 | 16 | 0 | 6ms |
+| lint | 11 | 11 | 0 | 2275ms |
+| test_runner | 11 | 11 | 0 | 1ms |
+| imports | 9 | 9 | 0 | 3ms |
+| diff | 5 | 5 | 0 | 15ms |
+| secretscan | 5 | 5 | 0 | 33ms |
+| todowrite | 2 | 2 | 0 | 3ms |
+| apply_patch | 2 | 2 | 0 | 6ms |
+| checkpoint | 1 | 1 | 0 | 7ms |

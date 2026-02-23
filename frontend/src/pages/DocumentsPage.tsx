@@ -7,11 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FileText, Upload, Search, Trash2, ScanLine, AlertCircle, Loader2, X } from "lucide-react";
-import { listDocuments, uploadDocument, scanDocuments, deleteDocument, getDocumentStats, type Document, type DocumentStatsResponse } from "@/lib/api";
+import { FileText, Upload, Search, Trash2, ScanLine, AlertCircle, Loader2, X, RotateCcw } from "lucide-react";
+import { listDocuments, scanDocuments, deleteDocument, getDocumentStats, type Document, type DocumentStatsResponse } from "@/lib/api";
 import { formatFileSize, formatDate } from "@/lib/formatters";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useVaultStore } from "@/stores/useVaultStore";
+import { useUploadStore } from "@/stores/useUploadStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { DocumentCard } from "@/components/shared/DocumentCard";
@@ -25,17 +26,11 @@ export default function DocumentsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, isSearching] = useDebounce(searchQuery, 300);
-  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
-  const [isUploading, setIsUploading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-  const [currentFileIndex, setCurrentFileIndex] = useState(0);
-  const [totalFiles, setTotalFiles] = useState(0);
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
 
-  // Upload queue state
-  const [uploadQueue, setUploadQueue] = useState<File[]>([]);
-  const [pendingUploads, setPendingUploads] = useState<Set<string>>(new Set());
-
+  // Global upload store
+  const { uploads, addUploads, cancelUpload, removeUpload, clearCompleted, retryUpload } = useUploadStore();
   const { activeVaultId } = useVaultStore();
 
   const fetchDocuments = useCallback(async () => {
@@ -83,103 +78,26 @@ export default function DocumentsPage() {
     return () => clearInterval(interval);
   }, [documents, fetchDocuments, fetchStats]);
 
-  const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    if (acceptedFiles.length === 0) return;
-
-    // Add files to queue
-    setUploadQueue((prev) => [...prev, ...acceptedFiles]);
-    setPendingUploads((prev) => {
-      const next = new Set(prev);
-      acceptedFiles.forEach((f) => next.add(f.name));
-      return next;
-    });
-    setRejectedFiles([]);
-    
-    const newProgress: Record<string, number> = {};
-    for (const file of acceptedFiles) {
-      newProgress[file.name] = 0;
-    }
-    setUploadProgress((prev) => ({ ...prev, ...newProgress }));
-    setTotalFiles((prev) => prev + acceptedFiles.length);
-  }, []);
-
-  // Process upload queue
+  // Refresh documents when uploads complete
   useEffect(() => {
-    if (isUploading || uploadQueue.length === 0) return;
+    const completedCount = uploads.filter((u) => u.status === "completed").length;
+    if (completedCount > 0) {
+      // Refresh after a short delay to allow backend processing
+      const timeout = setTimeout(() => {
+        fetchDocuments();
+        fetchStats();
+      }, 1000);
+      return () => clearTimeout(timeout);
+    }
+  }, [uploads, fetchDocuments, fetchStats]);
 
-    const processQueue = async () => {
-      setIsUploading(true);
-      
-      while (uploadQueue.length > 0) {
-        const file = uploadQueue[0];
-        
-        // Check if file was cancelled (removed from pending)
-        if (!pendingUploads.has(file.name)) {
-          setUploadQueue((prev) => prev.slice(1));
-          setCurrentFileIndex((prev) => prev + 1);
-          continue;
-        }
-
-        setCurrentFileIndex((prev) => prev + 1);
-        
-        try {
-          await uploadDocument(file, (progress) => {
-            setUploadProgress((prev) => ({
-              ...prev,
-              [file.name]: progress,
-            }));
-          }, activeVaultId ?? undefined);
-          
-          // Remove from queue on success
-          setUploadQueue((prev) => prev.filter((f) => f.name !== file.name));
-          setPendingUploads((prev) => {
-            const next = new Set(prev);
-            next.delete(file.name);
-            return next;
-          });
-        } catch (err) {
-          toast.error(`Failed to upload ${file.name}: ${err instanceof Error ? err.message : "Unknown error"}`);
-          // Remove from queue on error
-          setUploadQueue((prev) => prev.filter((f) => f.name !== file.name));
-          setPendingUploads((prev) => {
-            const next = new Set(prev);
-            next.delete(file.name);
-            return next;
-          });
-        }
-      }
-
-      setIsUploading(false);
-      setUploadProgress({});
-      setCurrentFileIndex(0);
-      setTotalFiles(0);
-      
-      // Refresh documents
-      try {
-        await Promise.all([fetchDocuments(), fetchStats()]);
-        toast.success("Upload queue completed");
-      } catch (err) {
-        console.error("Failed to refresh documents/stats after upload:", err);
-      }
-    };
-
-    processQueue();
-  }, [uploadQueue, isUploading, activeVaultId, fetchDocuments, fetchStats, pendingUploads]);
-
-  const cancelUpload = useCallback((fileName: string) => {
-    setPendingUploads((prev) => {
-      const next = new Set(prev);
-      next.delete(fileName);
-      return next;
-    });
-    setUploadQueue((prev) => prev.filter((f) => f.name !== fileName));
-    setUploadProgress((prev) => {
-      const next = { ...prev };
-      delete next[fileName];
-      return next;
-    });
-    toast.info(`Cancelled upload for ${fileName}`);
-  }, []);
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    if (acceptedFiles.length === 0) return;
+    
+    addUploads(acceptedFiles, activeVaultId ?? undefined);
+    setRejectedFiles([]);
+    toast.success(`Added ${acceptedFiles.length} file(s) to upload queue`);
+  }, [addUploads, activeVaultId]);
 
   const onDropRejected = useCallback((rejected: FileRejection[]) => {
     const rejectedNames = rejected.map((r) => `${r.file.name} (${r.errors.map((e) => e.message).join(', ')})`);
@@ -200,7 +118,6 @@ export default function DocumentsPage() {
       'text/markdown': ['.md'],
     },
     maxSize: MAX_FILE_SIZE,
-    disabled: isUploading,
   });
 
   const handleScan = async () => {
@@ -287,7 +204,7 @@ export default function DocumentsPage() {
         {...getRootProps()}
         className={`border-2 border-dashed cursor-pointer transition-colors ${
           isDragActive ? "border-primary bg-primary/5" : "border-border"
-        } ${isUploading ? "opacity-50 pointer-events-none" : ""}`}
+        }`}
       >
         <input {...getInputProps()} />
         <CardContent className="py-8">
@@ -297,74 +214,98 @@ export default function DocumentsPage() {
               {isDragActive ? "Drop files here..." : "Drag & drop files here, or click to select"}
             </p>
             <p className="text-sm text-muted-foreground mt-1">
-              Supports PDF, DOCX, TXT, MD files (max 50MB each)
+              Supports PDF, DOCX, TXT, MD files (max 50MB each). Uploads continue in background.
             </p>
           </div>
         </CardContent>
       </Card>
 
       {/* Upload Queue */}
-      {(Object.keys(uploadProgress).length > 0 || uploadQueue.length > 0) && (
+      {uploads.length > 0 && (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Upload Queue</CardTitle>
-            {totalFiles > 1 && (
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-sm">Upload Queue</CardTitle>
               <CardDescription>
-                File {currentFileIndex} of {totalFiles}
+                {uploads.filter((u) => u.status === "pending").length} pending,{" "}
+                {uploads.filter((u) => u.status === "uploading").length} uploading,{" "}
+                {uploads.filter((u) => u.status === "completed").length} completed
               </CardDescription>
+            </div>
+            {uploads.some((u) => u.status === "completed" || u.status === "error" || u.status === "cancelled") && (
+              <Button variant="ghost" size="sm" onClick={clearCompleted}>
+                Clear Completed
+              </Button>
             )}
           </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Currently uploading / completed */}
-            {Object.entries(uploadProgress).map(([filename, progress]) => {
-              const isPending = pendingUploads.has(filename);
-              return (
-                <div key={filename} className="space-y-2">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="truncate max-w-[250px]" title={filename}>{filename}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">
-                        {!isPending ? 'Cancelled' : progress > 0 ? `${progress}%` : 'Uploading...'}
+          <CardContent className="space-y-3">
+            {uploads.map((upload) => (
+              <div key={upload.id} className="space-y-2">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="truncate max-w-[250px]" title={upload.file.name}>
+                    {upload.file.name}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {upload.status === "completed" && (
+                      <span className="text-green-500 text-xs">Done</span>
+                    )}
+                    {upload.status === "error" && (
+                      <span className="text-destructive text-xs" title={upload.error}>
+                        Error
                       </span>
-                      {isPending && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => cancelUpload(filename)}
-                          aria-label={`Cancel upload for ${filename}`}
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                  {isPending && <Progress value={progress} className="h-2" />}
-                </div>
-              );
-            })}
-            {/* Pending in queue */}
-            {uploadQueue
-              .filter((file) => !uploadProgress[file.name])
-              .map((file) => (
-                <div key={file.name} className="space-y-2">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="truncate max-w-[250px]" title={file.name}>{file.name}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">Pending</span>
+                    )}
+                    {upload.status === "cancelled" && (
+                      <span className="text-muted-foreground text-xs">Cancelled</span>
+                    )}
+                    {upload.status === "pending" && (
+                      <span className="text-muted-foreground text-xs">Pending</span>
+                    )}
+                    {upload.status === "uploading" && (
+                      <span className="text-muted-foreground text-xs">
+                        {upload.progress > 0 ? `${upload.progress}%` : "Uploading..."}
+                      </span>
+                    )}
+                    
+                    {upload.status === "pending" && (
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8"
-                        onClick={() => cancelUpload(file.name)}
-                        aria-label={`Cancel upload for ${file.name}`}
+                        className="h-7 w-7"
+                        onClick={() => cancelUpload(upload.id)}
+                        aria-label={`Cancel upload for ${upload.file.name}`}
                       >
-                        <X className="w-4 h-4" />
+                        <X className="w-3 h-3" />
                       </Button>
-                    </div>
+                    )}
+                    {upload.status === "error" && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => retryUpload(upload.id)}
+                        aria-label={`Retry upload for ${upload.file.name}`}
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                      </Button>
+                    )}
+                    {(upload.status === "completed" || upload.status === "cancelled" || upload.status === "error") && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => removeUpload(upload.id)}
+                        aria-label={`Remove ${upload.file.name} from queue`}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    )}
                   </div>
                 </div>
-              ))}
+                {upload.status === "uploading" && (
+                  <Progress value={upload.progress} className="h-1.5" />
+                )}
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}
