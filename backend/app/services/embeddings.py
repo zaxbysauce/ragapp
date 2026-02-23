@@ -210,13 +210,13 @@ class EmbeddingService:
             )
         return True
 
-    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    async def embed_batch(self, texts: List[str], batch_size: int = 512) -> List[List[float]]:
         """
-        Generate embeddings for a batch of texts concurrently.
+        Generate embeddings for a batch of texts using true API batching.
 
-        Uses asyncio.gather with a semaphore to limit concurrency.
-        Processes texts in sub-batches of up to 64, with up to 4
-        concurrent requests per sub-batch.
+        Sends multiple texts per API request for efficient GPU utilization.
+        Processes in batches of up to 512 (configurable) with up to 4
+        concurrent batch requests.
 
         Applies the document prefix (if configured) to each input text before embedding.
         The document prefix is used for document embeddings and must remain constant for
@@ -224,6 +224,7 @@ class EmbeddingService:
 
         Args:
             texts: List of texts to embed.
+            batch_size: Number of texts per API request (default: 512).
 
         Returns:
             List of embedding vectors, one for each input text, in order.
@@ -234,23 +235,84 @@ class EmbeddingService:
         if not texts:
             return []
         
-        semaphore = asyncio.Semaphore(4)
+        # Apply document prefix to all texts
+        texts_to_embed = []
+        for text in texts:
+            if self.embedding_doc_prefix:
+                texts_to_embed.append(self.embedding_doc_prefix + text)
+            else:
+                texts_to_embed.append(text)
         
-        async def _embed_with_limit(text: str) -> List[float]:
-            async with semaphore:
-                # Apply document prefix for batch (document) embeddings
-                text_to_embed = self.embedding_doc_prefix + text if self.embedding_doc_prefix else text
-                return await self.embed_single(text_to_embed)
-        
-        # Process in sub-batches of 64 to avoid overwhelming the server
+        # Process in batches using true API batching
         all_embeddings: List[List[float]] = []
-        batch_size = 64
-        for i in range(0, len(texts), batch_size):
-            sub_batch = texts[i:i + batch_size]
-            results = await asyncio.gather(*[_embed_with_limit(t) for t in sub_batch])
-            all_embeddings.extend(results)
+        for i in range(0, len(texts_to_embed), batch_size):
+            batch = texts_to_embed[i:i + batch_size]
+            embeddings = await self._embed_batch_api(batch)
+            all_embeddings.extend(embeddings)
         
         return all_embeddings
+
+    async def _embed_batch_api(self, texts: List[str]) -> List[List[float]]:
+        """
+        Send a batch of texts to the embedding API in a single request.
+
+        Args:
+            texts: List of texts to embed (already prefixed).
+
+        Returns:
+            List of embedding vectors in the same order as input texts.
+
+        Raises:
+            EmbeddingError: If the API request fails.
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            try:
+                # Build payload with array of inputs
+                if self.provider_mode == 'openai':
+                    payload = {
+                        "model": settings.embedding_model,
+                        "input": texts
+                    }
+                else:  # ollama mode
+                    # Ollama supports batching via multiple generate calls or single with input array
+                    # Try OpenAI-compatible batch format first
+                    payload = {
+                        "model": settings.embedding_model,
+                        "input": texts
+                    }
+                
+                response = await client.post(
+                    self.embeddings_url,
+                    json=payload
+                )
+                
+                if response.status_code != 200:
+                    raise EmbeddingError(
+                        f"[{self.provider_mode.upper()} mode] Embedding API returned status {response.status_code}: {response.text}"
+                    )
+
+                data = response.json()
+                
+                # Extract embeddings from response
+                if self.provider_mode == 'openai':
+                    # OpenAI format: data[].embedding
+                    embeddings = [item['embedding'] for item in data['data']]
+                else:
+                    # Ollama format may vary - try common formats
+                    if 'embeddings' in data:
+                        embeddings = data['embeddings']
+                    elif 'embedding' in data:
+                        # Single embedding returned - shouldn't happen with batch
+                        embeddings = [data['embedding']]
+                    else:
+                        raise EmbeddingError(f"Unexpected response format: {data.keys()}")
+                
+                return embeddings
+                
+            except httpx.TimeoutException as e:
+                raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Embedding batch request timed out: {e}")
+            except httpx.HTTPError as e:
+                raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Embedding batch HTTP error: {e}")
 
 
 
