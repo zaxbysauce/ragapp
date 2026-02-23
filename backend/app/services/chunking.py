@@ -3,7 +3,7 @@ Semantic chunking service using unstructured.chunking.title.chunk_by_title.
 Preserves tables and code blocks while creating semantically meaningful chunks.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Any, Optional
 
 from unstructured.chunking.title import chunk_by_title
@@ -20,11 +20,13 @@ class ProcessedChunk:
         metadata: Dictionary containing section title, element type, and other metadata
         chunk_index: Sequential index of this chunk in the document
         chunk_uid: Unique identifier for windowing (format: file_id_chunk_index)
+        original_indices: List of original chunk indices if merged (for tracking)
     """
     text: str
     metadata: dict
     chunk_index: int
     chunk_uid: Optional[str] = None
+    original_indices: List[int] = field(default_factory=list)
 
 
 class SemanticChunker:
@@ -38,7 +40,8 @@ class SemanticChunker:
     def __init__(
         self,
         chunk_size_chars: int = 2000,
-        chunk_overlap_chars: int = 200
+        chunk_overlap_chars: int = 200,
+        max_merge_chars: int = 8192
     ):
         """
         Initialize the semantic chunker.
@@ -46,9 +49,11 @@ class SemanticChunker:
         Args:
             chunk_size_chars: Target chunk size in characters
             chunk_overlap_chars: Overlap between chunks in characters
+            max_merge_chars: Maximum characters when merging chunks (default 8192)
         """
         self.chunk_size = chunk_size_chars
         self.chunk_overlap = chunk_overlap_chars
+        self.max_merge_chars = max_merge_chars
         
         # Use character counts directly
         self.max_characters = chunk_size_chars
@@ -170,7 +175,88 @@ class SemanticChunker:
             
             processed_chunks.append(processed_chunk)
         
+        # Post-process chunks to merge those that split inside code blocks or tables
+        processed_chunks = self._post_process_chunks(processed_chunks)
+        
         return processed_chunks
+    
+    def _post_process_chunks(self, chunks: List[ProcessedChunk]) -> List[ProcessedChunk]:
+        """
+        Merge chunks that split inside code blocks or tables.
+        
+        Args:
+            chunks: List of ProcessedChunk objects from chunk_by_title
+            
+        Returns:
+            List of ProcessedChunk objects with code blocks and tables preserved
+        """
+        merged = []
+        pending = None
+        
+        for chunk in chunks:
+            text = chunk.text
+            
+            if pending:
+                # Try to merge pending with current
+                merged_text = pending.text + "\n" + text
+                if len(merged_text) <= self.max_merge_chars:
+                    # Track original indices from both chunks
+                    original_indices = list(pending.original_indices)
+                    if chunk.original_indices:
+                        original_indices.extend(chunk.original_indices)
+                    else:
+                        original_indices.append(chunk.chunk_index)
+                    
+                    pending = ProcessedChunk(
+                        text=merged_text,
+                        metadata={**pending.metadata, 'merged': True},
+                        chunk_index=pending.chunk_index,
+                        original_indices=original_indices
+                    )
+                    text = pending.text
+                else:
+                    merged.append(pending)
+                    pending = None
+            
+            # Check if this chunk ends inside code block or table
+            code_fence_count = text.count("```")
+            lines = text.split("\n")
+            last_line = lines[-1] if lines else ""
+            
+            in_code_block = code_fence_count % 2 == 1
+            in_table = last_line.strip().startswith("|")
+            
+            if in_code_block or in_table:
+                # Store original indices for tracking
+                if pending is None:
+                    if chunk.original_indices:
+                        original_indices = chunk.original_indices
+                    else:
+                        original_indices = [chunk.chunk_index]
+                    pending = ProcessedChunk(
+                        text=text,
+                        metadata=dict(chunk.metadata),
+                        chunk_index=chunk.chunk_index,
+                        original_indices=original_indices
+                    )
+                else:
+                    # Continue building pending
+                    pass
+            else:
+                if pending:
+                    merged.append(pending)
+                    pending = None
+                else:
+                    merged.append(chunk)
+        
+        if pending:
+            merged.append(pending)
+        
+        # Re-index the merged chunks
+        for idx, chunk in enumerate(merged):
+            chunk.chunk_index = idx
+        
+        return merged
     
     def chunk_text(self, text: str, section_title: Optional[str] = None) -> List[ProcessedChunk]:
         """
