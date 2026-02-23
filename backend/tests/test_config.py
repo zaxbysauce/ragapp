@@ -24,8 +24,8 @@ class TestSettingsDefaults(unittest.TestCase):
         self.assertEqual(settings.embedding_model, "nomic-embed-text")
         self.assertEqual(settings.chat_model, "qwen2.5:32b")
         # New character-based fields
-        self.assertEqual(settings.chunk_size_chars, 800)
-        self.assertEqual(settings.chunk_overlap_chars, 80)
+        self.assertEqual(settings.chunk_size_chars, 2000)
+        self.assertEqual(settings.chunk_overlap_chars, 200)
         self.assertEqual(settings.retrieval_top_k, 12)
         self.assertEqual(settings.vector_metric, "cosine")
         self.assertIsNone(settings.max_distance_threshold)

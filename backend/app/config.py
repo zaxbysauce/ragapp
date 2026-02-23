@@ -139,7 +139,7 @@ class Settings(BaseSettings):
                 f"Auto-converting chunk_size={legacy_chunk_size} to chunk_size_chars={legacy_chunk_size * 4}."
             )
             return legacy_chunk_size * 4
-        return 800  # ~200 tokens, ensures under 512 limit with prefix
+        return 2000  # ~500 tokens with llama.cpp -ub 8192 batch size
 
     @field_validator("chunk_overlap_chars", mode="before")
     @classmethod
@@ -154,7 +154,7 @@ class Settings(BaseSettings):
                 f"Auto-converting chunk_overlap={legacy_chunk_overlap} to chunk_overlap_chars={legacy_chunk_overlap * 4}."
             )
             return legacy_chunk_overlap * 4
-        return 80  # ~20 tokens overlap
+        return 200  # ~50 tokens overlap
 
     @field_validator("retrieval_top_k", mode="before")
     @classmethod
