@@ -110,6 +110,9 @@ export interface SettingsResponse {
   auto_scan_interval_minutes: number;
   enable_model_validation: boolean;
 
+  // Embedding batch size
+  embedding_batch_size: number;
+
   // Limits
   max_file_size_mb: number;
   allowed_extensions: string[];
@@ -131,6 +134,7 @@ export interface UpdateSettingsRequest {
   vector_metric?: string;
   embedding_doc_prefix?: string;
   embedding_query_prefix?: string;
+  embedding_batch_size?: number;
 }
 
 export interface SearchMemoriesRequest {

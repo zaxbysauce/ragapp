@@ -103,6 +103,7 @@ function SettingsPageContent() {
         vector_metric: formData.vector_metric,
         embedding_doc_prefix: formData.embedding_doc_prefix,
         embedding_query_prefix: formData.embedding_query_prefix,
+        embedding_batch_size: formData.embedding_batch_size,
       });
       setSettings(updated);
       toast.success("Settings saved successfully");
@@ -388,6 +389,26 @@ function SettingsPageContent() {
                   )}
                   <p className="text-xs text-muted-foreground">
                     Distance metric used for vector similarity search
+                  </p>
+                </div>
+
+                {/* Embedding Batch Size */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Embedding Batch Size</label>
+                  <Input
+                    type="number"
+                    min={64}
+                    max={2048}
+                    step={64}
+                    value={formData.embedding_batch_size}
+                    onChange={(e) => handleInputChange("embedding_batch_size", e.target.value)}
+                    className={errors.embedding_batch_size ? "border-destructive" : ""}
+                  />
+                  {errors.embedding_batch_size && (
+                    <p className="text-xs text-destructive">{errors.embedding_batch_size}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Number of chunks to embed per API request. Higher values = better GPU utilization.
                   </p>
                 </div>
 

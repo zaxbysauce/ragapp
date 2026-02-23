@@ -12,6 +12,7 @@ export interface SettingsFormData {
   vector_metric: string;
   embedding_doc_prefix: string;
   embedding_query_prefix: string;
+  embedding_batch_size: number;
 }
 
 export interface SettingsErrors {
@@ -24,6 +25,7 @@ export interface SettingsErrors {
   vector_metric?: string;
   embedding_doc_prefix?: string;
   embedding_query_prefix?: string;
+  embedding_batch_size?: string;
 }
 
 export interface SettingsState {
@@ -77,6 +79,7 @@ const defaultFormData: SettingsFormData = {
   vector_metric: "cosine",
   embedding_doc_prefix: "Passage: ",
   embedding_query_prefix: "Query: ",
+  embedding_batch_size: 512,
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -142,6 +145,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         vector_metric: settings.vector_metric ?? "cosine",
         embedding_doc_prefix: settings.embedding_doc_prefix ?? "Passage: ",
         embedding_query_prefix: settings.embedding_query_prefix ?? "Query: ",
+        embedding_batch_size: settings.embedding_batch_size ?? 512,
       },
       loading: false,
       error: null,
@@ -164,6 +168,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
     if (formData.auto_scan_interval_minutes <= 0) {
       newErrors.auto_scan_interval_minutes = "Scan interval must be a positive integer";
+    }
+    if (formData.embedding_batch_size < 64 || formData.embedding_batch_size > 2048) {
+      newErrors.embedding_batch_size = "Embedding batch size must be between 64 and 2048";
     }
 
     // Validate overlap < size
@@ -204,7 +211,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       formData.retrieval_window !== (settings.retrieval_window ?? 1) ||
       formData.vector_metric !== (settings.vector_metric ?? "cosine") ||
       formData.embedding_doc_prefix !== (settings.embedding_doc_prefix ?? "Passage: ") ||
-      formData.embedding_query_prefix !== (settings.embedding_query_prefix ?? "Query: ")
+      formData.embedding_query_prefix !== (settings.embedding_query_prefix ?? "Query: ") ||
+      formData.embedding_batch_size !== (settings.embedding_batch_size ?? 512)
     );
   },
 
