@@ -1,11 +1,9 @@
 import { MessageSquare, FileText, Brain, Settings, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { NavItem, NavItemId, NavigationProps } from "./navigationTypes";
 
-export type NavItem = {
-  id: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-};
+// Re-export types for backward compatibility
+export type { NavItemId, NavigationProps };
 
 const navItems: NavItem[] = [
   { id: "chat", label: "Chat", icon: MessageSquare },
@@ -15,18 +13,8 @@ const navItems: NavItem[] = [
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
-interface HealthStatus {
-  backend: boolean;
-  embeddings: boolean;
-  chat: boolean;
-  loading: boolean;
-  lastChecked: Date | null;
-}
-
-interface NavigationRailProps {
-  activeItem: "chat" | "documents" | "memory" | "vaults" | "settings";
-  onItemSelect: (id: string) => void;
-  healthStatus: HealthStatus;
+interface NavigationRailProps extends Omit<NavigationProps, 'onItemSelect'> {
+  onItemSelect: (id: NavItemId) => void;
 }
 
 function StatusIndicator({ isUp, label, loading }: { isUp: boolean; label: string; loading?: boolean }) {
@@ -47,7 +35,7 @@ function StatusIndicator({ isUp, label, loading }: { isUp: boolean; label: strin
 
 export function NavigationRail({ activeItem, onItemSelect, healthStatus }: NavigationRailProps) {
   return (
-    <nav className="w-20 min-h-screen bg-card/80 backdrop-blur-sm border-r border-border flex flex-col items-center py-6 gap-2">
+    <nav className="w-20 min-h-screen bg-card/80 backdrop-blur-sm border-r border-border flex flex-col items-center py-6 gap-2" aria-label="Main navigation">
       {/* App Logo */}
       <div className="mb-8 p-3 rounded-xl bg-primary/10">
         <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">

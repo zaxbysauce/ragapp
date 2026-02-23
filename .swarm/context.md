@@ -2,8 +2,8 @@
 
 **Project:** KnowledgeVault - Self-Hosted RAG Knowledge Base  
 **Swarm:** paid  
-**Current Phase:** Retry Exception Preservation (Phase 7) — IN PROGRESS
-**Last Updated:** 2026-02-18
+**Current Phase:** UI/UX Improvements — IN PROGRESS
+**Last Updated:** 2026-02-22
 
 ---
 
@@ -33,6 +33,32 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 ---
 
 ## SME Cache
+
+### UI/UX (consulted 2026-02-22)
+
+**Top 3 Priorities:**
+1. Mobile navigation (bottom tabs + overflow drawer)
+2. Responsive document view (cards on mobile, table on desktop)
+3. Chat accessibility (live regions, ARIA labels, keyboard shortcuts)
+
+**Mobile Patterns:**
+- Bottom tab bar for primary 3-4 nav items, overflow drawer for rest
+- Document table → card grid below sm breakpoint
+- Chat sources collapsible accordion on mobile
+- All touch targets ≥44×44px (min-w-[44px] min-h-[44px])
+
+**Accessibility Requirements (WCAG 2.1 AA):**
+- Chat textarea: `aria-label="Message input"` + `role="textbox"`
+- Message list: `role="log"` with `aria-live="polite"`
+- Table: `<caption>`, `<th scope="col">`, `<th scope="row">`
+- Live regions: Use `react-aria-live` for streaming content
+- Keyboard shortcuts: Help dialog triggered by `?` (Shift + /)
+
+**Component Patterns:**
+- Chat controls: "More" dropdown (DropdownMenu) with Rename, Delete, Export
+- Upload queue: Stacked list with progress bars + cancel buttons
+- Empty states: Icon + message + CTA button
+- Status indicators: Follow shadcn badge patterns
 
 ### Python/FastAPI (consulted 2026-02-11)
 
@@ -149,20 +175,20 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| read | 117 | 117 | 0 | 5ms |
-| grep | 28 | 28 | 0 | 72ms |
-| bash | 24 | 24 | 0 | 1910ms |
-| glob | 18 | 18 | 0 | 19ms |
+| read | 205 | 205 | 0 | 6ms |
+| bash | 78 | 78 | 0 | 1602ms |
+| glob | 41 | 41 | 0 | 20ms |
+| grep | 34 | 34 | 0 | 80ms |
+| edit | 33 | 33 | 0 | 133ms |
+| task | 28 | 28 | 0 | 96525ms |
+| lint | 11 | 11 | 0 | 2157ms |
 | symbols | 10 | 10 | 0 | 1ms |
-| edit | 10 | 10 | 0 | 260ms |
-| task | 9 | 9 | 0 | 129508ms |
-| retrieve_summary | 6 | 6 | 0 | 2ms |
-| lint | 5 | 5 | 0 | 2173ms |
+| write | 8 | 8 | 0 | 153ms |
+| todowrite | 8 | 8 | 0 | 3ms |
+| retrieve_summary | 7 | 7 | 0 | 2ms |
+| diff | 6 | 6 | 0 | 13ms |
+| secretscan | 6 | 6 | 0 | 238ms |
+| imports | 5 | 5 | 0 | 4ms |
 | apply_patch | 3 | 3 | 0 | 6ms |
-| diff | 3 | 3 | 0 | 19ms |
-| imports | 3 | 3 | 0 | 3ms |
-| secretscan | 3 | 3 | 0 | 438ms |
+| test_runner | 3 | 3 | 0 | 1ms |
 | detect_domains | 1 | 1 | 0 | 1ms |
-| test_runner | 1 | 1 | 0 | 1ms |
-| write | 1 | 1 | 0 | 87ms |
-| todowrite | 1 | 1 | 0 | 4ms |
