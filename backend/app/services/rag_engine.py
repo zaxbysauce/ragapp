@@ -118,10 +118,13 @@ class RAGEngine:
         relevant_chunks = self._filter_relevant(vector_results)
         if not relevant_chunks and vector_results:
             fallback_record = vector_results[0]
+            fallback_distance = fallback_record.get("_distance")
+            if fallback_distance is None:
+                fallback_distance = 2.0
             fallback_source = RAGSource(
                 text=fallback_record.get("text", ""),
                 file_id=fallback_record.get("file_id", ""),
-                score=fallback_record.get("score") or 1.0,
+                score=fallback_distance,
                 metadata=self._normalize_metadata(fallback_record.get("metadata")),
             )
             relevant_chunks = [fallback_source]
@@ -161,10 +164,18 @@ class RAGEngine:
                 raise RAGEngineError(f"LLM chat failed: {exc}") from exc
             yield {"type": "content", "content": content}
 
+        # Build retrieval debug info
+        retrieval_debug: Dict[str, Any] = {
+            "max_distance_threshold": self.max_distance_threshold,
+            "vector_metric": self.vector_metric,
+            "retrieval_top_k": self.retrieval_top_k,
+        }
+        
         yield {
             "type": "done",
             "sources": [self._source_metadata(c) for c in relevant_chunks],
             "memories_used": [mem.content for mem in memories],
+            "retrieval_debug": retrieval_debug,
         }
 
     def _normalize_metadata(self, metadata: Any) -> Dict[str, Any]:
@@ -183,30 +194,63 @@ class RAGEngine:
 
     def _filter_relevant(self, results: List[Dict[str, Any]]) -> List[RAGSource]:
         sources: List[RAGSource] = []
+        distances: List[float] = []
+        
         for record in results:
-            score = record.get("score")
-            if score is None:
-                score = 1.0
+            # Use _distance from LanceDB (lower is better for cosine)
+            has_distance = "_distance" in record
+            distance = record.get("_distance")
+            if distance is None:
+                score = record.get("score")
+                if score is None:
+                    score = 1.0
+                distance = score
+            
+            distances.append(distance)
+            
             # Use max_distance_threshold if set (new field)
-            # Otherwise use relevance_threshold (legacy field)
+            # Otherwise use relevance_threshold (legacy field) for backward compatibility
             threshold = self.max_distance_threshold
             if threshold is None:
-                # Use relevance_threshold if set (legacy)
-                if self.relevance_threshold is not None:
-                    threshold = self.relevance_threshold
+                threshold = self.relevance_threshold
+            
+            # Determine if we should skip this record based on threshold
+            # For _distance (lower=better): skip if distance > threshold
+            # For score (higher=better): skip if score < threshold
+            should_skip = False
+            if threshold is not None:
+                if has_distance:
+                    # Using _distance (lower is better)
+                    should_skip = distance > threshold
                 else:
-                    # Default: keep all results if no threshold is set
-                    threshold = None
-            if threshold is not None and score < threshold:
+                    # Using score (higher is better, for backward compatibility)
+                    should_skip = distance < threshold
+            
+            if should_skip:
                 continue
+                
             sources.append(
                 RAGSource(
                     text=record.get("text", ""),
                     file_id=record.get("file_id", ""),
-                    score=score,
+                    score=distance,  # Store distance (lower=better) or score (higher=better)
                     metadata=self._normalize_metadata(record.get("metadata")),
                 )
             )
+        
+        # Log retrieval stats
+        if distances:
+            initial_count = len(distances)
+            filtered_count = len(sources)
+            min_dist = min(distances)
+            max_dist = max(distances)
+            mean_dist = sum(distances) / len(distances)
+            
+            logger.info(
+                "Vector search: initial=%d, filtered=%d, min=%.3f, max=%.3f, mean=%.3f, threshold=%.3f",
+                initial_count, filtered_count, min_dist, max_dist, mean_dist, self.max_distance_threshold
+            )
+        
         return sources
 
     def _build_system_prompt(self) -> str:

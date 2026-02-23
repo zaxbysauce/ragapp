@@ -98,7 +98,7 @@ class VectorStore:
                         self.db.drop_table("chunks")
                     except Exception:
                         pass
-                    self.table = self.db.create_table("chunks", schema=schema)
+                    self.table = self.db.create_table("chunks", schema=schema, mode="overwrite")
             else:
                 self.table = self.db.create_table("chunks", schema=schema)
         except Exception as e:
@@ -204,7 +204,17 @@ class VectorStore:
                      chunks from the specified vault.
 
         Returns:
-            List of matching records with similarity scores. Empty list if no table exists.
+            List of matching records with similarity scores. Each record includes:
+            - All original fields (id, text, file_id, chunk_index, metadata, etc.)
+            - _distance: Cosine distance from query embedding (lower = more similar)
+            Empty list if no table exists.
+            
+        Note:
+            For cosine distance metric:
+            - Distance of 0 = identical vectors (perfect match)
+            - Distance of 1 = orthogonal vectors
+            - Distance of 2 = opposite vectors (perfect mismatch)
+            The _distance field is provided by LanceDB's vector search.
         """
         # Ensure DB connection exists
         if self.db is None:
@@ -239,7 +249,7 @@ class VectorStore:
                     # If we can't determine embedding_dim, leave it as None
                     pass
         
-        query = self.table.search(embedding)
+        query = self.table.search(embedding, metric="cosine")
 
         # Apply vault filter if specified
         if vault_id is not None:
