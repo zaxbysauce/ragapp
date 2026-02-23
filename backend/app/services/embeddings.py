@@ -210,7 +210,7 @@ class EmbeddingService:
             )
         return True
 
-    async def embed_batch(self, texts: List[str], batch_size: int = 512) -> List[List[float]]:
+    async def embed_batch(self, texts: List[str], batch_size: int | None = None) -> List[List[float]]:
         """
         Generate embeddings for a batch of texts using true API batching.
 
@@ -234,6 +234,10 @@ class EmbeddingService:
         """
         if not texts:
             return []
+        
+        # Use configured batch size if not specified
+        if batch_size is None:
+            batch_size = settings.embedding_batch_size
         
         # Apply document prefix to all texts
         texts_to_embed = []

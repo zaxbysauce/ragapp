@@ -175,20 +175,21 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| bash | 222 | 222 | 0 | 1991ms |
-| read | 211 | 211 | 0 | 7ms |
-| edit | 113 | 113 | 0 | 731ms |
-| grep | 35 | 35 | 0 | 153ms |
-| task | 28 | 28 | 0 | 258603ms |
-| glob | 27 | 27 | 0 | 28ms |
-| retrieve_summary | 12 | 12 | 0 | 7ms |
-| lint | 11 | 11 | 0 | 2551ms |
-| write | 8 | 8 | 0 | 1757ms |
+| read | 227 | 227 | 0 | 11ms |
+| bash | 76 | 76 | 0 | 7264ms |
+| edit | 50 | 50 | 0 | 1683ms |
+| task | 27 | 27 | 0 | 152882ms |
+| glob | 17 | 17 | 0 | 43ms |
+| retrieve_summary | 15 | 15 | 0 | 2ms |
+| lint | 12 | 12 | 0 | 2267ms |
+| todowrite | 10 | 10 | 0 | 7ms |
+| grep | 10 | 10 | 0 | 46ms |
+| write | 10 | 10 | 0 | 859ms |
 | test_runner | 7 | 7 | 0 | 1ms |
-| apply_patch | 6 | 6 | 0 | 5ms |
-| invalid | 5 | 5 | 0 | 1ms |
-| todowrite | 5 | 5 | 0 | 3ms |
-| secretscan | 5 | 5 | 0 | 158ms |
-| diff | 4 | 4 | 0 | 18ms |
-| imports | 3 | 3 | 0 | 27ms |
-| evidence_check | 2 | 2 | 0 | 1ms |
+| todo_extract | 5 | 5 | 0 | 4ms |
+| secretscan | 5 | 5 | 0 | 54ms |
+| checkpoint | 4 | 4 | 0 | 23ms |
+| diff | 2 | 2 | 0 | 9ms |
+| complexity_hotspots | 1 | 1 | 0 | 27ms |
+| imports | 1 | 1 | 0 | 3ms |
+| invalid | 1 | 1 | 0 | 2ms |

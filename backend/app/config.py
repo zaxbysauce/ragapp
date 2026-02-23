@@ -37,9 +37,9 @@ class Settings(BaseSettings):
     
     # Document processing configuration (character-based - NEW)
     chunk_size_chars: int | None = None
-    """Character-based chunk size for document processing. Default ~1500 chars (~375 tokens)."""
+    """Character-based chunk size for document processing. Default 1200 chars (~300 tokens) leaves room for instruction prefix."""
     chunk_overlap_chars: int | None = None
-    """Character-based overlap between chunks. Default ~150 chars (~37 tokens)."""
+    """Character-based overlap between chunks. Default 120 chars (~30 tokens)."""
     retrieval_top_k: int | None = None
     """Number of top chunks to retrieve (unifies max_context_chunks and vector_top_k)."""
     vector_metric: str = "cosine"
@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     """Prefix to prepend to queries during embedding."""
     retrieval_window: int = 1
     """Window size for retrieval context expansion."""
+    embedding_batch_size: int = 512
+    """Number of texts to send per embedding API request. Higher = better GPU utilization."""
 
     # Document processing configuration (legacy - DEPRECATED)
     chunk_size: int | None = None
@@ -137,7 +139,7 @@ class Settings(BaseSettings):
                 f"Auto-converting chunk_size={legacy_chunk_size} to chunk_size_chars={legacy_chunk_size * 4}."
             )
             return legacy_chunk_size * 4
-        return 1500  # ~375 tokens, leaves room for instruction prefix
+        return 1200  # ~300 tokens, leaves room for instruction prefix
 
     @field_validator("chunk_overlap_chars", mode="before")
     @classmethod
@@ -152,7 +154,7 @@ class Settings(BaseSettings):
                 f"Auto-converting chunk_overlap={legacy_chunk_overlap} to chunk_overlap_chars={legacy_chunk_overlap * 4}."
             )
             return legacy_chunk_overlap * 4
-        return 200
+        return 120  # ~30 tokens overlap
 
     @field_validator("retrieval_top_k", mode="before")
     @classmethod
