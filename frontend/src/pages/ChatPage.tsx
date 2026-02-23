@@ -31,6 +31,8 @@ import {
 import { type Source } from "@/lib/api";
 import { useChatStore } from "@/stores/useChatStore";
 import { MessageContent } from "@/components/shared/MessageContent";
+import { MessageActions } from "@/components/shared/MessageActions";
+import { KeyboardShortcutsDialog, useKeyboardShortcuts } from "@/components/shared/KeyboardShortcuts";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { VaultSelector } from "@/components/vault/VaultSelector";
 import { useChatHistory } from "@/hooks/useChatHistory";
@@ -51,6 +53,9 @@ export default function ChatPage() {
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [chatTitle, setChatTitle] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+
+  // Keyboard shortcuts
+  const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcuts();
 
   // Chat history logic
   const { chatHistory, isChatLoading, chatHistoryError, handleLoadChat, refreshHistory } =
@@ -213,7 +218,7 @@ export default function ChatPage() {
                     }`}
                   >
                     <div
-                      className={`max-w-[80%] rounded-lg p-4 ${
+                      className={`group max-w-[80%] rounded-lg p-4 relative ${
                         message.role === "user"
                           ? "bg-primary text-primary-foreground"
                           : "bg-muted"
@@ -247,6 +252,10 @@ export default function ChatPage() {
                           </div>
                         </div>
                       )}
+                      {/* Copy button - appears on hover/focus */}
+                      <div className={`absolute -bottom-3 ${message.role === "user" ? "left-0" : "right-0"}`}>
+                        <MessageActions content={message.content} />
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -515,6 +524,9 @@ export default function ChatPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Keyboard Shortcuts Dialog */}
+      <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>
   );
 }
