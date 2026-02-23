@@ -6,7 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MessageSquare, FileText, Plus, ChevronDown, ChevronRight, AlertCircle } from "lucide-react";
+import { MessageSquare, FileText, Plus, ChevronDown, ChevronRight, AlertCircle, BookOpen } from "lucide-react";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { type Source } from "@/lib/api";
 import { useChatStore } from "@/stores/useChatStore";
 import { MessageContent } from "@/components/shared/MessageContent";
@@ -46,14 +52,26 @@ export default function ChatPage() {
     };
   }, [messages]);
 
-  // Auto-scroll to bottom of messages
+  // Track if user is at bottom for auto-scroll
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom of messages (only if user is already at bottom)
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (messagesEndRef.current) {
+    if (messagesEndRef.current && isAtBottom) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, isStreaming]);
+  }, [messages, isStreaming, isAtBottom]);
+
+  const handleScroll = () => {
+    if (messagesContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+      const isBottom = scrollHeight - scrollTop - clientHeight < 50;
+      setIsAtBottom(isBottom);
+    }
+  };
 
   const handleToggleSource = (sourceId: string) => {
     toggleSource(sourceId);
@@ -85,8 +103,18 @@ export default function ChatPage() {
 
         <TabsContent value="active" className="space-y-4">
           {messages.length > 0 && (
-            <Card className="min-h-[300px] max-h-[500px] overflow-y-auto">
-              <CardContent className="space-y-4 pt-6">
+            <Card 
+              ref={messagesContainerRef}
+              className="min-h-[300px] max-h-[500px] overflow-y-auto"
+              onScroll={handleScroll}
+            >
+              <CardContent 
+                className="space-y-4 pt-6"
+                role="log"
+                aria-live="polite"
+                aria-atomic="false"
+                aria-label="Chat messages"
+              >
                 {messages.map((message, index) => (
                   <div
                     key={message.id}
@@ -156,10 +184,12 @@ export default function ChatPage() {
                   onKeyDown={handleKeyDown}
                   disabled={isStreaming}
                   maxLength={MAX_INPUT_LENGTH}
+                  aria-label="Message input"
+                  aria-describedby={inputError ? "input-error" : undefined}
                 />
                 <div className="flex justify-between items-center">
                   {inputError ? (
-                    <span className="text-xs text-destructive">{inputError}</span>
+                    <span id="input-error" className="text-xs text-destructive" role="alert">{inputError}</span>
                   ) : (
                     <span className="text-xs text-muted-foreground"></span>
                   )}
@@ -242,7 +272,8 @@ export default function ChatPage() {
         </div>
 
         <div className="lg:col-span-1">
-          <Card className="h-full">
+          {/* Desktop Sources Panel */}
+          <Card className="h-full hidden lg:flex lg:flex-col">
             <CardHeader>
               <CardTitle className="text-lg">Sources</CardTitle>
               <CardDescription>
@@ -251,10 +282,10 @@ export default function ChatPage() {
                   : "Sources will appear here after the AI responds"}
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1">
               {hasSources ? (
                 <ScrollArea className="h-[400px] pr-4">
-                  <div className="space-y-3">
+                  <div className="space-y-3" role="list" aria-label="Document sources">
                       {latestAssistantMessage!.sources!.map((source: Source) => {
                       const isExpanded = expandedSources.has(source.id);
                       return (
@@ -262,6 +293,8 @@ export default function ChatPage() {
                           <div
                             className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
                             onClick={() => handleToggleSource(source.id)}
+                            role="listitem"
+                            aria-expanded={isExpanded}
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
@@ -309,6 +342,71 @@ export default function ChatPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Mobile Sources Accordion */}
+          <div className="lg:hidden">
+            {hasSources && (
+              <Accordion type="single" collapsible defaultValue="sources">
+                <AccordionItem value="sources" className="border rounded-lg bg-card">
+                  <AccordionTrigger className="px-4 py-3 hover:no-underline">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">
+                        Sources ({latestAssistantMessage!.sources!.length})
+                      </span>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="px-4 pb-4">
+                    <div className="space-y-3" role="list" aria-label="Document sources">
+                      {latestAssistantMessage!.sources!.map((source: Source) => {
+                        const isExpanded = expandedSources.has(source.id);
+                        return (
+                          <Card key={source.id} className="border-border/50">
+                            <div
+                              className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                              onClick={() => handleToggleSource(source.id)}
+                              role="listitem"
+                              aria-expanded={isExpanded}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <FileText className="w-4 h-4 text-muted-foreground" />
+                                  <span className="text-sm font-medium truncate max-w-[200px]">
+                                    {source.filename}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {source.score && (
+                                    <Badge variant="secondary" className="text-xs">
+                                      {(source.score * 100).toFixed(0)}%
+                                    </Badge>
+                                  )}
+                                  {isExpanded ? (
+                                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            {isExpanded && (
+                              <div className="px-3 pb-3">
+                                <div className="pt-2 border-t border-border/50">
+                                  <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                                    {source.snippet || "No content available"}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            )}
+          </div>
         </div>
       </div>
     </div>
