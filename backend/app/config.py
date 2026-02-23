@@ -36,11 +36,11 @@ class Settings(BaseSettings):
     embedding_dim: int = 768
     
     # Document processing configuration (character-based - NEW)
-    chunk_size_chars: int = 2000
+    chunk_size_chars: int | None = None
     """Character-based chunk size for document processing."""
-    chunk_overlap_chars: int = 200
+    chunk_overlap_chars: int | None = None
     """Character-based overlap between chunks."""
-    retrieval_top_k: int = 12
+    retrieval_top_k: int | None = None
     """Number of top chunks to retrieve (unifies max_context_chunks and vector_top_k)."""
     vector_metric: str = "cosine"
     """Distance metric for vector similarity search."""
