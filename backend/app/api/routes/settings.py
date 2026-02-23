@@ -12,12 +12,28 @@ router = APIRouter()
 
 
 class SettingsUpdate(BaseModel):
+    # Legacy fields (deprecated, still supported for backward compatibility)
     chunk_size: Optional[int] = None
     chunk_overlap: Optional[int] = None
     max_context_chunks: Optional[int] = None
+    rag_relevance_threshold: Optional[float] = None
+    vector_top_k: Optional[int] = None
+
+    # New character-based fields
+    chunk_size_chars: Optional[int] = None
+    chunk_overlap_chars: Optional[int] = None
+    retrieval_top_k: Optional[int] = None
+    vector_metric: Optional[str] = None
+    max_distance_threshold: Optional[float] = None
+    embedding_doc_prefix: Optional[str] = None
+    embedding_query_prefix: Optional[str] = None
+    retrieval_window: Optional[int] = None
+
+    # Feature flags (still supported)
     auto_scan_enabled: Optional[bool] = None
     auto_scan_interval_minutes: Optional[int] = None
-    rag_relevance_threshold: Optional[float] = None
+    maintenance_mode: Optional[bool] = None
+    enable_model_validation: Optional[bool] = None
 
     @field_validator("chunk_size")
     @classmethod
@@ -40,18 +56,60 @@ class SettingsUpdate(BaseModel):
             raise ValueError("max_context_chunks must be a positive integer")
         return v
 
-    @field_validator("auto_scan_interval_minutes")
-    @classmethod
-    def validate_auto_scan_interval(cls, v):
-        if v is not None and v <= 0:
-            raise ValueError("auto_scan_interval_minutes must be a positive integer")
-        return v
-
     @field_validator("rag_relevance_threshold")
     @classmethod
     def validate_rag_relevance_threshold(cls, v):
         if v is not None and (v < 0 or v > 1):
             raise ValueError("rag_relevance_threshold must be between 0 and 1")
+        return v
+
+    @field_validator("vector_top_k")
+    @classmethod
+    def validate_vector_top_k(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("vector_top_k must be a positive integer")
+        return v
+
+    @field_validator("chunk_size_chars")
+    @classmethod
+    def validate_chunk_size_chars(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("chunk_size_chars must be a positive integer")
+        return v
+
+    @field_validator("chunk_overlap_chars")
+    @classmethod
+    def validate_chunk_overlap_chars(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("chunk_overlap_chars must be a non-negative integer")
+        return v
+
+    @field_validator("retrieval_top_k")
+    @classmethod
+    def validate_retrieval_top_k(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("retrieval_top_k must be a positive integer")
+        return v
+
+    @field_validator("max_distance_threshold")
+    @classmethod
+    def validate_max_distance_threshold(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("max_distance_threshold must be a non-negative number")
+        return v
+
+    @field_validator("retrieval_window")
+    @classmethod
+    def validate_retrieval_window(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("retrieval_window must be a positive integer")
+        return v
+
+    @field_validator("auto_scan_interval_minutes")
+    @classmethod
+    def validate_auto_scan_interval_minutes(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("auto_scan_interval_minutes must be a positive integer")
         return v
 
     @model_validator(mode="after")
@@ -70,6 +128,15 @@ ALLOWED_FIELDS = [
     "auto_scan_enabled",
     "auto_scan_interval_minutes",
     "rag_relevance_threshold",
+    "vector_top_k",
+    "chunk_size_chars",
+    "chunk_overlap_chars",
+    "retrieval_top_k",
+    "vector_metric",
+    "max_distance_threshold",
+    "embedding_doc_prefix",
+    "embedding_query_prefix",
+    "retrieval_window",
 ]
 
 
@@ -101,13 +168,23 @@ class SettingsResponse(BaseModel):
     chat_model: str
 
     # Document processing (user-configurable)
-    chunk_size: int
-    chunk_overlap: int
+    chunk_size: Optional[int] = None  # Legacy, deprecated
+    chunk_overlap: Optional[int] = None  # Legacy, deprecated
     max_context_chunks: int
 
     # RAG config (user-configurable)
-    rag_relevance_threshold: float
-    vector_top_k: int
+    rag_relevance_threshold: Optional[float] = None  # Legacy, deprecated
+    vector_top_k: Optional[int] = None  # Legacy, deprecated
+
+    # New character-based fields
+    chunk_size_chars: int
+    chunk_overlap_chars: int
+    retrieval_top_k: int
+    vector_metric: str
+    max_distance_threshold: Optional[float] = None
+    embedding_doc_prefix: str
+    embedding_query_prefix: str
+    retrieval_window: int
 
     # Feature flags
     maintenance_mode: bool
@@ -151,6 +228,14 @@ def _apply_settings_update(update: SettingsUpdate) -> SettingsResponse:
         "max_context_chunks": settings.max_context_chunks,
         "rag_relevance_threshold": settings.rag_relevance_threshold,
         "vector_top_k": settings.vector_top_k,
+        "chunk_size_chars": settings.chunk_size_chars,
+        "chunk_overlap_chars": settings.chunk_overlap_chars,
+        "retrieval_top_k": settings.retrieval_top_k,
+        "vector_metric": settings.vector_metric,
+        "max_distance_threshold": settings.max_distance_threshold,
+        "embedding_doc_prefix": settings.embedding_doc_prefix,
+        "embedding_query_prefix": settings.embedding_query_prefix,
+        "retrieval_window": settings.retrieval_window,
         "maintenance_mode": settings.maintenance_mode,
         "auto_scan_enabled": settings.auto_scan_enabled,
         "auto_scan_interval_minutes": settings.auto_scan_interval_minutes,
@@ -178,6 +263,14 @@ def get_settings():
         "max_context_chunks": settings.max_context_chunks,
         "rag_relevance_threshold": settings.rag_relevance_threshold,
         "vector_top_k": settings.vector_top_k,
+        "chunk_size_chars": settings.chunk_size_chars,
+        "chunk_overlap_chars": settings.chunk_overlap_chars,
+        "retrieval_top_k": settings.retrieval_top_k,
+        "vector_metric": settings.vector_metric,
+        "max_distance_threshold": settings.max_distance_threshold,
+        "embedding_doc_prefix": settings.embedding_doc_prefix,
+        "embedding_query_prefix": settings.embedding_query_prefix,
+        "retrieval_window": settings.retrieval_window,
         "maintenance_mode": settings.maintenance_mode,
         "auto_scan_enabled": settings.auto_scan_enabled,
         "auto_scan_interval_minutes": settings.auto_scan_interval_minutes,

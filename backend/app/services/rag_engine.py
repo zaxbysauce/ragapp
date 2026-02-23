@@ -53,6 +53,17 @@ class RAGEngine:
         if llm_client is None:
             logger.warning("RAGEngine created without injected llm_client - using default instance")
 
+        # Use new character-based fields, with fallback to legacy fields for backward compatibility
+        self.chunk_size_chars = settings.chunk_size_chars
+        self.chunk_overlap_chars = settings.chunk_overlap_chars
+        self.retrieval_top_k = settings.retrieval_top_k
+        self.vector_metric = settings.vector_metric
+        self.max_distance_threshold = settings.max_distance_threshold
+        self.embedding_doc_prefix = settings.embedding_doc_prefix
+        self.embedding_query_prefix = settings.embedding_query_prefix
+        self.retrieval_window = settings.retrieval_window
+
+        # Legacy field support (deprecated)
         self.relevance_threshold = settings.rag_relevance_threshold
         self.top_k = settings.vector_top_k
         self.maintenance_mode = settings.maintenance_mode
@@ -93,10 +104,11 @@ class RAGEngine:
             vector_results = []
         else:
             try:
+                top_k_value = self.top_k if self.top_k is not None else self.retrieval_top_k
                 vector_results = await asyncio.to_thread(
                     self.vector_store.search,
                     query_embedding,
-                    self.top_k,
+                    int(top_k_value),
                     vault_id=str(vault_id) if vault_id is not None else None,
                 )
             except Exception as exc:
@@ -175,7 +187,17 @@ class RAGEngine:
             score = record.get("score")
             if score is None:
                 score = 1.0
-            if score < self.relevance_threshold:
+            # Use max_distance_threshold if set (new field)
+            # Otherwise use relevance_threshold (legacy field)
+            threshold = self.max_distance_threshold
+            if threshold is None:
+                # Use relevance_threshold if set (legacy)
+                if self.relevance_threshold is not None:
+                    threshold = self.relevance_threshold
+                else:
+                    # Default: keep all results if no threshold is set
+                    threshold = None
+            if threshold is not None and score < threshold:
                 continue
             sources.append(
                 RAGSource(

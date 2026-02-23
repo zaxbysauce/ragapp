@@ -23,9 +23,21 @@ class TestSettingsDefaults(unittest.TestCase):
         self.assertEqual(settings.ollama_chat_url, "http://host.docker.internal:11434")
         self.assertEqual(settings.embedding_model, "nomic-embed-text")
         self.assertEqual(settings.chat_model, "qwen2.5:32b")
-        self.assertEqual(settings.chunk_size, 512)
-        self.assertEqual(settings.chunk_overlap, 50)
+        # New character-based fields
+        self.assertEqual(settings.chunk_size_chars, 2000)
+        self.assertEqual(settings.chunk_overlap_chars, 200)
+        self.assertEqual(settings.retrieval_top_k, 12)
+        self.assertEqual(settings.vector_metric, "cosine")
+        self.assertIsNone(settings.max_distance_threshold)
+        self.assertEqual(settings.embedding_doc_prefix, "")
+        self.assertEqual(settings.embedding_query_prefix, "")
+        self.assertEqual(settings.retrieval_window, 1)
+        # Legacy fields (deprecated, should be None by default)
+        self.assertIsNone(settings.chunk_size)
+        self.assertIsNone(settings.chunk_overlap)
         self.assertEqual(settings.max_context_chunks, 10)
+        self.assertIsNone(settings.rag_relevance_threshold)
+        self.assertIsNone(settings.vector_top_k)
         self.assertTrue(settings.auto_scan_enabled)
         self.assertEqual(settings.auto_scan_interval_minutes, 60)
         self.assertEqual(settings.log_level, "INFO")
@@ -36,9 +48,9 @@ class TestRagRelevanceThreshold(unittest.TestCase):
     """Test rag_relevance_threshold default and env override."""
 
     def test_rag_relevance_threshold_default(self):
-        """Test that default rag_relevance_threshold is 0.1."""
+        """Test that default rag_relevance_threshold is None (deprecated)."""
         settings = Settings()
-        self.assertEqual(settings.rag_relevance_threshold, 0.1)
+        self.assertIsNone(settings.rag_relevance_threshold)
 
     def test_rag_relevance_threshold_env_override(self):
         """Test that rag_relevance_threshold can be overridden via environment variable."""

@@ -1,9 +1,12 @@
 """
 Application configuration using Pydantic Settings.
 """
+import logging
 from pathlib import Path
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -29,14 +32,37 @@ class Settings(BaseSettings):
     embedding_model: str = "nomic-embed-text"
     chat_model: str = "qwen2.5:32b"
     
-    # Document processing configuration
-    chunk_size: int = 512
-    chunk_overlap: int = 50
+    # Document processing configuration (character-based - NEW)
+    chunk_size_chars: int = 2000
+    """Character-based chunk size for document processing."""
+    chunk_overlap_chars: int = 200
+    """Character-based overlap between chunks."""
+    retrieval_top_k: int = 12
+    """Number of top chunks to retrieve (unifies max_context_chunks and vector_top_k)."""
+    vector_metric: str = "cosine"
+    """Distance metric for vector similarity search."""
+    max_distance_threshold: float | None = None
+    """Maximum distance threshold for relevance filtering (replaces rag_relevance_threshold)."""
+    embedding_doc_prefix: str = ""
+    """Prefix to prepend to documents during embedding."""
+    embedding_query_prefix: str = ""
+    """Prefix to prepend to queries during embedding."""
+    retrieval_window: int = 1
+    """Window size for retrieval context expansion."""
+
+    # Document processing configuration (legacy - DEPRECATED)
+    chunk_size: int | None = None
+    """[DEPRECATED] Token-based chunk size. Use chunk_size_chars instead."""
+    chunk_overlap: int | None = None
+    """[DEPRECATED] Token-based chunk overlap. Use chunk_overlap_chars instead."""
     max_context_chunks: int = 10
-    
-    # RAG configuration
-    rag_relevance_threshold: float = 0.1
-    vector_top_k: int = 10
+    """[DEPRECATED] Number of context chunks. Use retrieval_top_k instead."""
+
+    # RAG configuration (legacy - DEPRECATED)
+    rag_relevance_threshold: float | None = None
+    """[DEPRECATED] Relevance threshold. Use max_distance_threshold instead."""
+    vector_top_k: int | None = None
+    """[DEPRECATED] Vector top K. Use retrieval_top_k instead."""
     maintenance_mode: bool = False
     redis_url: str = "redis://localhost:6379/0"
     csrf_token_ttl: int = 900
@@ -93,6 +119,68 @@ class Settings(BaseSettings):
 
     # CORS settings
     backend_cors_origins: list[str] = ["http://localhost:5173"]
+
+    # Migration validators for backward compatibility
+    @field_validator("chunk_size_chars", mode="before")
+    @classmethod
+    def migrate_chunk_size_chars(cls, v: int | None, values) -> int:
+        """Auto-convert from legacy chunk_size if chunk_size_chars not provided."""
+        if v is not None:
+            return v
+        legacy_chunk_size = values.data.get("chunk_size")
+        if legacy_chunk_size is not None:
+            logger.warning(
+                "Deprecated: 'chunk_size' is deprecated. Use 'chunk_size_chars' instead. "
+                f"Auto-converting chunk_size={legacy_chunk_size} to chunk_size_chars={legacy_chunk_size * 4}."
+            )
+            return legacy_chunk_size * 4
+        return 2000
+
+    @field_validator("chunk_overlap_chars", mode="before")
+    @classmethod
+    def migrate_chunk_overlap_chars(cls, v: int | None, values) -> int:
+        """Auto-convert from legacy chunk_overlap if chunk_overlap_chars not provided."""
+        if v is not None:
+            return v
+        legacy_chunk_overlap = values.data.get("chunk_overlap")
+        if legacy_chunk_overlap is not None:
+            logger.warning(
+                "Deprecated: 'chunk_overlap' is deprecated. Use 'chunk_overlap_chars' instead. "
+                f"Auto-converting chunk_overlap={legacy_chunk_overlap} to chunk_overlap_chars={legacy_chunk_overlap * 4}."
+            )
+            return legacy_chunk_overlap * 4
+        return 200
+
+    @field_validator("retrieval_top_k", mode="before")
+    @classmethod
+    def migrate_retrieval_top_k(cls, v: int | None, values) -> int:
+        """Auto-convert from legacy vector_top_k if retrieval_top_k not provided."""
+        if v is not None:
+            return v
+        legacy_vector_top_k = values.data.get("vector_top_k")
+        if legacy_vector_top_k is not None:
+            logger.warning(
+                "Deprecated: 'vector_top_k' is deprecated. Use 'retrieval_top_k' instead. "
+                f"Auto-copying vector_top_k={legacy_vector_top_k} to retrieval_top_k={legacy_vector_top_k}."
+            )
+            return legacy_vector_top_k
+        return 12
+
+    @field_validator("max_distance_threshold", mode="before")
+    @classmethod
+    def migrate_max_distance_threshold(cls, v: float | None, values) -> float | None:
+        """Auto-convert from legacy rag_relevance_threshold if max_distance_threshold not provided."""
+        if v is not None:
+            return v
+        legacy_rag_relevance_threshold = values.data.get("rag_relevance_threshold")
+        if legacy_rag_relevance_threshold is not None:
+            logger.warning(
+                "Deprecated: 'rag_relevance_threshold' is deprecated. Use 'max_distance_threshold' instead. "
+                f"Auto-converting rag_relevance_threshold={legacy_rag_relevance_threshold} "
+                f"to max_distance_threshold={1.0 - legacy_rag_relevance_threshold}."
+            )
+            return 1.0 - legacy_rag_relevance_threshold
+        return None
 
     @property
     def documents_dir(self) -> Path:
