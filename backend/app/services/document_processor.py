@@ -432,13 +432,22 @@ class DocumentProcessor:
                         # Map chunks to records for vector store
                         records = []
                         for chunk, embedding in zip(chunks, embeddings):
+                            # Create chunk_uid for windowing support
+                            chunk_uid = f"{file_id}_{chunk.chunk_index}"
+                            
+                            # Add chunk_uid to metadata for adjacent chunk lookups
+                            chunk_metadata = chunk.metadata.copy()
+                            chunk_metadata['chunk_uid'] = chunk_uid
+                            chunk_metadata['file_id'] = str(file_id)
+                            chunk_metadata['chunk_count'] = chunk.metadata.get('total_chunks', len(chunks))
+                            
                             records.append({
-                                "id": f"{file_id}_{chunk.chunk_index}",
+                                "id": chunk_uid,
                                 "text": chunk.text,
                                 "file_id": str(file_id),
                                 "chunk_index": chunk.chunk_index,
                                 "vault_id": str(vault_id),
-                                "metadata": json.dumps(chunk.metadata),
+                                "metadata": json.dumps(chunk_metadata),
                                 "embedding": embedding
                             })
                         # Initialize vector table with embedding dimension and add chunks
