@@ -385,9 +385,8 @@ class DocumentProcessor:
         # Compute file hash
         file_hash = compute_file_hash(file_path)
 
-        # Get database connection from pool
+        # Phase 1: Quick DB operations - get connection, do quick ops, release
         conn = self.pool.get_connection()
-
         try:
             # Check for duplicates
             duplicate = self._check_duplicate(file_hash, conn, vault_id)
@@ -401,72 +400,81 @@ class DocumentProcessor:
                 file_path, file_hash, conn, vault_id, source, email_subject, email_sender
             )
 
+            # Update status to processing
+            self._update_status(file_id, 'processing', conn)
+            conn.commit()
+        finally:
+            # Release connection before long-running operations
+            self.pool.release_connection(conn)
+
+        # Phase 2: Long operations (NO connection held!)
+        try:
+            # Process the file based on type
+            if self._is_schema_file(file_path):
+                chunks = await self._process_schema_file(file_path)
+            else:
+                chunks = await self._process_document_file(file_path)
+
+            # Generate embeddings and store in vector store
+            if self.embedding_service is not None and self.vector_store is not None:
+                # Skip embedding/indexing if no chunks (status indexed with 0 chunks is acceptable)
+                if chunks:
+                    # Extract texts from chunks
+                    texts = [c.text for c in chunks]
+                    # Generate embeddings
+                    embeddings = await self.embedding_service.embed_batch(texts)
+                    # Validate embeddings count matches chunks count
+                    if len(embeddings) != len(chunks):
+                        raise DocumentProcessingError(
+                            f"Embedding count mismatch: expected {len(chunks)}, got {len(embeddings)}"
+                        )
+                    # Validate first embedding is a non-empty list
+                    if not embeddings[0] or not isinstance(embeddings[0], list):
+                        raise DocumentProcessingError(
+                            "First embedding is empty or not a list"
+                        )
+                    # Map chunks to records for vector store
+                    records = []
+                    for chunk, embedding in zip(chunks, embeddings):
+                        # Create chunk_uid for windowing support
+                        chunk_uid = f"{file_id}_{chunk.chunk_index}"
+                        
+                        # Add chunk_uid to metadata for adjacent chunk lookups
+                        chunk_metadata = chunk.metadata.copy()
+                        chunk_metadata['chunk_uid'] = chunk_uid
+                        chunk_metadata['file_id'] = str(file_id)
+                        chunk_metadata['chunk_count'] = chunk.metadata.get('total_chunks', len(chunks))
+                        
+                        records.append({
+                            "id": chunk_uid,
+                            "text": chunk.text,
+                            "file_id": str(file_id),
+                            "chunk_index": chunk.chunk_index,
+                            "vault_id": str(vault_id),
+                            "metadata": json.dumps(chunk_metadata),
+                            "embedding": embedding
+                        })
+                    # Initialize vector table with embedding dimension and add chunks
+                    embedding_dim = len(embeddings[0])
+                    await asyncio.to_thread(self.vector_store.init_table, embedding_dim)
+                    await asyncio.to_thread(self.vector_store.add_chunks, records)
+        except Exception as e:
+            # Phase 3: Update status to error on failure
+            # Get connection again to update error status
+            conn = self.pool.get_connection()
             try:
-                # Update status to processing
-                self._update_status(file_id, 'processing', conn)
-
-                # Process the file based on type
-                if self._is_schema_file(file_path):
-                    chunks = await self._process_schema_file(file_path)
-                else:
-                    chunks = await self._process_document_file(file_path)
-
-                # Generate embeddings and store in vector store
-                if self.embedding_service is not None and self.vector_store is not None:
-                    # Skip embedding/indexing if no chunks (status indexed with 0 chunks is acceptable)
-                    if chunks:
-                        # Extract texts from chunks
-                        texts = [c.text for c in chunks]
-                        # Generate embeddings
-                        embeddings = await self.embedding_service.embed_batch(texts)
-                        # Validate embeddings count matches chunks count
-                        if len(embeddings) != len(chunks):
-                            raise DocumentProcessingError(
-                                f"Embedding count mismatch: expected {len(chunks)}, got {len(embeddings)}"
-                            )
-                        # Validate first embedding is a non-empty list
-                        if not embeddings[0] or not isinstance(embeddings[0], list):
-                            raise DocumentProcessingError(
-                                "First embedding is empty or not a list"
-                            )
-                        # Map chunks to records for vector store
-                        records = []
-                        for chunk, embedding in zip(chunks, embeddings):
-                            # Create chunk_uid for windowing support
-                            chunk_uid = f"{file_id}_{chunk.chunk_index}"
-                            
-                            # Add chunk_uid to metadata for adjacent chunk lookups
-                            chunk_metadata = chunk.metadata.copy()
-                            chunk_metadata['chunk_uid'] = chunk_uid
-                            chunk_metadata['file_id'] = str(file_id)
-                            chunk_metadata['chunk_count'] = chunk.metadata.get('total_chunks', len(chunks))
-                            
-                            records.append({
-                                "id": chunk_uid,
-                                "text": chunk.text,
-                                "file_id": str(file_id),
-                                "chunk_index": chunk.chunk_index,
-                                "vault_id": str(vault_id),
-                                "metadata": json.dumps(chunk_metadata),
-                                "embedding": embedding
-                            })
-                        # Initialize vector table with embedding dimension and add chunks
-                        embedding_dim = len(embeddings[0])
-                        await asyncio.to_thread(self.vector_store.init_table, embedding_dim)
-                        await asyncio.to_thread(self.vector_store.add_chunks, records)
-
-                # Update status to indexed only after successful vector operations
-                self._update_status(file_id, 'indexed', conn, chunk_count=len(chunks))
+                self._update_status(file_id, 'error', conn, error_message=str(e))
                 conn.commit()
+            finally:
+                self.pool.release_connection(conn)
+            raise
 
-                return ProcessedDocument(file_id=file_id, chunks=chunks)
-
-            except Exception as e:
-                # Update status to error and commit
-                error_msg = str(e)
-                self._update_status(file_id, 'error', conn, error_message=error_msg)
-                conn.commit()
-                raise
-
+        # Phase 3: Final DB operations - update status to indexed
+        conn = self.pool.get_connection()
+        try:
+            self._update_status(file_id, 'indexed', conn, chunk_count=len(chunks))
+            conn.commit()
         finally:
             self.pool.release_connection(conn)
+
+        return ProcessedDocument(file_id=file_id, chunks=chunks)
