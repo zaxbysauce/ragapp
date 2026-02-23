@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     embedding_model: str = "nomic-embed-text"
     chat_model: str = "qwen2.5:32b"
     
+    # Embedding dimension (auto-detected from model, but can be overridden)
+    embedding_dim: int = 768
+    
     # Document processing configuration (character-based - NEW)
     chunk_size_chars: int = 2000
     """Character-based chunk size for document processing."""

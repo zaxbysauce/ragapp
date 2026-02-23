@@ -251,6 +251,135 @@ class RAGEngine:
                 initial_count, filtered_count, min_dist, max_dist, mean_dist, self.max_distance_threshold
             )
         
+        # Apply window expansion if enabled
+        if self.retrieval_window > 0:
+            sources = self._expand_window(sources)
+        
+        return sources
+    
+    def _expand_window(self, sources: List[RAGSource]) -> List[RAGSource]:
+        """
+        Expand search results by fetching adjacent chunks (N±window).
+        
+        Args:
+            sources: Initial list of RAGSource chunks from vector search
+            
+        Returns:
+            Expanded list of RAGSource chunks with adjacent context
+        """
+        if not sources:
+            return sources
+        
+        window = self.retrieval_window
+        
+        # Group sources by file_id to track chunk indices per document
+        file_chunks: Dict[str, List[RAGSource]] = {}
+        for source in sources:
+            file_id = source.file_id
+            if file_id not in file_chunks:
+                file_chunks[file_id] = []
+            file_chunks[file_id].append(source)
+        
+        # Collect all chunk_uids to fetch (including adjacent chunks)
+        chunk_uids_to_fetch: List[str] = []
+        
+        # Track chunk_count per file from the initial results
+        file_chunk_indices: Dict[str, List[int]] = {}
+        
+        for file_id, file_sources in file_chunks.items():
+            indices = [int(s.metadata.get("chunk_index", 0)) for s in file_sources]
+            file_chunk_indices[file_id] = indices
+            
+            # Calculate adjacent indices for each chunk
+            for chunk_index in indices:
+                # Calculate window range: [chunk_index - window, chunk_index + window]
+                start_idx = max(0, chunk_index - window)
+                end_idx = chunk_index + window
+                
+                # Generate UIDs for all indices in the window
+                for idx in range(start_idx, end_idx + 1):
+                    chunk_uid = f"{file_id}_{idx}"
+                    chunk_uids_to_fetch.append(chunk_uid)
+        
+        # Fetch adjacent chunks from vector store
+        if chunk_uids_to_fetch:
+            adjacent_chunks = self.vector_store.get_chunks_by_uid(chunk_uids_to_fetch)
+            
+            # Create a lookup for adjacent chunks by their uid
+            adjacent_lookup: Dict[str, Dict[str, Any]] = {}
+            for chunk in adjacent_chunks:
+                chunk_id = chunk.get("id", "")
+                if chunk_id:
+                    adjacent_lookup[chunk_id] = chunk
+            
+            # Build expanded sources list
+            expanded_sources: List[RAGSource] = []
+            seen_uids: set = set()
+            
+            # First, add the original sources
+            for source in sources:
+                chunk_index = source.metadata.get("chunk_index", 0)
+                uid = f"{source.file_id}_{chunk_index}"
+                if uid not in seen_uids:
+                    expanded_sources.append(source)
+                    seen_uids.add(uid)
+            
+            # Then, add adjacent chunks that aren't already in the results
+            for chunk_uid in chunk_uids_to_fetch:
+                if chunk_uid in seen_uids:
+                    continue
+                
+                # Parse uid to get file_id and chunk_index
+                parts = chunk_uid.rsplit("_", 1)
+                if len(parts) != 2:
+                    continue
+                
+                file_id, chunk_index_str = parts
+                try:
+                    chunk_index = int(chunk_index_str)
+                except ValueError:
+                    continue
+                
+                # Check if this chunk exists in adjacent_lookup
+                if chunk_uid in adjacent_lookup:
+                    chunk = adjacent_lookup[chunk_uid]
+                    
+                    # Calculate score based on distance (lower is better for cosine)
+                    has_distance = "_distance" in chunk
+                    distance = chunk.get("_distance")
+                    if distance is None:
+                        score = chunk.get("score")
+                        if score is None:
+                            score = 1.0
+                        distance = score
+                    
+                    expanded_source = RAGSource(
+                        text=chunk.get("text", ""),
+                        file_id=file_id,
+                        score=distance,
+                        metadata=self._normalize_metadata(chunk.get("metadata")),
+                    )
+                    expanded_sources.append(expanded_source)
+                    seen_uids.add(chunk_uid)
+            
+            # Sort by (file_id, chunk_index)
+            def sort_key(source: RAGSource) -> tuple:
+                chunk_index = source.metadata.get("chunk_index", 0)
+                try:
+                    chunk_index = int(chunk_index)
+                except (ValueError, TypeError):
+                    chunk_index = 0
+                return (source.file_id, chunk_index)
+            
+            expanded_sources.sort(key=sort_key)
+            
+            # Cap to retrieval_top_k total
+            if len(expanded_sources) > self.retrieval_top_k:
+                expanded_sources = expanded_sources[:self.retrieval_top_k]
+            
+            return expanded_sources
+        
+        # If no adjacent chunks fetched, return original sources
         return sources
 
     def _build_system_prompt(self) -> str:

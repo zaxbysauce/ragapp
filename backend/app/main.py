@@ -2,10 +2,13 @@
 FastAPI application with lifespan context manager.
 """
 import asyncio
+import logging
 import sqlite3
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+
+logger = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi.middleware import SlowAPIMiddleware
@@ -23,7 +26,7 @@ from app.api.routes.vaults import router as vaults_router
 from app.config import settings
 from app.models.database import run_migrations, get_pool
 from app.services.llm_client import LLMClient
-from app.services.vector_store import VectorStore
+from app.services.vector_store import VectorStore, VectorStoreError
 from app.services.memory_store import MemoryStore
 from app.services.embeddings import EmbeddingService
 from app.services.secret_manager import SecretManager
@@ -106,6 +109,22 @@ async def lifespan(app: FastAPI):
     app.state.vector_store = VectorStore()
     app.state.vector_store.connect()
     app.state.vector_store.migrate_add_vault_id()
+    
+    # Validate schema at startup
+    try:
+        embedding_model_id = settings.embedding_model
+        embedding_dim = settings.embedding_dim
+        validation_result = app.state.vector_store.validate_schema(embedding_model_id, embedding_dim)
+        logger.info(f"Vector store schema validation completed: {validation_result}")
+    except VectorStoreError as e:
+        logger.error("=" * 60)
+        logger.error("VECTOR STORE SCHEMA VALIDATION FAILED")
+        logger.error("=" * 60)
+        logger.error(f"Error: {e}")
+        logger.error("The embedding dimension has changed. A full reindex is required.")
+        logger.error("Please run the reindex process or delete the LanceDB database.")
+        logger.error("=" * 60)
+        # Continue startup but warn that reindex is needed
     app.state.memory_store = MemoryStore(app.state.db_pool)
     app.state.secret_manager = SecretManager()
     app.state.toggle_manager = ToggleManager(app.state.db_pool)

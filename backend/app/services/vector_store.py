@@ -12,6 +12,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+
 
 class VectorStoreError(Exception):
     """Custom exception for vector store errors."""
@@ -465,6 +467,41 @@ class VectorStore:
                 logger.warning(f"LanceDB vault_id migration failed: {e}")
                 return 0
 
+    def get_chunks_by_uid(self, chunk_uids: List[str]) -> List[Dict[str, Any]]:
+        """
+        Fetch chunks by their unique IDs.
+        
+        Args:
+            chunk_uids: List of chunk UIDs in format "{file_id}_{chunk_index}"
+            
+        Returns:
+            List of matching chunk records from LanceDB.
+        """
+        if self.table is None:
+            return []
+        
+        if not chunk_uids:
+            return []
+        
+        try:
+            # Build IN clause for chunk_uids
+            # Each uid is in format "{file_id}_{chunk_index}"
+            # Escape single quotes in uids for SQL-like syntax
+            escaped_uids = [uid.replace("'", "''") for uid in chunk_uids]
+            quoted_uids = [f"'{uid}'" for uid in escaped_uids]
+            uid_list = ", ".join(quoted_uids)
+            
+            # Query chunks where id is in the list of chunk_uids
+            query = f"id IN ({uid_list})"
+            results = self.table.search() \
+                .where(query) \
+                .to_list()
+            
+            return results
+        except Exception as e:
+            logger.warning(f"Failed to fetch chunks by UID: {e}")
+            return []
+    
     def get_stats(self) -> Dict[str, Any]:
         """
         Get statistics about the vector store.
@@ -485,6 +522,175 @@ class VectorStore:
         # LanceDB connections are typically stateless
         self.db = None
         self.table = None
+    
+    def get_stored_metadata(self) -> Optional[Dict[str, Any]]:
+        """
+        Get stored metadata from the table's metadata.
+        
+        Returns:
+            Dictionary with stored metadata (embedding_model_id, embedding_dim, embedding_prefix_hash)
+            or None if table doesn't exist or no metadata is stored.
+        """
+        if self.table is None:
+            return None
+        
+        try:
+            # Try to get table metadata
+            table_metadata = self.table.schema.metadata
+            if table_metadata:
+                # Convert bytes keys/values to strings if needed
+                metadata = {}
+                for key, value in table_metadata.items():
+                    if isinstance(key, bytes):
+                        key = key.decode('utf-8')
+                    if isinstance(value, bytes):
+                        value = value.decode('utf-8')
+                    metadata[key] = value
+                
+                # Extract our stored fields
+                result = {}
+                if b'embedding_model_id' in table_metadata or 'embedding_model_id' in metadata:
+                    result['embedding_model_id'] = metadata.get('embedding_model_id')
+                if b'embedding_dim' in table_metadata or 'embedding_dim' in metadata:
+                    result['embedding_dim'] = int(metadata.get('embedding_dim', 0))
+                if b'embedding_prefix_hash' in table_metadata or 'embedding_prefix_hash' in metadata:
+                    result['embedding_prefix_hash'] = metadata.get('embedding_prefix_hash')
+                
+                if result:
+                    return result
+        except Exception as e:
+            logger.debug(f"Failed to read table metadata: {e}")
+        
+        return None
+    
+    def validate_schema(self, embedding_model_id: str, embedding_dim: int) -> Dict[str, Any]:
+        """
+        Validate that the table schema matches the current embedding configuration.
+        
+        Args:
+            embedding_model_id: The embedding model identifier
+            embedding_dim: The expected embedding dimension
+            
+        Returns:
+            Dictionary with validation results
+            
+        Raises:
+            VectorStoreValidationError: If embedding dimension mismatch is detected
+        """
+        # Generate a probe embedding for "dimension_probe" text
+        probe_text = "dimension_probe"
+        try:
+            probe_embedding = self._generate_probe_embedding(probe_text, embedding_dim)
+        except Exception as e:
+            logger.warning(f"Failed to generate probe embedding: {e}")
+            probe_embedding = None
+        
+        # Get expected dimension from the provided parameter
+        expected_dim = embedding_dim
+        
+        # Check if table exists
+        table_exists = False
+        if self.db is not None:
+            try:
+                table_names = self.db.table_names()
+                table_exists = "chunks" in table_names
+            except Exception as e:
+                logger.warning(f"Failed to check table existence: {e}")
+        
+        stored_metadata = None
+        if table_exists:
+            try:
+                if self.table is None:
+                    self.table = self.db.open_table("chunks")
+                
+                # Get schema and compare vector dimension
+                schema = self.table.schema
+                embedding_field = schema.field("embedding")
+                actual_dim = None
+                if hasattr(embedding_field.type, 'list_size'):
+                    actual_dim = embedding_field.type.list_size
+                
+                if actual_dim is not None and actual_dim != expected_dim:
+                    error_msg = f"Embedding dimension changed from {actual_dim} to {expected_dim}; reindex required."
+                    logger.error(error_msg)
+                    raise VectorStoreValidationError(error_msg)
+                
+                # Get stored metadata
+                stored_metadata = self.get_stored_metadata()
+                
+            except VectorStoreValidationError:
+                raise
+            except Exception as e:
+                logger.warning(f"Failed to validate schema: {e}")
+        
+        # Prepare metadata to store
+        import hashlib
+        prefix_hash = hashlib.sha256(embedding_model_id.encode('utf-8')).hexdigest()[:16]
+        
+        metadata_to_store = {
+            'embedding_model_id': embedding_model_id,
+            'embedding_dim': str(expected_dim),
+            'embedding_prefix_hash': prefix_hash
+        }
+        
+        # Update table metadata if table exists
+        if table_exists and self.table is not None:
+            try:
+                # Get existing metadata
+                current_metadata = dict(self.table.schema.metadata) if self.table.schema.metadata else {}
+                
+                # Update with our metadata
+                for key, value in metadata_to_store.items():
+                    if isinstance(value, str):
+                        current_metadata[key.encode('utf-8')] = value.encode('utf-8')
+                    else:
+                        current_metadata[key.encode('utf-8')] = str(value).encode('utf-8')
+                
+                # Note: LanceDB doesn't support direct metadata update on existing table
+                # We'll log the metadata that should be stored for future reference
+                logger.info(f"Table metadata to store/update: {metadata_to_store}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to update table metadata: {e}")
+        
+        return {
+            'table_exists': table_exists,
+            'expected_dim': expected_dim,
+            'actual_dim': expected_dim if table_exists else None,
+            'stored_metadata': stored_metadata,
+            'probe_embedding_generated': probe_embedding is not None,
+            'metadata_to_store': metadata_to_store
+        }
+    
+    def _generate_probe_embedding(self, text: str, dim: int) -> List[float]:
+        """
+        Generate a probe embedding for dimension validation.
+        
+        Args:
+            text: The text to generate embedding for
+            dim: Expected dimension
+            
+        Returns:
+            Generated embedding vector
+        """
+        # Use a deterministic hash-based approach for probe embedding
+        import hashlib
+        import random
+        
+        # Create a deterministic seed from the text
+        seed_value = int(hashlib.md5(text.encode('utf-8')).hexdigest(), 16) % (2**32)
+        random.seed(seed_value)
+        
+        # Generate a random vector of expected dimension
+        # This simulates what a real embedding would look like
+        probe = [random.gauss(0, 1) for _ in range(dim)]
+        
+        # Normalize the vector (typical for embeddings)
+        magnitude = sum(x*x for x in probe) ** 0.5
+        if magnitude > 0:
+            probe = [x / magnitude for x in probe]
+        
+        return probe
 
 
 

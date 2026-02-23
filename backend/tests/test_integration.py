@@ -155,6 +155,10 @@ class FakeVectorStore:
     
     def close(self):
         pass
+    
+    def get_chunks_by_uid(self, chunk_uids: List[str]) -> List[Dict]:
+        # Return empty list for fake - real implementation would fetch from DB
+        return []
 
 
 class FakeMemoryStore:

@@ -66,6 +66,10 @@ class FakeVectorStore:
     def search(self, embedding: List[float], limit: int = 10, filter_expr=None, vault_id=None):
         return self._results[:limit]
 
+    def get_chunks_by_uid(self, chunk_uids: List[str]):
+        # Return empty list for fake - real implementation would fetch from DB
+        return []
+
 
 class FakeMemoryStore:
     def __init__(self, intent: Optional[str] = None, memories: Optional[List[MemoryRecord]] = None):

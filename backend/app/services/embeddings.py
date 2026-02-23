@@ -29,6 +29,17 @@ class EmbeddingService:
         # Detect provider mode based on URL path
         self.provider_mode, self.embeddings_url = self._detect_provider_mode(base_url)
         self.timeout = 180.0
+        
+        # Read embedding prefixes from settings
+        self.embedding_doc_prefix = settings.embedding_doc_prefix
+        self.embedding_query_prefix = settings.embedding_query_prefix
+        
+        # Apply Qwen3 defaults if model contains "qwen" and prefixes are empty
+        if settings.embedding_model.lower().find("qwen") >= 0:
+            if not self.embedding_doc_prefix:
+                self.embedding_doc_prefix = "Instruct: Represent this technical documentation passage for retrieval.\nDocument: "
+            if not self.embedding_query_prefix:
+                self.embedding_query_prefix = "Instruct: Retrieve relevant technical documentation passages.\nQuery: "
     
     def _detect_provider_mode(self, base_url: str) -> tuple:
         """
@@ -124,6 +135,10 @@ class EmbeddingService:
         """
         Generate embedding for a single text.
 
+        Applies the query prefix (if configured) to the input text before embedding.
+        The query prefix is used for retrieval queries and must remain constant for
+        a given index to ensure consistent embedding space.
+
         Args:
             text: The text to embed.
 
@@ -139,11 +154,14 @@ class EmbeddingService:
         if not text.strip():
             raise EmbeddingError("Text cannot be empty or whitespace only")
 
+        # Apply query prefix for retrieval queries
+        text_to_embed = self.embedding_query_prefix + text if self.embedding_query_prefix else text
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.post(
                     self.embeddings_url,
-                    json=self._build_payload(text)
+                    json=self._build_payload(text_to_embed)
                 )
                 
                 if response.status_code != 200:
@@ -200,6 +218,10 @@ class EmbeddingService:
         Processes texts in sub-batches of up to 64, with up to 4
         concurrent requests per sub-batch.
 
+        Applies the document prefix (if configured) to each input text before embedding.
+        The document prefix is used for document embeddings and must remain constant for
+        a given index to ensure consistent embedding space.
+
         Args:
             texts: List of texts to embed.
 
@@ -216,7 +238,9 @@ class EmbeddingService:
         
         async def _embed_with_limit(text: str) -> List[float]:
             async with semaphore:
-                return await self.embed_single(text)
+                # Apply document prefix for batch (document) embeddings
+                text_to_embed = self.embedding_doc_prefix + text if self.embedding_doc_prefix else text
+                return await self.embed_single(text_to_embed)
         
         # Process in sub-batches of 64 to avoid overwhelming the server
         all_embeddings: List[List[float]] = []

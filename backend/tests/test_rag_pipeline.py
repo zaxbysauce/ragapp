@@ -80,6 +80,10 @@ class FakeVectorStore:
     ) -> List[Dict[str, Any]]:
         return self._results[:limit]
 
+    def get_chunks_by_uid(self, chunk_uids: List[str]) -> List[Dict[str, Any]]:
+        # Return empty list for fake - real implementation would fetch from DB
+        return []
+
 
 class FakeMemoryRecord:
     """Simple fake memory record for testing."""
