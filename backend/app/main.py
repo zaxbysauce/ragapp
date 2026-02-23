@@ -140,8 +140,8 @@ async def lifespan(app: FastAPI):
     app.state.background_processor = get_background_processor(
         max_retries=3,
         retry_delay=1.0,
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
+        chunk_size_chars=settings.chunk_size_chars,
+        chunk_overlap_chars=settings.chunk_overlap_chars,
         vector_store=app.state.vector_store,
         embedding_service=app.state.embedding_service,
         maintenance_service=app.state.maintenance_service,

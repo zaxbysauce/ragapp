@@ -26,8 +26,8 @@ _processor_instance: Optional["BackgroundProcessor"] = None
 def get_background_processor(
     max_retries: int = 3,
     retry_delay: float = 1.0,
-    chunk_size: int = 512,
-    chunk_overlap: int = 50,
+    chunk_size_chars: int = 2000,
+    chunk_overlap_chars: int = 200,
     vector_store: Optional[VectorStore] = None,
     embedding_service: Optional[EmbeddingService] = None,
     maintenance_service: Optional[MaintenanceService] = None,
@@ -43,8 +43,8 @@ def get_background_processor(
     Args:
         max_retries: Maximum retry attempts for failed tasks (default: 3)
         retry_delay: Base delay in seconds between retries (default: 1.0)
-        chunk_size: Target chunk size for DocumentProcessor
-        chunk_overlap: Overlap between chunks for DocumentProcessor
+        chunk_size_chars: Target chunk size in characters for DocumentProcessor
+        chunk_overlap_chars: Overlap between chunks in characters for DocumentProcessor
         vector_store: VectorStore instance for document storage
         embedding_service: EmbeddingService instance for generating embeddings
         maintenance_service: MaintenanceService instance for maintenance mode checks
@@ -58,8 +58,8 @@ def get_background_processor(
         _processor_instance = BackgroundProcessor(
             max_retries=max_retries,
             retry_delay=retry_delay,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
+            chunk_size_chars=chunk_size_chars,
+            chunk_overlap_chars=chunk_overlap_chars,
             vector_store=vector_store,
             embedding_service=embedding_service,
             maintenance_service=maintenance_service,
@@ -119,8 +119,8 @@ class BackgroundProcessor:
         self,
         max_retries: int = 3,
         retry_delay: float = 1.0,
-        chunk_size: int = 512,
-        chunk_overlap: int = 50,
+        chunk_size_chars: int = 2000,
+        chunk_overlap_chars: int = 200,
         vector_store: Optional[VectorStore] = None,
         embedding_service: Optional[EmbeddingService] = None,
         maintenance_service: Optional[MaintenanceService] = None,
@@ -132,8 +132,8 @@ class BackgroundProcessor:
         Args:
             max_retries: Maximum retry attempts for failed tasks (default: 3)
             retry_delay: Base delay in seconds between retries (default: 1.0)
-            chunk_size: Target chunk size for DocumentProcessor
-            chunk_overlap: Overlap between chunks for DocumentProcessor
+            chunk_size_chars: Target chunk size in characters for DocumentProcessor
+            chunk_overlap_chars: Overlap between chunks in characters for DocumentProcessor
             vector_store: VectorStore instance for document storage
             embedding_service: EmbeddingService instance for generating embeddings
             maintenance_service: MaintenanceService instance for maintenance mode
@@ -144,8 +144,8 @@ class BackgroundProcessor:
         self.queue: asyncio.Queue[TaskItem] = asyncio.Queue()
         self.shutdown_event = asyncio.Event()
         self.processor = DocumentProcessor(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
+            chunk_size_chars=chunk_size_chars,
+            chunk_overlap_chars=chunk_overlap_chars,
             vector_store=vector_store,
             embedding_service=embedding_service,
             pool=pool,
