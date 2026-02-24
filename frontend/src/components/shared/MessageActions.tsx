@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Copy, Check } from "lucide-react";
 import { toast } from "sonner";
@@ -9,7 +9,7 @@ interface MessageActionsProps {
   // sources?: RAGSource[];
 }
 
-export function MessageActions({ content }: MessageActionsProps) {
+export const MessageActions = React.memo(function MessageActions({ content }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -38,4 +38,4 @@ export function MessageActions({ content }: MessageActionsProps) {
       )}
     </Button>
   );
-}
+});

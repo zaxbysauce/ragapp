@@ -1,0 +1,118 @@
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import type { SettingsFormData, SettingsErrors } from "@/stores/useSettingsStore";
+
+interface DocumentProcessingSettingsProps {
+  formData: SettingsFormData;
+  errors: SettingsErrors;
+  onChange: (field: keyof SettingsFormData, value: string | boolean) => void;
+}
+
+export function DocumentProcessingSettings({
+  formData,
+  errors,
+  onChange,
+}: DocumentProcessingSettingsProps) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Document Processing</CardTitle>
+        <CardDescription>Configure document chunking and retrieval parameters</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* Chunk Size */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Chunk Size (characters)</label>
+          <Input
+            type="number"
+            min={1}
+            value={formData.chunk_size_chars}
+            onChange={(e) => onChange("chunk_size_chars", e.target.value)}
+            className={errors.chunk_size_chars ? "border-destructive" : ""}
+          />
+          {errors.chunk_size_chars && (
+            <p className="text-xs text-destructive">{errors.chunk_size_chars}</p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Number of characters per document chunk
+          </p>
+        </div>
+
+        {/* Chunk Overlap */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Chunk Overlap (characters)</label>
+          <Input
+            type="number"
+            min={1}
+            value={formData.chunk_overlap_chars}
+            onChange={(e) => onChange("chunk_overlap_chars", e.target.value)}
+            className={errors.chunk_overlap_chars ? "border-destructive" : ""}
+          />
+          {errors.chunk_overlap_chars && (
+            <p className="text-xs text-destructive">{errors.chunk_overlap_chars}</p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Number of overlapping characters between chunks (must be less than chunk size)
+          </p>
+        </div>
+
+        {/* Retrieval Top-K */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Retrieval Top-K</label>
+          <Input
+            type="number"
+            min={1}
+            value={formData.retrieval_top_k}
+            onChange={(e) => onChange("retrieval_top_k", e.target.value)}
+            className={errors.retrieval_top_k ? "border-destructive" : ""}
+          />
+          {errors.retrieval_top_k && (
+            <p className="text-xs text-destructive">{errors.retrieval_top_k}</p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Maximum number of chunks to retrieve and include in context
+          </p>
+        </div>
+
+        {/* Auto Scan Enabled */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="auto_scan_enabled"
+              checked={formData.auto_scan_enabled}
+              onChange={(e) => onChange("auto_scan_enabled", e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            <label htmlFor="auto_scan_enabled" className="text-sm font-medium">
+              Enable Auto Scan
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Automatically scan for new documents at regular intervals
+          </p>
+        </div>
+
+        {/* Auto Scan Interval */}
+        {formData.auto_scan_enabled && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Auto Scan Interval (minutes)</label>
+            <Input
+              type="number"
+              min={1}
+              value={formData.auto_scan_interval_minutes}
+              onChange={(e) => onChange("auto_scan_interval_minutes", e.target.value)}
+              className={errors.auto_scan_interval_minutes ? "border-destructive" : ""}
+            />
+            {errors.auto_scan_interval_minutes && (
+              <p className="text-xs text-destructive">{errors.auto_scan_interval_minutes}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              How often to scan for new documents (in minutes)
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

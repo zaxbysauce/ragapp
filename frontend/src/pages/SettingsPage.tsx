@@ -4,14 +4,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, Loader2 } from "lucide-react";
-import { getSettings, updateSettings, testConnections, type ConnectionTestResult } from "@/lib/api";
+import { getSettings, updateSettings, testConnections } from "@/lib/api";
+import type { ConnectionTestResult } from "@/lib/api";
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { ConnectionStatusBadges } from "@/components/shared/ConnectionStatusBadges";
 import type { HealthStatus } from "@/types/health";
 import { useHealthCheck } from "@/hooks/useHealthCheck";
+import { APIKeySettings } from "@/components/settings/APIKeySettings";
+import { ConnectionSettings } from "@/components/settings/ConnectionSettings";
+import { DocumentProcessingSettings } from "@/components/settings/DocumentProcessingSettings";
+import { RAGSettings } from "@/components/settings/RAGSettings";
+import type { SettingsFormData } from "@/stores/useSettingsStore";
 
 // Internal component that renders the settings form
 function SettingsPageContent() {
@@ -72,7 +77,7 @@ function SettingsPageContent() {
     };
   }, [setSettings, initializeForm, setError, setLoading]);
 
-  const handleInputChange = (field: keyof typeof formData, value: string | boolean) => {
+  const handleInputChange = (field: keyof SettingsFormData, value: string | boolean) => {
     if (typeof value === "boolean") {
       updateFormField(field, value);
     } else {
@@ -214,8 +219,6 @@ function SettingsPageContent() {
             </Card>
           </TabsContent>
 
-
-
           <TabsContent value="advanced" className="space-y-4">
             <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-3 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
@@ -223,283 +226,44 @@ function SettingsPageContent() {
                 Note: Settings updates apply to the running session only.
               </p>
             </div>
-            <Card>
-              <CardHeader>
-                <CardTitle>Advanced Settings</CardTitle>
-                <CardDescription>Configure document processing and RAG parameters</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Chunk Size */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Chunk Size (characters)</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={formData.chunk_size_chars}
-                    onChange={(e) => handleInputChange("chunk_size_chars", e.target.value)}
-                    className={errors.chunk_size_chars ? "border-destructive" : ""}
-                  />
-                  {errors.chunk_size_chars && (
-                    <p className="text-xs text-destructive">{errors.chunk_size_chars}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Number of characters per document chunk
-                  </p>
-                </div>
 
-                {/* Chunk Overlap */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Chunk Overlap (characters)</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={formData.chunk_overlap_chars}
-                    onChange={(e) => handleInputChange("chunk_overlap_chars", e.target.value)}
-                    className={errors.chunk_overlap_chars ? "border-destructive" : ""}
-                  />
-                  {errors.chunk_overlap_chars && (
-                    <p className="text-xs text-destructive">{errors.chunk_overlap_chars}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Number of overlapping characters between chunks (must be less than chunk size)
-                  </p>
-                </div>
+            {/* Document Processing Settings */}
+            <DocumentProcessingSettings
+              formData={formData}
+              errors={errors}
+              onChange={handleInputChange}
+            />
 
-                {/* Retrieval Top-K */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Retrieval Top-K</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={formData.retrieval_top_k}
-                    onChange={(e) => handleInputChange("retrieval_top_k", e.target.value)}
-                    className={errors.retrieval_top_k ? "border-destructive" : ""}
-                  />
-                  {errors.retrieval_top_k && (
-                    <p className="text-xs text-destructive">{errors.retrieval_top_k}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Maximum number of chunks to retrieve and include in context
-                  </p>
-                </div>
+            {/* RAG Settings */}
+            <RAGSettings
+              formData={formData}
+              errors={errors}
+              onChange={handleInputChange}
+            />
 
-                {/* Max Distance Threshold */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Max Distance Threshold</label>
-                  <div className="flex items-center gap-4">
-                    <Input
-                      type="number"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={formData.max_distance_threshold}
-                      onChange={(e) => handleInputChange("max_distance_threshold", e.target.value)}
-                      className={`w-24 ${errors.max_distance_threshold ? "border-destructive" : ""}`}
-                    />
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={formData.max_distance_threshold}
-                      onChange={(e) => handleInputChange("max_distance_threshold", e.target.value)}
-                      className="flex-1"
-                    />
-                  </div>
-                  {errors.max_distance_threshold && (
-                    <p className="text-xs text-destructive">{errors.max_distance_threshold}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Maximum distance (1-0) for chunks to be included in context (lower = more strict)
-                  </p>
-                </div>
+            {/* Save Button and Status */}
+            <div className="flex items-center gap-4 pt-4 border-t">
+              <Button
+                onClick={handleSave}
+                disabled={saving || !hasChanges()}
+              >
+                {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Save Changes
+              </Button>
 
-                {/* Auto Scan Enabled */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="auto_scan_enabled"
-                      checked={formData.auto_scan_enabled}
-                      onChange={(e) => handleInputChange("auto_scan_enabled", e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300"
-                    />
-                    <label htmlFor="auto_scan_enabled" className="text-sm font-medium">
-                      Enable Auto Scan
-                    </label>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Automatically scan for new documents at regular intervals
-                  </p>
-                </div>
-
-                {/* Auto Scan Interval */}
-                {formData.auto_scan_enabled && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Auto Scan Interval (minutes)</label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={formData.auto_scan_interval_minutes}
-                      onChange={(e) => handleInputChange("auto_scan_interval_minutes", e.target.value)}
-                      className={errors.auto_scan_interval_minutes ? "border-destructive" : ""}
-                    />
-                    {errors.auto_scan_interval_minutes && (
-                      <p className="text-xs text-destructive">{errors.auto_scan_interval_minutes}</p>
-                    )}
-                    <p className="text-xs text-muted-foreground">
-                      How often to scan for new documents (in minutes)
-                    </p>
-                  </div>
-                )}
-
-                {/* Retrieval Window */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Retrieval Window</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={3}
-                    value={formData.retrieval_window}
-                    onChange={(e) => handleInputChange("retrieval_window", e.target.value)}
-                    className={errors.retrieval_window ? "border-destructive" : ""}
-                  />
-                  {errors.retrieval_window && (
-                    <p className="text-xs text-destructive">{errors.retrieval_window}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Number of adjacent chunks to include (0-3)
-                  </p>
-                </div>
-
-                {/* Vector Metric */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Vector Metric</label>
-                  <select
-                    value={formData.vector_metric}
-                    onChange={(e) => handleInputChange("vector_metric", e.target.value)}
-                    className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${errors.vector_metric ? "border-destructive" : ""}`}
-                  >
-                    <option value="cosine">Cosine Similarity</option>
-                    <option value="euclidean">Euclidean Distance</option>
-                    <option value="dot_product">Dot Product</option>
-                  </select>
-                  {errors.vector_metric && (
-                    <p className="text-xs text-destructive">{errors.vector_metric}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Distance metric used for vector similarity search
-                  </p>
-                </div>
-
-                {/* Embedding Batch Size */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Embedding Batch Size</label>
-                  <Input
-                    type="number"
-                    min={64}
-                    max={2048}
-                    step={64}
-                    value={formData.embedding_batch_size}
-                    onChange={(e) => handleInputChange("embedding_batch_size", e.target.value)}
-                    className={errors.embedding_batch_size ? "border-destructive" : ""}
-                  />
-                  {errors.embedding_batch_size && (
-                    <p className="text-xs text-destructive">{errors.embedding_batch_size}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Number of chunks to embed per API request. Higher values = better GPU utilization.
-                  </p>
-                </div>
-
-                {/* Save Button and Status */}
-                <div className="flex items-center gap-4 pt-4 border-t">
-                  <Button
-                    onClick={handleSave}
-                    disabled={saving || !hasChanges()}
-                  >
-                    {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                    Save Changes
-                  </Button>
-
-                  {hasChanges() && (
-                    <span className="text-sm text-muted-foreground">You have unsaved changes</span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Advanced Embedding Settings */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Advanced Embedding Settings</CardTitle>
-                <CardDescription>Configure embedding prefixes for different content types</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Embedding Document Prefix</label>
-                  <textarea
-                    value={formData.embedding_doc_prefix}
-                    onChange={(e) => handleInputChange("embedding_doc_prefix", e.target.value)}
-                    className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 min-h-[80px] ${errors.embedding_doc_prefix ? "border-destructive" : ""}`}
-                    placeholder="Passage: "
-                  />
-                  {errors.embedding_doc_prefix && (
-                    <p className="text-xs text-destructive">{errors.embedding_doc_prefix}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Prefix added to document chunks before embedding (default: "Passage: ")
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Embedding Query Prefix</label>
-                  <textarea
-                    value={formData.embedding_query_prefix}
-                    onChange={(e) => handleInputChange("embedding_query_prefix", e.target.value)}
-                    className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 min-h-[80px] ${errors.embedding_query_prefix ? "border-destructive" : ""}`}
-                    placeholder="Query: "
-                  />
-                  {errors.embedding_query_prefix && (
-                    <p className="text-xs text-destructive">{errors.embedding_query_prefix}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Prefix added to queries before embedding (default: "Query: ")
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+              {hasChanges() && (
+                <span className="text-sm text-muted-foreground">You have unsaved changes</span>
+              )}
+            </div>
           </TabsContent>
 
           <TabsContent value="api-key">
-            <Card>
-              <CardHeader>
-                <CardTitle>API Key</CardTitle>
-                <CardDescription>Configure API key for authenticated requests</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">API Key</label>
-                  <Input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="Enter your API key (if configured)"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Optional. Set this if your server requires authentication. The key is stored in your browser's localStorage.
-                  </p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <Button onClick={handleApiKeySave}>
-                    Save API Key
-                  </Button>
-                  {apiKeySaved && (
-                    <span className="text-sm text-green-600 dark:text-green-400">Saved</span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+            <APIKeySettings
+              apiKey={apiKey}
+              onApiKeyChange={setApiKey}
+              onSave={handleApiKeySave}
+              isSaved={apiKeySaved}
+            />
           </TabsContent>
         </Tabs>
       )}
@@ -542,22 +306,11 @@ function SettingsPageWithStatus({ health }: { health: HealthStatus }) {
         <div className="flex flex-col items-end gap-1">
           <ConnectionStatusBadges health={health} />
           <span className="text-xs text-muted-foreground">{formatLastChecked(health.lastChecked)}</span>
-          <Button size="sm" variant="outline" onClick={handleConnectionTest} disabled={isTestingConnections}>
-            {isTestingConnections ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
-            ) : (
-              "Test Connections"
-            )}
-          </Button>
-          {connectionResult && (
-            <div className="flex gap-2">
-              {Object.entries(connectionResult).map(([service, info]) => (
-                <Badge key={service} variant={info.ok ? "outline" : "destructive"} className="text-xs">
-                  {service}: {info.ok ? "OK" : "Fail"}
-                </Badge>
-              ))}
-            </div>
-          )}
+          <ConnectionSettings
+            onTestConnections={handleConnectionTest}
+            isTesting={isTestingConnections}
+            connectionStatus={connectionResult}
+          />
         </div>
       </div>
       <SettingsPageContent />

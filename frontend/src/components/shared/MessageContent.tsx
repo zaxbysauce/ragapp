@@ -19,7 +19,7 @@ interface SourcesListProps {
   sources: RAGSource[];
 }
 
-function SourcesList({ sources }: SourcesListProps) {
+const SourcesList = React.memo(function SourcesList({ sources }: SourcesListProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (!sources || sources.length === 0) {
@@ -75,7 +75,7 @@ function SourcesList({ sources }: SourcesListProps) {
       )}
     </div>
   );
-}
+});
 
 export const MessageContent = React.memo(function MessageContent({ message }: { message: Message }) {
   const assistantContent = message.role === "assistant" ? (
