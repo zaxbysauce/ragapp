@@ -287,5 +287,18 @@ async def health_check():
 # Serve frontend static files
 from pathlib import Path
 static_dir = Path("/app/static")
+logger.info(f"Checking for static files at: {static_dir} (exists: {static_dir.exists()})")
 if static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+    try:
+        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        logger.info(f"Static files mounted successfully from {static_dir}")
+    except Exception as e:
+        logger.error(f"Failed to mount static files: {e}")
+else:
+    logger.warning(f"Static directory {static_dir} does not exist - frontend will not be served")
+    # List what's in /app to help debug
+    try:
+        app_contents = list(Path("/app").iterdir()) if Path("/app").exists() else []
+        logger.info(f"Contents of /app: {[p.name for p in app_contents]}")
+    except Exception as e:
+        logger.error(f"Could not list /app contents: {e}")
