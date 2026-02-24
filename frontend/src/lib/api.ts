@@ -422,6 +422,16 @@ export async function deleteDocument(fileId: string): Promise<void> {
   await apiClient.delete(`/documents/${fileId}`);
 }
 
+export async function deleteDocuments(fileIds: string[]): Promise<{ deleted_count: number, failed_ids: number[] }> {
+  const response = await apiClient.delete<{ deleted_count: number, failed_ids: number[] }>("/documents/batch", { data: { file_ids: fileIds } });
+  return response.data;
+}
+
+export async function deleteAllDocumentsInVault(vaultId: number): Promise<{ deleted_count: number, vault_id: number }> {
+  const response = await apiClient.delete<{ deleted_count: number, vault_id: number }>(`/documents/vault/${vaultId}/all`);
+  return response.data;
+}
+
 export async function getDocumentStats(vaultId?: number): Promise<DocumentStatsResponse> {
   const response = await apiClient.get<DocumentStatsResponse>("/documents/stats", vaultId != null ? { params: { vault_id: vaultId } } : undefined);
   return response.data;

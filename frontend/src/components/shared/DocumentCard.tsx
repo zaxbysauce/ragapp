@@ -4,6 +4,7 @@
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FileText, Trash2, MoreVertical } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { formatFileSize, formatDate } from "@/lib/formatters";
@@ -29,6 +30,10 @@ interface DocumentCardProps {
   onAction?: (action: string, id: string) => void;
   /** Loading state for delete action */
   isDeleting?: boolean;
+  /** Selection state for bulk operations */
+  isSelected?: boolean;
+  /** Callback when selection changes */
+  onSelectionChange?: (id: string, selected: boolean) => void;
 }
 
 /**
@@ -45,20 +50,35 @@ export function DocumentCard({
   onDelete,
   onAction: _onAction,
   isDeleting = false,
+  isSelected = false,
+  onSelectionChange,
 }: DocumentCardProps) {
   const status = document.metadata?.status as string | undefined;
   const chunkCount = document.metadata?.chunk_count as number | undefined;
 
   return (
     <Card
-      className="w-full overflow-hidden border-border hover:border-primary/30 transition-colors"
+      className={`w-full overflow-hidden border-border hover:border-primary/30 transition-colors ${
+        isSelected ? "ring-2 ring-primary ring-offset-2" : ""
+      }`}
       role="article"
       aria-label={`Document: ${document.filename}`}
     >
       <CardContent className="p-4">
-        {/* Header row: icon, filename, actions dropdown */}
+        {/* Header row: checkbox, icon, filename, actions dropdown */}
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
+            {/* Checkbox for bulk selection */}
+            {onSelectionChange && (
+              <Checkbox
+                checked={isSelected}
+                onCheckedChange={(checked) =>
+                  onSelectionChange(document.id, !!checked)
+                }
+                aria-label={`Select ${document.filename}`}
+                className="flex-shrink-0"
+              />
+            )}
             <div
               className="flex-shrink-0 p-2 bg-muted rounded-md"
               aria-hidden="true"

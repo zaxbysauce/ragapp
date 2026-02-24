@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FileText, Upload, Search, Trash2, ScanLine, AlertCircle, Loader2, X, RotateCcw } from "lucide-react";
-import { listDocuments, scanDocuments, deleteDocument, getDocumentStats, type Document, type DocumentStatsResponse } from "@/lib/api";
+import { Checkbox } from "@/components/ui/checkbox";
+import { FileText, Upload, Search, Trash2, ScanLine, AlertCircle, Loader2, X, RotateCcw, Trash } from "lucide-react";
+import { listDocuments, scanDocuments, deleteDocument, deleteDocuments, deleteAllDocumentsInVault, getDocumentStats, type Document, type DocumentStatsResponse } from "@/lib/api";
 import { formatFileSize, formatDate } from "@/lib/formatters";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useVaultStore } from "@/stores/useVaultStore";
@@ -28,6 +29,9 @@ export default function DocumentsPage() {
   const [debouncedSearchQuery, isSearching] = useDebounce(searchQuery, 300);
   const [isScanning, setIsScanning] = useState(false);
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkDeletingAll, setIsBulkDeletingAll] = useState(false);
 
   // Global upload store
   const { uploads, addUploads, cancelUpload, removeUpload, clearCompleted, retryUpload } = useUploadStore();
@@ -90,6 +94,82 @@ export default function DocumentsPage() {
       return () => clearTimeout(timeout);
     }
   }, [uploads, fetchDocuments, fetchStats]);
+
+  // Bulk selection handlers
+  const handleSelectAll = useCallback((checked: boolean) => {
+    if (checked) {
+      const allIds = new Set(documents.map((doc) => String(doc.id)));
+      setSelectedIds(allIds);
+    } else {
+      setSelectedIds(new Set());
+    }
+  }, [documents]);
+
+  const handleSelectOne = useCallback((docId: string, checked: boolean) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (checked) {
+        newSet.add(docId);
+      } else {
+        newSet.delete(docId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    
+    const confirmMsg = `Are you sure you want to delete ${selectedIds.size} document${selectedIds.size > 1 ? 's' : ''}?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsBulkDeleting(true);
+
+    try {
+      const result = await deleteDocuments(Array.from(selectedIds));
+      if (result.deleted_count > 0) {
+        toast.success(`Deleted ${result.deleted_count} document${result.deleted_count > 1 ? 's' : ''}`);
+        setDocuments(prev => prev.filter(doc => !selectedIds.has(doc.id)));
+        setStats(prev => prev ? { ...prev, total_documents: Math.max(0, (prev.total_documents ?? 0) - result.deleted_count) } : prev);
+      }
+
+      if (result.failed_ids.length > 0) {
+        toast.error(`Failed to delete ${result.failed_ids.length} document${result.failed_ids.length > 1 ? 's' : ''}`);
+      }
+
+      setSelectedIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete documents");
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  }, [selectedIds]);
+
+  const handleDeleteAllInVault = useCallback(async () => {
+    if (documents.length === 0) return;
+    if (!activeVaultId) {
+      toast.error("No vault selected");
+      return;
+    }
+
+    const confirmMsg = `Are you sure you want to delete ALL documents in this vault? This action cannot be undone.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsBulkDeletingAll(true);
+
+    try {
+      const result = await deleteAllDocumentsInVault(activeVaultId);
+      if (result.deleted_count > 0) {
+        toast.success(`Deleted ${result.deleted_count} document${result.deleted_count > 1 ? 's' : ''}`);
+        setDocuments([]);
+        setStats(prev => prev ? { ...prev, total_documents: 0 } : prev);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete documents");
+    } finally {
+      setIsBulkDeletingAll(false);
+    }
+  }, [documents.length, activeVaultId]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
@@ -168,6 +248,20 @@ export default function DocumentsPage() {
             )}
             Scan Directory
           </Button>
+          {filteredDocuments.length > 0 && (
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteAllInVault} 
+              disabled={isBulkDeletingAll}
+            >
+              {isBulkDeletingAll ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Trash className="w-4 h-4 mr-2" />
+              )}
+              Delete All in Vault
+            </Button>
+          )}
         </div>
       </div>
 
@@ -337,7 +431,27 @@ export default function DocumentsPage() {
             <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground animate-spin" />
           )}
         </div>
-        <Badge variant="secondary">{filteredDocuments.length} documents</Badge>
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <>
+              <Badge variant="outline">{selectedIds.size} selected</Badge>
+              <Button 
+                variant="destructive" 
+                size="sm"
+                onClick={handleBulkDelete}
+                disabled={isBulkDeleting}
+              >
+                {isBulkDeleting ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4 mr-2" />
+                )}
+                Delete Selected
+              </Button>
+            </>
+          )}
+          <Badge variant="secondary">{filteredDocuments.length} documents</Badge>
+        </div>
       </div>
 
       {loading ? (
@@ -346,36 +460,42 @@ export default function DocumentsPage() {
           <Card className="hidden sm:block">
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full">
-                  <caption className="sr-only">Documents List</caption>
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th scope="col" className="text-left p-4 font-medium">Filename</th>
-                      <th scope="col" className="text-left p-4 font-medium">Status</th>
-                      <th scope="col" className="text-left p-4 font-medium">Chunks</th>
-                      <th scope="col" className="text-left p-4 font-medium">Size</th>
-                      <th scope="col" className="text-left p-4 font-medium">Uploaded</th>
-                      <th scope="col" className="text-right p-4 font-medium">Actions</th>
+              <table className="w-full">
+                <caption className="sr-only">Documents List</caption>
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th scope="col" className="text-left p-4 font-medium">
+                      <Checkbox disabled aria-label="Select all documents" />
+                    </th>
+                    <th scope="col" className="text-left p-4 font-medium">Filename</th>
+                    <th scope="col" className="text-left p-4 font-medium">Status</th>
+                    <th scope="col" className="text-left p-4 font-medium">Chunks</th>
+                    <th scope="col" className="text-left p-4 font-medium">Size</th>
+                    <th scope="col" className="text-left p-4 font-medium">Uploaded</th>
+                    <th scope="col" className="text-right p-4 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...Array(5)].map((_, i) => (
+                    <tr key={i} className="border-b">
+                      <td className="p-4">
+                        <Checkbox disabled />
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-2">
+                          <Skeleton className="h-4 w-4" />
+                          <Skeleton className="h-4 w-[180px]" />
+                        </div>
+                      </td>
+                      <td className="p-4"><Skeleton className="h-5 w-[80px]" /></td>
+                      <td className="p-4"><Skeleton className="h-4 w-[40px]" /></td>
+                      <td className="p-4"><Skeleton className="h-4 w-[60px]" /></td>
+                      <td className="p-4"><Skeleton className="h-4 w-[80px]" /></td>
+                      <td className="p-4 text-right"><Skeleton className="h-11 w-11 ml-auto" /></td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {[...Array(5)].map((_, i) => (
-                      <tr key={i} className="border-b">
-                        <td className="p-4">
-                          <div className="flex items-center gap-2">
-                            <Skeleton className="h-4 w-4" />
-                            <Skeleton className="h-4 w-[180px]" />
-                          </div>
-                        </td>
-                        <td className="p-4"><Skeleton className="h-5 w-[80px]" /></td>
-                        <td className="p-4"><Skeleton className="h-4 w-[40px]" /></td>
-                        <td className="p-4"><Skeleton className="h-4 w-[60px]" /></td>
-                        <td className="p-4"><Skeleton className="h-4 w-[80px]" /></td>
-                        <td className="p-4 text-right"><Skeleton className="h-11 w-11 ml-auto" /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  ))}
+                </tbody>
+              </table>
               </div>
             </CardContent>
           </Card>
@@ -437,6 +557,13 @@ export default function DocumentsPage() {
                   <caption className="sr-only">Documents List</caption>
                   <thead>
                     <tr className="border-b bg-muted/50">
+                      <th scope="col" className="text-left p-4 font-medium">
+                        <Checkbox 
+                          checked={selectedIds.size > 0 && selectedIds.size === filteredDocuments.length}
+                          onCheckedChange={handleSelectAll}
+                          aria-label="Select all documents"
+                        />
+                      </th>
                       <th scope="col" className="text-left p-4 font-medium">Filename</th>
                       <th scope="col" className="text-left p-4 font-medium">Status</th>
                       <th scope="col" className="text-left p-4 font-medium">Chunks</th>
@@ -446,46 +573,59 @@ export default function DocumentsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredDocuments.map((doc) => (
-                      <tr key={doc.id} className="border-b hover:bg-muted/50">
-                        <td className="p-4">
-                          <div className="flex items-center gap-2">
-                            <FileText className="w-4 h-4 text-muted-foreground" />
-                            <span className="font-medium truncate max-w-[200px]">{doc.filename}</span>
-                          </div>
-                        </td>
-                        <td className="p-4"><StatusBadge status={doc.metadata?.status as string} /></td>
-                        <td className="p-4">{String(doc.metadata?.chunk_count ?? 0)}</td>
-                        <td className="p-4">{formatFileSize(doc.size)}</td>
-                        <td className="p-4 text-muted-foreground">{formatDate(doc.created_at)}</td>
-                        <td className="p-4 text-right">
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="min-w-[44px] min-h-[44px]" 
-                            onClick={() => handleDeleteDocument(String(doc.id))}
-                          >
-                            <Trash2 className="w-4 h-4 text-destructive" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredDocuments.map((doc) => {
+                      const docId = String(doc.id);
+                      const isSelected = selectedIds.has(docId);
+                      return (
+                        <tr key={doc.id} className={`border-b hover:bg-muted/50 ${isSelected ? 'bg-muted/30' : ''}`}>
+                          <td className="p-4">
+                            <Checkbox 
+                              checked={isSelected}
+                              onCheckedChange={(checked) => handleSelectOne(docId, !!checked)}
+                              aria-label={`Select ${doc.filename}`}
+                            />
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-4 h-4 text-muted-foreground" />
+                              <span className="font-medium truncate max-w-[200px]">{doc.filename}</span>
+                            </div>
+                          </td>
+                          <td className="p-4"><StatusBadge status={doc.metadata?.status as string} /></td>
+                          <td className="p-4">{String(doc.metadata?.chunk_count ?? 0)}</td>
+                          <td className="p-4">{formatFileSize(doc.size)}</td>
+                          <td className="p-4 text-muted-foreground">{formatDate(doc.created_at)}</td>
+                          <td className="p-4 text-right">
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="min-w-[44px] min-h-[44px]" 
+                              onClick={() => handleDeleteDocument(String(doc.id))}
+                            >
+                              <Trash2 className="w-4 h-4 text-destructive" />
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </CardContent>
           </Card>
 
-          {/* Mobile Cards View (hidden on desktop) */}
-          <div className="grid grid-cols-1 gap-3 sm:hidden">
-            {filteredDocuments.map((doc) => (
-              <DocumentCard
-                key={doc.id}
-                document={doc}
-                onDelete={(id) => handleDeleteDocument(String(id))}
-              />
-            ))}
-          </div>
+           {/* Mobile Cards View (hidden on desktop) */}
+           <div className="grid grid-cols-1 gap-3 sm:hidden">
+             {filteredDocuments.map((doc) => (
+               <DocumentCard
+                 key={doc.id}
+                 document={doc}
+                 onDelete={(id) => handleDeleteDocument(String(id))}
+                 isSelected={selectedIds.has(doc.id)}
+                 onSelectionChange={handleSelectOne}
+               />
+             ))}
+           </div>
         </>
       )}
     </div>

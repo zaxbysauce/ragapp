@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import aiofiles
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Query, Body
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -205,6 +205,18 @@ class DeleteResponse(BaseModel):
     file_id: int
     status: str
     message: str
+
+
+class BatchDeleteResponse(BaseModel):
+    """Response model for batch document deletion."""
+    deleted_count: int
+    failed_ids: List[int]
+
+
+class DeleteAllVaultResponse(BaseModel):
+    """Response model for deleting all documents in a vault."""
+    deleted_count: int
+    vault_id: int
 
 
 def _row_to_document_response(row: sqlite3.Row) -> DocumentResponse:
@@ -592,6 +604,109 @@ async def delete_document(
         await asyncio.to_thread(conn.rollback)
         logger.exception("Error deleting document %d", file_id)
         raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
+
+
+@router.delete("/batch", response_model=BatchDeleteResponse)
+async def batch_delete_documents(
+    request: Request,
+    file_ids: List[int] = Body(..., description="List of file IDs to delete"),
+    conn: sqlite3.Connection = Depends(get_db),
+    auth: dict = Depends(require_auth),
+    vector_store: VectorStore = Depends(get_vector_store),
+):
+    """
+    Batch delete documents by IDs.
+
+    Deletes multiple documents from the database and removes all associated
+    chunks from the vector store. Returns count of successfully deleted
+    documents and any failed IDs.
+    """
+    deleted_count = 0
+    failed_ids: List[int] = []
+
+    for file_id in file_ids:
+        try:
+            # Check if file exists
+            cursor = await asyncio.to_thread(conn.execute, "SELECT id, file_name FROM files WHERE id = ?", (file_id,))
+            row = await asyncio.to_thread(cursor.fetchone)
+
+            if row is None:
+                failed_ids.append(file_id)
+                continue
+
+            file_name = row["file_name"]
+
+            # Delete from vector store first
+            try:
+                db = vector_store.db
+                if db is not None and "chunks" in db.table_names():
+                    vector_store.table = db.open_table("chunks")
+                    await asyncio.to_thread(vector_store.delete_by_file, str(file_id))
+            except Exception as e:
+                logger.warning("Error deleting chunks from vector store for file_id %d: %s", file_id, e)
+
+            # Delete from database
+            await asyncio.to_thread(conn.execute, "DELETE FROM files WHERE id = ?", (file_id,))
+            await asyncio.to_thread(conn.commit)
+            deleted_count += 1
+            logger.info("Deleted document '%s' (id: %d)", file_name, file_id)
+
+        except Exception as e:
+            logger.exception("Error deleting document %d", file_id)
+            failed_ids.append(file_id)
+
+    return BatchDeleteResponse(
+        deleted_count=deleted_count,
+        failed_ids=failed_ids,
+    )
+
+
+@router.delete("/vault/{vault_id}/all", response_model=DeleteAllVaultResponse)
+async def delete_all_vault_documents(
+    vault_id: int,
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_db),
+    auth: dict = Depends(require_auth),
+    vector_store: VectorStore = Depends(get_vector_store),
+):
+    """
+    Delete all documents in a vault.
+
+    Deletes all file records from the database and removes all associated
+    chunks from the vector store for the specified vault.
+    """
+    # Get all file IDs in the vault
+    cursor = await asyncio.to_thread(conn.execute, "SELECT id FROM files WHERE vault_id = ?", (vault_id,))
+    rows = await asyncio.to_thread(cursor.fetchall)
+
+    file_ids = [row["id"] for row in rows]
+    deleted_count = 0
+
+    for file_id in file_ids:
+        try:
+            # Delete from vector store first
+            try:
+                db = vector_store.db
+                if db is not None and "chunks" in db.table_names():
+                    vector_store.table = db.open_table("chunks")
+                    await asyncio.to_thread(vector_store.delete_by_file, str(file_id))
+            except Exception as e:
+                logger.warning("Error deleting chunks from vector store for file_id %d: %s", file_id, e)
+
+            # Delete from database
+            await asyncio.to_thread(conn.execute, "DELETE FROM files WHERE id = ?", (file_id,))
+            await asyncio.to_thread(conn.commit)
+            deleted_count += 1
+
+        except Exception as e:
+            logger.exception("Error deleting document %d from vault %d", file_id, vault_id)
+
+    logger.info("Deleted %d documents from vault %d", deleted_count, vault_id)
+
+    return DeleteAllVaultResponse(
+        deleted_count=deleted_count,
+        vault_id=vault_id,
+    )
 
 
 # Exception handler for validation errors (e.g., empty filename)
