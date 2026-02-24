@@ -251,7 +251,7 @@ class VectorStore:
                     # If we can't determine embedding_dim, leave it as None
                     pass
         
-        query = self.table.search(embedding, metric="cosine")
+        query = self.table.search(embedding)
 
         # Apply vault filter if specified
         if vault_id is not None:
