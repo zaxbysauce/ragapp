@@ -27,6 +27,17 @@ apiClient.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    // Handle 401 Unauthorized - clear auth and redirect
+    if (error.response?.status === 401) {
+      localStorage.removeItem("kv_api_key");
+      // Dispatch custom event that AuthProvider can listen to
+      window.dispatchEvent(new CustomEvent("auth:unauthorized"));
+      // Also try to redirect using router if available
+      if (window.history && window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
+    }
+
     // Extract the most useful error message
     let message = "An unexpected error occurred";
     

@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { PageShell } from "@/components/layout/PageShell";
 import ChatPage from "@/pages/ChatPage";
 import DocumentsPage from "@/pages/DocumentsPage";
 import MemoryPage from "@/pages/MemoryPage";
 import VaultsPage from "@/pages/VaultsPage";
 import SettingsPage from "@/pages/SettingsPage";
+import LoginPage from "@/pages/LoginPage";
 import { useHealthCheck } from "@/hooks/useHealthCheck";
+import { useState } from "react";
 
 type PageId = "chat" | "documents" | "memory" | "vaults" | "settings";
 
@@ -17,7 +21,7 @@ const pages: Record<PageId, React.ComponentType> = {
   settings: SettingsPage,
 };
 
-function App() {
+function MainApp() {
   const [activePage, setActivePage] = useState<PageId>("chat");
   const health = useHealthCheck({ pollInterval: 30000 });
 
@@ -31,6 +35,26 @@ function App() {
     >
       <CurrentPage />
     </PageShell>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/*"
+            element={
+              <ProtectedRoute>
+                <MainApp />
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 

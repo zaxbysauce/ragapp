@@ -36,7 +36,7 @@ Phase: 6 [IN PROGRESS] | Updated: 2026-02-23
   - No blocking I/O found in async paths
 
 ---
-## Phase 4: Refactoring - Batch 3: Frontend Modernization [IN PROGRESS]
+## Phase 4: Refactoring - Batch 3: Frontend Modernization [COMPLETE]
 - [N/A] 4.1: Decompose Monolithic App.tsx [SKIP]
   - STATUS: App.tsx is already clean (37 lines)
   - NOTE: SettingsPage.tsx (572 lines) is the monolithic component - extract into sub-components
@@ -44,24 +44,21 @@ Phase: 6 [IN PROGRESS] | Updated: 2026-02-23
 - [N/A] 4.2: Extract Custom Hooks [SKIP]
   - STATUS: Already done - useChatHistory, useSendMessage, useDebounce, useHealthCheck exist
   
-- [ ] 4.3: Optimize Re-renders [SMALL]
-  - FILE: frontend/src/pages/ChatPage.tsx, frontend/src/pages/DocumentsPage.tsx
-  - ADD: React.memo to MessageContent, MessageList components
-  - ADD: useMemo for expensive computations (message filtering, source dedup)
-  - ADD: useCallback for event handlers passed to child components
+- [x] 4.3: Optimize Re-renders [SMALL]
+  - COMMIT: 5cccc7a
+  - FILES: frontend/src/components/shared/MessageContent.tsx, MessageActions.tsx
+  - CHANGE: Added React.memo to SourcesList and MessageActions components
   
-- [ ] 4.4: Fix Chat History Loading Loop [SMALL]
+- [x] 4.4: Fix Chat History Loading Loop [SMALL]
+  - COMMIT: 5cccc7a
   - FILE: frontend/src/hooks/useChatHistory.ts
-  - ISSUE: refreshHistory called on every activeVaultId change, causes excessive re-fetching
-  - FIX: Add caching with stale-while-revalidate pattern; only refresh if data is >30s old
+  - CHANGE: Added module-level cache with 30s TTL; stale-while-revalidate pattern
   
-- [ ] 4.5: Decompose SettingsPage.tsx [MEDIUM]
-  - FILE: frontend/src/pages/SettingsPage.tsx (572 lines)
-  - EXTRACT: ConnectionSettings component
-  - EXTRACT: DocumentProcessingSettings component (chunk_size_chars, chunk_overlap_chars, etc.)
-  - EXTRACT: RAGSettings component (retrieval_top_k, max_distance_threshold, etc.)
-  - EXTRACT: APIKeySettings component
-  - RESULT: SettingsPage becomes a thin wrapper composing these components
+- [x] 4.5: Decompose SettingsPage.tsx [MEDIUM]
+  - COMMIT: 5cccc7a
+  - FILES: frontend/src/components/settings/*.tsx, SettingsPage.tsx
+  - CHANGE: Extracted APIKeySettings, ConnectionSettings, DocumentProcessingSettings, RAGSettings
+  - RESULT: SettingsPage reduced from 572 to 285 lines
 
 ---
 ## Phase 5: Validation & Cleanup [PENDING]
