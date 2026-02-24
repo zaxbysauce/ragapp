@@ -247,7 +247,7 @@ async def list_documents(
         cursor = await asyncio.to_thread(
             conn.execute,
             """
-            SELECT id, file_name, file_path, status, chunk_count, created_at, processed_at
+            SELECT id, file_name, file_path, status, chunk_count, file_size, created_at, processed_at
             FROM files
             WHERE vault_id = ?
             ORDER BY created_at DESC
@@ -258,7 +258,7 @@ async def list_documents(
         cursor = await asyncio.to_thread(
             conn.execute,
             """
-            SELECT id, file_name, file_path, status, chunk_count, created_at, processed_at
+            SELECT id, file_name, file_path, status, chunk_count, file_size, created_at, processed_at
             FROM files
             ORDER BY created_at DESC
             """

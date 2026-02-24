@@ -9,6 +9,7 @@ interface StatusBadgeProps {
 export function StatusBadge({ status }: StatusBadgeProps) {
   switch (status) {
     case "processed":
+    case "indexed":
       return (
         <Badge variant="default" className="bg-green-500">
           <CheckCircle className="w-3 h-3 mr-1" />
