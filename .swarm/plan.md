@@ -111,37 +111,31 @@ Based on comprehensive spec for eliminating UI/backend semantic drift and modern
   - acceptance: "Delete All" button to clear entire vault
 
 ### Sprint 8: RAG Retrieval Fix [CRITICAL]
-- [ ] 6.8.1: Fix max_distance_threshold default to enable relevance filtering [SMALL]
+- [x] 6.8.1: Fix max_distance_threshold default to enable relevance filtering [SMALL]
+  - COMMIT: 924ba70
   - FILE: backend/app/config.py
-  - CURRENT: max_distance_threshold: float | None = None (line 49)
-  - CHANGE: Set default to 0.5 for cosine distance (good relevance cutoff)
-  - RATIONALE: Cosine distance: 0=identical, 1=orthogonal, 2=opposite. 0.5 = 0.5 cosine similarity, good balance of precision/recall.
-  - acceptance: Default threshold is 0.5, can be overridden via env var MAX_DISTANCE_THRESHOLD
+  - CHANGE: max_distance_threshold: float = 0.5 (was Optional[float] = None)
   
-- [ ] 6.8.2: Fix fallback bug - remove garbage injection, inform LLM of no context [SMALL]
-  - FILE: backend/app/services/rag_engine.py lines 118-130
-  - CURRENT: When no chunks pass threshold, falls back to first result with distance=2.0 (worst match)
-  - CHANGE: Remove fallback injection. When no chunks pass threshold, set relevant_chunks=[] and include "No relevant documents found" in the context message to LLM.
-  - acceptance: No fake fallback with distance=2.0; LLM receives explicit "no relevant docs" message when appropriate
-  
-- [ ] 6.8.3: Add per-query retrieval logging for debugging [SMALL]
+- [x] 6.8.2: Fix fallback bug - remove garbage injection, inform LLM of no context [SMALL]
+  - COMMIT: 924ba70
   - FILE: backend/app/services/rag_engine.py
-  - ADD: After vector search (line 113), log: vault_id, top_k, result count, first 3 distances
-  - ADD: In _filter_relevant, log: initial count, filtered count, threshold used
-  - acceptance: Each chat query logs retrieval diagnostics at INFO level
+  - CHANGE: Removed fallback injection block (was lines 119-130)
+  - CHANGE: _build_messages now includes "No relevant documents found" when context is empty
   
-- [ ] 6.8.4: Fix vault_id defaults - consistent vault_id=1 across all endpoints [SMALL]
-  - FILE: backend/app/api/routes/chat.py ChatRequest (line 32), ChatStreamRequest (line 50)
-  - CURRENT: vault_id: Optional[int] = None (means search ALL vaults - data leakage risk)
-  - CHANGE: vault_id: int = 1 (match documents.py upload default)
-  - RATIONALE: None means no vault filter applied; multi-vault scenarios should explicitly choose, not default to all.
-  - acceptance: ChatRequest and ChatStreamRequest default to vault_id=1
+- [x] 6.8.3: Add per-query retrieval logging for debugging [SMALL]
+  - COMMIT: 924ba70
+  - FILE: backend/app/services/rag_engine.py
+  - CHANGE: Added vector search logging after results retrieved
   
-- [ ] 6.8.5: Display sources in chat UI [SMALL] [FRONTEND]
-  - FILE: frontend/src/components/chat/ or relevant chat display component
-  - CONTEXT: Backend already sends sources in "done" event (rag_engine.py:174-179)
-  - CHANGE: Capture sources from "done" event and render a "Sources" section below the assistant response
-  - acceptance: When backend returns sources, user sees document names with snippets in the chat UI
+- [x] 6.8.4: Fix vault_id defaults - consistent vault_id=1 across all endpoints [SMALL]
+  - COMMIT: 924ba70
+  - FILE: backend/app/api/routes/chat.py
+  - CHANGE: ChatRequest, ChatStreamRequest, stream_chat_response, non_stream_chat_response all default to vault_id=1
+  
+- [x] 6.8.5: Display sources in chat UI [SMALL] [FRONTEND]
+  - STATUS: Already implemented
+  - FILE: frontend/src/components/shared/MessageContent.tsx
+  - NOTE: SourcesList component was already present; backend sends sources in "done" event, frontend displays via MessageContent
   
 - [ ] 6.8.6: Update RAG engine tests for new threshold behavior [SMALL]
   - FILE: backend/tests/test_rag_engine.py or create if missing
