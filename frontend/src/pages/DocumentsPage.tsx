@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +32,15 @@ export default function DocumentsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [isBulkDeletingAll, setIsBulkDeletingAll] = useState(false);
+  const [filenameColWidth, setFilenameColWidth] = useState<number>(250);
+  const dragState = useRef<{ startX: number; startWidth: number }>({ startX: 0, startWidth: 0 });
+
+  // Cleanup on unmount: restore cursor if component is destroyed during a drag
+  useEffect(() => {
+    return () => {
+      document.body.style.cursor = '';
+    };
+  }, []);
 
   // Global upload store
   const { uploads, addUploads, cancelUpload, removeUpload, clearCompleted, retryUpload } = useUploadStore();
@@ -56,6 +65,28 @@ export default function DocumentsPage() {
       toast.error(err instanceof Error ? err.message : "Failed to load document stats");
     }
   }, [activeVaultId]);
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    dragState.current = { startX: e.clientX, startWidth: filenameColWidth };
+    const originalCursor = document.body.style.cursor;
+    document.body.style.cursor = 'col-resize';
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - dragState.current.startX;
+      const newWidth = Math.max(120, Math.min(600, dragState.current.startWidth + deltaX));
+      setFilenameColWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      document.body.style.cursor = originalCursor;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [filenameColWidth]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -553,7 +584,7 @@ export default function DocumentsPage() {
           <Card className="hidden sm:block">
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full" style={{ tableLayout: 'fixed' }}>
                   <caption className="sr-only">Documents List</caption>
                   <thead>
                     <tr className="border-b bg-muted/50">
@@ -564,7 +595,20 @@ export default function DocumentsPage() {
                           aria-label="Select all documents"
                         />
                       </th>
-                      <th scope="col" className="text-left p-4 font-medium">Filename</th>
+                      <th
+                        scope="col"
+                        className="text-left p-4 font-medium relative"
+                        style={{ width: filenameColWidth }}
+                      >
+                        Filename
+                        <div
+                          className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-border transition-colors"
+                          onMouseDown={handleResizeMouseDown}
+                          role="separator"
+                          aria-orientation="vertical"
+                          aria-label="Resize filename column"
+                        />
+                      </th>
                       <th scope="col" className="text-left p-4 font-medium">Status</th>
                       <th scope="col" className="text-left p-4 font-medium">Chunks</th>
                       <th scope="col" className="text-left p-4 font-medium">Size</th>
@@ -588,7 +632,7 @@ export default function DocumentsPage() {
                           <td className="p-4">
                             <div className="flex items-center gap-2">
                               <FileText className="w-4 h-4 text-muted-foreground" />
-                              <span className="font-medium truncate max-w-[200px]">{doc.filename}</span>
+                              <span className="font-medium truncate max-w-full" title={doc.filename}>{doc.filename}</span>
                             </div>
                           </td>
                           <td className="p-4"><StatusBadge status={doc.metadata?.status as string} /></td>
