@@ -22,6 +22,7 @@ class EmbeddingService:
     # Hard caps for input validation
     MAX_BATCH_SIZE = 512  # Maximum number of texts per batch call
     MAX_TEXT_LENGTH = 8192  # Maximum characters per text (derived from chunk_size_chars=8192)
+    MIN_SPLIT_CHARS = 200  # Minimum text length to attempt single-text splitting
 
     def __init__(self):
         """Initialize the embedding service with HTTP client and provider detection."""
@@ -444,11 +445,97 @@ class EmbeddingService:
                     f"Embedding batch HTTP error for {self.provider_mode} mode: {e}"
                 )
                 raise EmbeddingError("Embedding batch HTTP error occurred")
+
+    def _split_text_at_midpoint(self, text: str) -> tuple:
+        """
+        Split a single text into two parts at a boundary-aware midpoint.
+        
+        Prefers splitting at newline or space characters near the midpoint
+        to produce more natural splits. Falls back to strict midpoint if
+        boundary-aware split would result in empty sides.
+        
+        Args:
+            text: The text to split
+            
+        Returns:
+            Tuple of (left_text, right_text), both non-empty for splittable text
+        """
+        if len(text) <= 1:
+            return (text, "")
+        
+        midpoint = len(text) // 2
+        
+        # Try to find a better boundary near the midpoint
+        # Look for newline first, then space
+        search_start = max(0, midpoint - 50)
+        search_end = min(len(text), midpoint + 50)
+        
+        # Search for newline near midpoint (forward)
+        for i in range(midpoint, search_end):
+            if text[i] == '\n':
+                left, right = text[:i+1], text[i+1:]
+                # Ensure both sides are non-empty for splittable text
+                if left and right:
+                    return (left, right)
+        
+        # Search for newline near midpoint (backward)
+        for i in range(midpoint - 1, search_start - 1, -1):
+            if text[i] == '\n':
+                left, right = text[:i+1], text[i+1:]
+                if left and right:
+                    return (left, right)
+        
+        # Search for space near midpoint (forward)
+        for i in range(midpoint, search_end):
+            if text[i] == ' ':
+                left, right = text[:i], text[i:]
+                if left and right:
+                    return (left, right)
+        
+        # Search for space near midpoint (backward)
+        for i in range(midpoint - 1, search_start - 1, -1):
+            if text[i] == ' ':
+                left, right = text[:i], text[i:]
+                if left and right:
+                    return (left, right)
+        
+        # Fall back to strict midpoint (guaranteed non-empty for len > 1)
+        left, right = text[:midpoint], text[midpoint:]
+        # Double-check: if either is empty, adjust to ensure both non-empty
+        if not left:
+            left = text[:1]
+            right = text[1:]
+        elif not right:
+            right = text[-1:]
+            left = text[:-1]
+        
+        return (left, right)
+    
+    def _mean_pool_embeddings(self, emb1: List[float], emb2: List[float]) -> List[float]:
+        """
+        Mean-pool two embedding vectors into one.
+        
+        Args:
+            emb1: First embedding vector
+            emb2: Second embedding vector
+            
+        Returns:
+            Mean-pooled embedding vector
+        """
+        if len(emb1) != len(emb2):
+            raise EmbeddingError(
+                f"Cannot mean-pool embeddings of different dimensions: {len(emb1)} vs {len(emb2)}"
+            )
+        
+        return [(a + b) / 2.0 for a, b in zip(emb1, emb2)]
     
     async def _handle_overflow_retry(self, client: httpx.AsyncClient, texts: List[str],
                                      max_retries: int, min_sub_size: int, retry_count: int) -> List[List[float]]:
         """
         Helper method to handle overflow retry logic with bounded retries and minimum split size.
+        
+        For single-item overflow, attempts to split the text and mean-pool the results.
+        For multi-item overflow, splits the batch and processes each half.
         
         Args:
             client: HTTP client for making requests
@@ -472,15 +559,57 @@ class EmbeddingService:
                 f"Max retries ({max_retries}) exhausted for embedding batch"
             )
         
-        # Check if single item - this is actionable
+        # Handle single-item overflow with text splitting
         if len(texts) == 1:
-            logger.warning(
-                f"Single input still overflows token limit in {self.provider_mode} mode"
+            single_text = texts[0]
+            
+            # Check if text is too short to split - raise actionable error
+            if len(single_text) < self.MIN_SPLIT_CHARS:
+                logger.warning(
+                    f"Single input ({len(single_text)} chars) is below minimum split threshold ({self.MIN_SPLIT_CHARS}) in {self.provider_mode} mode"
+                )
+                raise EmbeddingError(
+                    f"Single input ({len(single_text)} chars) exceeds token limit and is too short to split. "
+                    f"Ensure chunk_size_chars is below server batch size limit (minimum {self.MIN_SPLIT_CHARS} chars required for recovery)."
+                )
+            
+            # Split text at boundary-aware midpoint and recurse
+            left_text, right_text = self._split_text_at_midpoint(single_text)
+            
+            # Guard: if either side is empty after split, raise actionable error
+            if not left_text or not right_text:
+                logger.error(
+                    f"Text split produced empty side (left={len(left_text)}, right={len(right_text)}) for text of length {len(single_text)}"
+                )
+                raise EmbeddingError(
+                    f"Cannot split text for embedding recovery: split produced empty segment. "
+                    f"Ensure chunk_size_chars is within server limits."
+                )
+            
+            logger.info(
+                f"Splitting single input ({len(single_text)} chars) into parts ({len(left_text)} + {len(right_text)} chars), retry {retry_count}"
             )
-            raise EmbeddingError(
-                f"Single input exceeds token limit. Try reducing text size or ensure chunk_size_chars is below server batch size limit."
+            
+            # Small bounded async backoff
+            backoff_delay = min(0.5 * (2 ** retry_count), 1.0)
+            await asyncio.sleep(backoff_delay)
+            
+            # Recurse on each part with incremented retry count
+            left_embeddings = await self._embed_batch_with_retry(
+                client, [left_text], max_retries, min_sub_size, retry_count=retry_count + 1
             )
+            right_embeddings = await self._embed_batch_with_retry(
+                client, [right_text], max_retries, min_sub_size, retry_count=retry_count + 1
+            )
+            
+            # Mean-pool the two embeddings into one
+            logger.debug("Using mean-pooling for overflow recovery")
+            pooled = self._mean_pool_embeddings(left_embeddings[0], right_embeddings[0])
+            
+            # Return single embedding to preserve one-embedding-per-input contract
+            return [pooled]
         
+        # Multi-item batch overflow - use existing split behavior
         # Check if we've reached minimum split size
         if len(texts) <= min_sub_size:
             logger.warning(
