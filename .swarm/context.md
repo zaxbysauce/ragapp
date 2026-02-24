@@ -1,8 +1,8 @@
 # KnowledgeVault Context
 
 **Project:** KnowledgeVault - Self-Hosted RAG Knowledge Base  
-**Swarm:** paid  
-**Current Phase:** UI/UX Improvements — IN PROGRESS
+**Swarm:** mega  
+**Current Phase:** Phase 6: RAG Best-Practice Alignment — IN PROGRESS
 **Last Updated:** 2026-02-22
 
 ---
@@ -29,50 +29,10 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 | 2026-02-11 | Keep SQLite connection-per-request pattern (not pooling) | SQLite connections are cheap; true connection pool adds complexity for embedded DB | Confirmed by SME |
 | 2026-02-11 | Make LLMClient.start() async | It creates httpx.AsyncClient; must be awaitable. All callers already use await. | Confirmed by SME |
 | 2026-02-11 | Remove ALL module-level singletons | Contradicts DI pattern in deps.py; causes test isolation issues | Confirmed by SME |
-
----
-
-## SME Cache
-
-### UI/UX (consulted 2026-02-22)
-
-**Top 3 Priorities:**
-1. Mobile navigation (bottom tabs + overflow drawer)
-2. Responsive document view (cards on mobile, table on desktop)
-3. Chat accessibility (live regions, ARIA labels, keyboard shortcuts)
-
-**Mobile Patterns:**
-- Bottom tab bar for primary 3-4 nav items, overflow drawer for rest
-- Document table → card grid below sm breakpoint
-- Chat sources collapsible accordion on mobile
-- All touch targets ≥44×44px (min-w-[44px] min-h-[44px])
-
-**Accessibility Requirements (WCAG 2.1 AA):**
-- Chat textarea: `aria-label="Message input"` + `role="textbox"`
-- Message list: `role="log"` with `aria-live="polite"`
-- Table: `<caption>`, `<th scope="col">`, `<th scope="row">`
-- Live regions: Use `react-aria-live` for streaming content
-- Keyboard shortcuts: Help dialog triggered by `?` (Shift + /)
-
-**Component Patterns:**
-- Chat controls: "More" dropdown (DropdownMenu) with Rename, Delete, Export
-- Upload queue: Stacked list with progress bars + cancel buttons
-- Empty states: Icon + message + CTA button
-- Status indicators: Follow shadcn badge patterns
-
-### Python/FastAPI (consulted 2026-02-11)
-
-1. **No-op decorator fix**: Whitelisted branch should return `await func()` directly; non-whitelisted branch should apply rate limiter via `async with rate_limiter`. Single wrapper, path-based decision.
-
-2. **Sync/async mismatch**: Make `LLMClient.start()` async since it creates `httpx.AsyncClient`. Call once at startup, not per-request. Register close in shutdown hook.
-
-3. **Singletons → DI**: Replace module-level `llm_client = LLMClient()` with `@lru_cache` factory in deps.py. Use `app.dependency_overrides` in tests. Watch for import cycles — keep deps.py imports minimal.
-
-4. **DB connections in services**: Pass connection via constructor, not internal `get_db_connection()`. For background tasks, pass connection explicitly via `background_tasks.add_task(fn, db)`. Use `check_same_thread=False` for async usage.
-
-5. **N+1 query fix**: Use `LEFT JOIN messages ON session_id GROUP BY session_id` with `COUNT(m.id)`. Add index `CREATE INDEX idx_messages_session_id ON messages(session_id)`.
-
-6. **Embedding batching**: Use `asyncio.gather` with `Semaphore(10)` for concurrent HTTP calls. Preserve ordering. Chunk into sub-batches of 64. Handle individual failures with try/except.
+| 2026-02-24 | Swarm context migrated from paid to mega | Align active architect identity and avoid stale swarm routing | Applied |
+| 2026-02-24 | Upload queue uses iterative locked processing | Prevent deadlock after first upload and handle per-file errors without stopping queue | Applied |
+| 2026-02-24 | Document parsing strategy is configurable, default fast | Reduce pre-embedding latency on text PDFs while preserving high-quality override | Applied |
+| 2026-02-24 | Single-input overflow uses split+mean-pool fallback | Avoid hard failures when one chunk exceeds llama.cpp physical batch token budget | Applied |
 
 ---
 
@@ -175,18 +135,21 @@ Previous work: Phases 1-6 of original implementation complete (security, DI, asy
 
 | Tool | Calls | Success | Failed | Avg Duration |
 |------|-------|---------|--------|--------------|
-| bash | 199 | 199 | 0 | 1745ms |
-| read | 107 | 107 | 0 | 6ms |
-| edit | 25 | 25 | 0 | 2179ms |
-| grep | 18 | 18 | 0 | 49ms |
-| task | 14 | 14 | 0 | 55307ms |
-| glob | 11 | 11 | 0 | 40ms |
-| retrieve_summary | 9 | 9 | 0 | 2ms |
-| apply_patch | 5 | 5 | 0 | 5ms |
-| write | 5 | 5 | 0 | 575ms |
-| lint | 4 | 4 | 0 | 2566ms |
-| secretscan | 2 | 2 | 0 | 88ms |
-| google_search | 1 | 1 | 0 | 3ms |
-| diff | 1 | 1 | 0 | 46ms |
-| test_runner | 1 | 1 | 0 | 1ms |
-| todowrite | 1 | 1 | 0 | 5ms |
+| read | 479 | 479 | 0 | 6ms |
+| bash | 183 | 183 | 0 | 4760ms |
+| edit | 150 | 150 | 0 | 643ms |
+| grep | 92 | 92 | 0 | 125ms |
+| task | 88 | 88 | 0 | 143828ms |
+| glob | 70 | 70 | 0 | 32ms |
+| invalid | 55 | 55 | 0 | 2ms |
+| write | 29 | 29 | 0 | 277ms |
+| lint | 21 | 21 | 0 | 2531ms |
+| retrieve_summary | 20 | 20 | 0 | 3ms |
+| diff | 19 | 19 | 0 | 37ms |
+| apply_patch | 14 | 14 | 0 | 701ms |
+| secretscan | 11 | 11 | 0 | 416ms |
+| imports | 10 | 10 | 0 | 3ms |
+| todowrite | 9 | 9 | 0 | 3ms |
+| test_runner | 9 | 9 | 0 | 1ms |
+| checkpoint | 1 | 1 | 0 | 6ms |
+| extract_code_blocks | 1 | 1 | 0 | 2ms |

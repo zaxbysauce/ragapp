@@ -59,6 +59,30 @@ Based on comprehensive spec for eliminating UI/backend semantic drift and modern
 - [ ] 6.3.2: Add dimension/schema validation at startup [SMALL]
 - [ ] 6.3.3: Implement adjacent-chunk windowing (fetch N±1 chunks) [MEDIUM]
 - [ ] 6.3.4: Add deduplication and capping for windowed results [SMALL]
+- [x] 6.3.5: Add adaptive embedding batching for low VRAM llama.cpp limits [SMALL]
+  - depends: none (hotfix independent of 6.3.1/6.3.2)
+  - acceptance: catch OpenAI-mode HTTP 500 messages containing "too large to process" and "current batch size"
+  - acceptance: retry by halving request batch length with bounded backoff until success or single-input case
+  - acceptance: if a single input still overflows, raise actionable EmbeddingError (reduce chunk_size_chars or increase server batch)
+  - acceptance: preserve output ordering and one-embedding-per-input for successful requests
+  - acceptance: add unit tests for overflow split behavior and single-input overflow failure path
+- [x] 6.3.6: Expose embedding_batch_size in /api/settings for UI tuning [SMALL]
+  - acceptance: GET /api/settings returns embedding_batch_size
+  - acceptance: POST/PUT /api/settings accepts and persists embedding_batch_size
+  - acceptance: backend settings tests cover read and update of embedding_batch_size
+- [x] 6.3.7: Fix frontend upload queue stall after first file [SMALL]
+  - acceptance: multiple queued uploads process sequentially until no pending files remain
+  - acceptance: queue continues after per-file error and does not deadlock in isProcessing=true
+- [x] 6.3.8: Reduce pre-embedding document parsing latency [SMALL]
+  - acceptance: default parser strategy avoids unconditional hi_res for all docs
+  - acceptance: first-GPU-use delay significantly reduced for text PDFs
+  - acceptance: retain configurable path for higher-quality parsing when needed
+- [x] 6.3.9: Handle single-input embedding overflow via adaptive split+pool fallback [SMALL]
+  - acceptance: when len(texts)==1 overflows, split text on boundary-aware midpoint and retry sub-embeddings instead of immediate 500
+  - acceptance: preserve one-embedding-per-input contract by mean-pooling split embeddings
+  - acceptance: define MIN_SPLIT_CHARS guard; if text cannot be split meaningfully, raise actionable EmbeddingError
+  - acceptance: keep existing prefix behavior consistent for split sub-inputs
+  - acceptance: update existing single-overflow test + add hard-failure boundary-case test
 
 ### Sprint 4: Code Boundary Safety [MEDIUM]
 - [ ] 6.4.1: Detect and prevent splitting inside fenced code blocks [MEDIUM]
@@ -69,3 +93,58 @@ Based on comprehensive spec for eliminating UI/backend semantic drift and modern
 - [ ] 6.5.2: Add unit tests for threshold filtering [SMALL]
 - [ ] 6.5.3: Add unit tests for window expansion [SMALL]
 - [ ] 6.5.4: Add integration test for RAG pipeline with tech docs [MEDIUM]
+
+### Sprint 7: UX Polish [LOW]
+- [ ] 6.7.1: Resizable Filename column in DocumentsPage table [SMALL]
+  - acceptance: drag handle on right edge of Filename `<th>` changes column width
+  - acceptance: min width 120px, max 600px, default 250px
+  - acceptance: filename `title` tooltip shows full name on hover
+  - acceptance: no other columns affected; no new npm packages; build passes
+
+### Sprint 6: Bulk Document Operations [MEDIUM]
+- [x] 6.6.1: Add backend endpoints for batch delete and vault delete-all [SMALL]
+  - acceptance: DELETE /api/documents/batch accepts array of IDs and deletes all
+  - acceptance: DELETE /api/documents/vault/{vault_id}/all deletes all docs in vault
+- [x] 6.6.2: Add frontend bulk delete UI in DocumentsPage [MEDIUM]
+  - acceptance: checkbox column in document table for multi-select
+  - acceptance: "Delete Selected" button appears when items selected
+  - acceptance: "Delete All" button to clear entire vault
+
+### Sprint 8: RAG Retrieval Fix [CRITICAL]
+- [ ] 6.8.1: Fix max_distance_threshold default to enable relevance filtering [SMALL]
+  - FILE: backend/app/config.py
+  - CURRENT: max_distance_threshold: float | None = None (line 49)
+  - CHANGE: Set default to 0.5 for cosine distance (good relevance cutoff)
+  - RATIONALE: Cosine distance: 0=identical, 1=orthogonal, 2=opposite. 0.5 = 0.5 cosine similarity, good balance of precision/recall.
+  - acceptance: Default threshold is 0.5, can be overridden via env var MAX_DISTANCE_THRESHOLD
+  
+- [ ] 6.8.2: Fix fallback bug - remove garbage injection, inform LLM of no context [SMALL]
+  - FILE: backend/app/services/rag_engine.py lines 118-130
+  - CURRENT: When no chunks pass threshold, falls back to first result with distance=2.0 (worst match)
+  - CHANGE: Remove fallback injection. When no chunks pass threshold, set relevant_chunks=[] and include "No relevant documents found" in the context message to LLM.
+  - acceptance: No fake fallback with distance=2.0; LLM receives explicit "no relevant docs" message when appropriate
+  
+- [ ] 6.8.3: Add per-query retrieval logging for debugging [SMALL]
+  - FILE: backend/app/services/rag_engine.py
+  - ADD: After vector search (line 113), log: vault_id, top_k, result count, first 3 distances
+  - ADD: In _filter_relevant, log: initial count, filtered count, threshold used
+  - acceptance: Each chat query logs retrieval diagnostics at INFO level
+  
+- [ ] 6.8.4: Fix vault_id defaults - consistent vault_id=1 across all endpoints [SMALL]
+  - FILE: backend/app/api/routes/chat.py ChatRequest (line 32), ChatStreamRequest (line 50)
+  - CURRENT: vault_id: Optional[int] = None (means search ALL vaults - data leakage risk)
+  - CHANGE: vault_id: int = 1 (match documents.py upload default)
+  - RATIONALE: None means no vault filter applied; multi-vault scenarios should explicitly choose, not default to all.
+  - acceptance: ChatRequest and ChatStreamRequest default to vault_id=1
+  
+- [ ] 6.8.5: Display sources in chat UI [SMALL] [FRONTEND]
+  - FILE: frontend/src/components/chat/ or relevant chat display component
+  - CONTEXT: Backend already sends sources in "done" event (rag_engine.py:174-179)
+  - CHANGE: Capture sources from "done" event and render a "Sources" section below the assistant response
+  - acceptance: When backend returns sources, user sees document names with snippets in the chat UI
+  
+- [ ] 6.8.6: Update RAG engine tests for new threshold behavior [SMALL]
+  - FILE: backend/tests/test_rag_engine.py or create if missing
+  - ADD: Test that chunks with distance > 0.5 are excluded
+  - ADD: Test that empty results when all chunks exceed threshold (no fallback injection)
+  - acceptance: Tests verify threshold filtering and empty context handling

@@ -29,7 +29,7 @@ class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, Any]] = Field(default_factory=list)
     stream: bool = False
-    vault_id: Optional[int] = None
+    vault_id: int = 1
 
 
 class ChatResponse(BaseModel):
@@ -47,7 +47,7 @@ class ChatMessage(BaseModel):
 
 class ChatStreamRequest(BaseModel):
     messages: List[ChatMessage]
-    vault_id: Optional[int] = None
+    vault_id: int = 1
 
 
 class CreateSessionRequest(BaseModel):
@@ -72,7 +72,7 @@ def stream_chat_response(
     message: str,
     history: List[Dict[str, Any]],
     rag_engine: Optional[RAGEngine],
-    vault_id: Optional[int] = None,
+    vault_id: int = 1,
 ) -> StreamingResponse:
     """
     Generate a streaming chat response using SSE format.
@@ -133,7 +133,7 @@ async def non_stream_chat_response(
     message: str,
     history: List[Dict[str, Any]],
     rag_engine: Optional[RAGEngine],
-    vault_id: Optional[int] = None,
+    vault_id: int = 1,
 ) -> ChatResponse:
     """
     Generate a non-streaming chat response.

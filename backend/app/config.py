@@ -46,8 +46,13 @@ class Settings(BaseSettings):
     """Number of top chunks to retrieve (unifies max_context_chunks and vector_top_k)."""
     vector_metric: str = "cosine"
     """Distance metric for vector similarity search."""
-    max_distance_threshold: float | None = None
-    """Maximum distance threshold for relevance filtering (replaces rag_relevance_threshold)."""
+    max_distance_threshold: float = 0.5
+    """Maximum distance threshold for relevance filtering (replaces rag_relevance_threshold).
+    
+    For cosine distance: 0=identical, 1=orthogonal, 2=opposite.
+    0.5 is a good default balance between precision and recall.
+    Can be overridden via MAX_DISTANCE_THRESHOLD env var.
+    """
     embedding_doc_prefix: str = ""
     """Prefix to prepend to documents during embedding."""
     embedding_query_prefix: str = ""

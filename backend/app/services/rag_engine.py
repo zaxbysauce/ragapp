@@ -111,23 +111,20 @@ class RAGEngine:
                     int(top_k_value),
                     vault_id=str(vault_id) if vault_id is not None else None,
                 )
+                
+                # Log vector search results
+                logger.info(
+                    "Vector search: vault_id=%s, top_k=%d, results=%d, distances=%s",
+                    vault_id,
+                    top_k_value,
+                    len(vector_results),
+                    [r.get("_distance") for r in vector_results[:3]] if vector_results else "N/A"
+                )
             except Exception as exc:
                 fallback_reason = str(exc)
                 vector_results = []
 
         relevant_chunks = self._filter_relevant(vector_results)
-        if not relevant_chunks and vector_results:
-            fallback_record = vector_results[0]
-            fallback_distance = fallback_record.get("_distance")
-            if fallback_distance is None:
-                fallback_distance = 2.0
-            fallback_source = RAGSource(
-                text=fallback_record.get("text", ""),
-                file_id=fallback_record.get("file_id", ""),
-                score=fallback_distance,
-                metadata=self._normalize_metadata(fallback_record.get("metadata")),
-            )
-            relevant_chunks = [fallback_source]
         if fallback_reason:
             logger.warning("Vector search fallback triggered: %s", fallback_reason)
             yield {
@@ -408,7 +405,7 @@ class RAGEngine:
         if context:
             user_content = f"Context:\n{context}\n\n"
         else:
-            user_content = ""
+            user_content = "No relevant documents found for this query.\n\n"
 
         memory_text = "\n".join(memory_context)
         if memory_text:
