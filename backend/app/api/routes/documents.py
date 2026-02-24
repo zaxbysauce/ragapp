@@ -210,7 +210,7 @@ class DeleteResponse(BaseModel):
 class BatchDeleteResponse(BaseModel):
     """Response model for batch document deletion."""
     deleted_count: int
-    failed_ids: List[int]
+    failed_ids: List[str]
 
 
 class DeleteAllVaultResponse(BaseModel):
@@ -609,7 +609,7 @@ async def delete_document(
 @router.delete("/batch", response_model=BatchDeleteResponse)
 async def batch_delete_documents(
     request: Request,
-    file_ids: List[int] = Body(..., description="List of file IDs to delete"),
+    file_ids: List[str] = Body(..., description="List of file IDs to delete"),
     conn: sqlite3.Connection = Depends(get_db),
     auth: dict = Depends(require_auth),
     vector_store: VectorStore = Depends(get_vector_store),
@@ -622,7 +622,7 @@ async def batch_delete_documents(
     documents and any failed IDs.
     """
     deleted_count = 0
-    failed_ids: List[int] = []
+    failed_ids: List[str] = []
 
     for file_id in file_ids:
         try:
