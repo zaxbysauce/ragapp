@@ -417,10 +417,20 @@ class EmbeddingService:
             logger.warning(
                 f"Embedding batch request timed out for {self.provider_mode} mode: {e}"
             )
-            # Timeouts are not overflow - use simple retry without splitting
+            # For multi-item batches: split and retry each half so the server
+            # gets smaller workloads — same recovery strategy as token overflow.
+            if len(texts) > 1 and retry_count < max_retries:
+                logger.info(
+                    f"Timeout with {len(texts)} items — splitting batch and retrying "
+                    f"(attempt {retry_count + 1}/{max_retries})"
+                )
+                return await self._handle_overflow_retry(
+                    client, texts, max_retries, min_sub_size, retry_count
+                )
+            # For single-item batches: simple backoff retry
             if retry_count < max_retries:
                 backoff_delay = min(0.5 * (2 ** retry_count), 2.0)
-                logger.info(f"Retrying timeout request (attempt {retry_count + 1}/{max_retries}) after {backoff_delay}s")
+                logger.info(f"Retrying single-item timeout (attempt {retry_count + 1}/{max_retries}) after {backoff_delay}s")
                 await asyncio.sleep(backoff_delay)
                 return await self._embed_batch_with_retry(
                     client, texts, max_retries, min_sub_size, retry_count + 1
