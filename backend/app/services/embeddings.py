@@ -417,7 +417,15 @@ class EmbeddingService:
             logger.warning(
                 f"Embedding batch request timed out for {self.provider_mode} mode: {e}"
             )
-            raise EmbeddingError("Embedding batch request timed out")
+            # Timeouts are not overflow - use simple retry without splitting
+            if retry_count < max_retries:
+                backoff_delay = min(0.5 * (2 ** retry_count), 2.0)
+                logger.info(f"Retrying timeout request (attempt {retry_count + 1}/{max_retries}) after {backoff_delay}s")
+                await asyncio.sleep(backoff_delay)
+                return await self._embed_batch_with_retry(
+                    client, texts, max_retries, min_sub_size, retry_count + 1
+                )
+            raise EmbeddingError(f"Embedding request timed out after {max_retries} retries")
         except httpx.HTTPError as e:
             # Check if this is a token overflow error
             error_msg = str(e)
