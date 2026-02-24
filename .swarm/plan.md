@@ -53,12 +53,27 @@ Phase: 6 [IN PROGRESS] | Updated: 2026-02-23
 Based on comprehensive spec for eliminating UI/backend semantic drift and modernizing RAG pipeline.
 
 ### Sprint 1: Settings & Chunking Unit Fix [CRITICAL]
-- [ ] 6.1.1: Add new character-based settings (chunk_size_chars, chunk_overlap_chars) [SMALL]
-- [ ] 6.1.2: Add retrieval_top_k to unify max_context_chunks/vector_top_k [SMALL]
-- [ ] 6.1.3: Add settings migration layer (legacy chunk_size → chunk_size_chars*4) [SMALL]
-- [ ] 6.1.4: Remove *4 scaling in chunking.py [SMALL]
-- [ ] 6.1.5: Update DocumentProcessor to store chunk metadata (file_id, chunk_index, chunk_uid) [SMALL]
-- [ ] 6.1.6: Update frontend SettingsPage labels and new fields [MEDIUM]
+- [x] 6.1.1: Add new character-based settings (chunk_size_chars, chunk_overlap_chars) [SMALL]
+  - STATUS: Already implemented in backend/config.py with validators
+  
+- [x] 6.1.2: Add retrieval_top_k to unify max_context_chunks/vector_top_k [SMALL]
+  - STATUS: Already implemented in backend/config.py
+  
+- [x] 6.1.3: Add settings migration layer (legacy chunk_size → chunk_size_chars*4) [SMALL]
+  - STATUS: Field validators in config.py handle migration
+  
+- [x] 6.1.4: Remove *4 scaling in chunking.py [SMALL]
+  - STATUS: chunking.py already uses chunk_size_chars directly
+  
+- [x] 6.1.5: Update DocumentProcessor to store chunk metadata (file_id, chunk_index, chunk_uid) [SMALL]
+  - STATUS: Already storing file_id, chunk_index, chunk_uid in vector store
+  
+- [ ] 6.1.6: Update frontend to use new field names (chunk_size_chars, chunk_overlap_chars, retrieval_top_k, max_distance_threshold) [MEDIUM]
+  - FILE: frontend/src/lib/api.ts, frontend/src/stores/useSettingsStore.ts, frontend/src/pages/SettingsPage.tsx
+  - CHANGE: Update SettingsResponse interface to use new field names
+  - CHANGE: Update useSettingsStore to use new field names
+  - CHANGE: Update SettingsPage form labels and mappings
+  - RATIONALE: Frontend currently using legacy names causing semantic drift
 
 ### Sprint 2: Retrieval & Threshold Fix [CRITICAL]
 - [ ] 6.2.1: Fix vector_store to expose _distance field from LanceDB [SMALL]

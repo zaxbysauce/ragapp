@@ -93,10 +93,10 @@ function SettingsPageContent() {
 
     try {
       const updated = await updateSettings({
-        chunk_size: formData.chunk_size,
-        chunk_overlap: formData.chunk_overlap,
-        retrieval_top_k: formData.max_context_chunks,
-        max_distance_threshold: formData.rag_relevance_threshold,
+        chunk_size_chars: formData.chunk_size_chars,
+        chunk_overlap_chars: formData.chunk_overlap_chars,
+        retrieval_top_k: formData.retrieval_top_k,
+        max_distance_threshold: formData.max_distance_threshold,
         auto_scan_enabled: formData.auto_scan_enabled,
         auto_scan_interval_minutes: formData.auto_scan_interval_minutes,
         retrieval_window: formData.retrieval_window,
@@ -235,12 +235,12 @@ function SettingsPageContent() {
                   <Input
                     type="number"
                     min={1}
-                    value={formData.chunk_size}
-                    onChange={(e) => handleInputChange("chunk_size", e.target.value)}
-                    className={errors.chunk_size ? "border-destructive" : ""}
+                    value={formData.chunk_size_chars}
+                    onChange={(e) => handleInputChange("chunk_size_chars", e.target.value)}
+                    className={errors.chunk_size_chars ? "border-destructive" : ""}
                   />
-                  {errors.chunk_size && (
-                    <p className="text-xs text-destructive">{errors.chunk_size}</p>
+                  {errors.chunk_size_chars && (
+                    <p className="text-xs text-destructive">{errors.chunk_size_chars}</p>
                   )}
                   <p className="text-xs text-muted-foreground">
                     Number of characters per document chunk
@@ -253,12 +253,12 @@ function SettingsPageContent() {
                   <Input
                     type="number"
                     min={1}
-                    value={formData.chunk_overlap}
-                    onChange={(e) => handleInputChange("chunk_overlap", e.target.value)}
-                    className={errors.chunk_overlap ? "border-destructive" : ""}
+                    value={formData.chunk_overlap_chars}
+                    onChange={(e) => handleInputChange("chunk_overlap_chars", e.target.value)}
+                    className={errors.chunk_overlap_chars ? "border-destructive" : ""}
                   />
-                  {errors.chunk_overlap && (
-                    <p className="text-xs text-destructive">{errors.chunk_overlap}</p>
+                  {errors.chunk_overlap_chars && (
+                    <p className="text-xs text-destructive">{errors.chunk_overlap_chars}</p>
                   )}
                   <p className="text-xs text-muted-foreground">
                     Number of overlapping characters between chunks (must be less than chunk size)
@@ -271,12 +271,12 @@ function SettingsPageContent() {
                   <Input
                     type="number"
                     min={1}
-                    value={formData.max_context_chunks}
-                    onChange={(e) => handleInputChange("max_context_chunks", e.target.value)}
-                    className={errors.max_context_chunks ? "border-destructive" : ""}
+                    value={formData.retrieval_top_k}
+                    onChange={(e) => handleInputChange("retrieval_top_k", e.target.value)}
+                    className={errors.retrieval_top_k ? "border-destructive" : ""}
                   />
-                  {errors.max_context_chunks && (
-                    <p className="text-xs text-destructive">{errors.max_context_chunks}</p>
+                  {errors.retrieval_top_k && (
+                    <p className="text-xs text-destructive">{errors.retrieval_top_k}</p>
                   )}
                   <p className="text-xs text-muted-foreground">
                     Maximum number of chunks to retrieve and include in context
@@ -292,22 +292,22 @@ function SettingsPageContent() {
                       min={0}
                       max={1}
                       step={0.01}
-                      value={formData.rag_relevance_threshold}
-                      onChange={(e) => handleInputChange("rag_relevance_threshold", e.target.value)}
-                      className={`w-24 ${errors.rag_relevance_threshold ? "border-destructive" : ""}`}
+                      value={formData.max_distance_threshold}
+                      onChange={(e) => handleInputChange("max_distance_threshold", e.target.value)}
+                      className={`w-24 ${errors.max_distance_threshold ? "border-destructive" : ""}`}
                     />
                     <input
                       type="range"
                       min={0}
                       max={1}
                       step={0.01}
-                      value={formData.rag_relevance_threshold}
-                      onChange={(e) => handleInputChange("rag_relevance_threshold", e.target.value)}
+                      value={formData.max_distance_threshold}
+                      onChange={(e) => handleInputChange("max_distance_threshold", e.target.value)}
                       className="flex-1"
                     />
                   </div>
-                  {errors.rag_relevance_threshold && (
-                    <p className="text-xs text-destructive">{errors.rag_relevance_threshold}</p>
+                  {errors.max_distance_threshold && (
+                    <p className="text-xs text-destructive">{errors.max_distance_threshold}</p>
                   )}
                   <p className="text-xs text-muted-foreground">
                     Maximum distance (1-0) for chunks to be included in context (lower = more strict)

@@ -2,12 +2,12 @@ import { create } from "zustand";
 import type { SettingsResponse } from "@/lib/api";
 
 export interface SettingsFormData {
-  chunk_size: number;
-  chunk_overlap: number;
-  max_context_chunks: number;
+  chunk_size_chars: number;
+  chunk_overlap_chars: number;
+  retrieval_top_k: number;
   auto_scan_enabled: boolean;
   auto_scan_interval_minutes: number;
-  rag_relevance_threshold: number;
+  max_distance_threshold: number;
   retrieval_window: number;
   vector_metric: string;
   embedding_doc_prefix: string;
@@ -16,11 +16,11 @@ export interface SettingsFormData {
 }
 
 export interface SettingsErrors {
-  chunk_size?: string;
-  chunk_overlap?: string;
-  max_context_chunks?: string;
+  chunk_size_chars?: string;
+  chunk_overlap_chars?: string;
+  retrieval_top_k?: string;
   auto_scan_interval_minutes?: string;
-  rag_relevance_threshold?: string;
+  max_distance_threshold?: string;
   retrieval_window?: string;
   vector_metric?: string;
   embedding_doc_prefix?: string;
@@ -69,12 +69,12 @@ export interface SettingsState {
 }
 
 const defaultFormData: SettingsFormData = {
-  chunk_size: 1000,
-  chunk_overlap: 200,
-  max_context_chunks: 5,
+  chunk_size_chars: 2000,
+  chunk_overlap_chars: 200,
+  retrieval_top_k: 5,
   auto_scan_enabled: false,
   auto_scan_interval_minutes: 60,
-  rag_relevance_threshold: 0.7,
+  max_distance_threshold: 0.7,
   retrieval_window: 1,
   vector_metric: "cosine",
   embedding_doc_prefix: "Passage: ",
@@ -135,12 +135,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   initializeForm: (settings) => {
     set({
       formData: {
-        chunk_size: settings.chunk_size ?? 1000,
-        chunk_overlap: settings.chunk_overlap ?? 200,
-        max_context_chunks: settings.max_context_chunks ?? 5,
+        chunk_size_chars: settings.chunk_size_chars ?? 2000,
+        chunk_overlap_chars: settings.chunk_overlap_chars ?? 200,
+        retrieval_top_k: settings.retrieval_top_k ?? 5,
         auto_scan_enabled: settings.auto_scan_enabled ?? false,
         auto_scan_interval_minutes: settings.auto_scan_interval_minutes ?? 60,
-        rag_relevance_threshold: settings.rag_relevance_threshold ?? 0.7,
+        max_distance_threshold: settings.max_distance_threshold ?? 0.7,
         retrieval_window: settings.retrieval_window ?? 1,
         vector_metric: settings.vector_metric ?? "cosine",
         embedding_doc_prefix: settings.embedding_doc_prefix ?? "Passage: ",
@@ -157,14 +157,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const newErrors: SettingsErrors = {};
 
     // Validate positive integers
-    if (formData.chunk_size <= 0) {
-      newErrors.chunk_size = "Chunk size must be a positive integer";
+    if (formData.chunk_size_chars <= 0) {
+      newErrors.chunk_size_chars = "Chunk size must be a positive integer";
     }
-    if (formData.chunk_overlap <= 0) {
-      newErrors.chunk_overlap = "Chunk overlap must be a positive integer";
+    if (formData.chunk_overlap_chars <= 0) {
+      newErrors.chunk_overlap_chars = "Chunk overlap must be a positive integer";
     }
-    if (formData.max_context_chunks <= 0) {
-      newErrors.max_context_chunks = "Max context chunks must be a positive integer";
+    if (formData.retrieval_top_k <= 0) {
+      newErrors.retrieval_top_k = "Retrieval top-k must be a positive integer";
     }
     if (formData.auto_scan_interval_minutes <= 0) {
       newErrors.auto_scan_interval_minutes = "Scan interval must be a positive integer";
@@ -174,13 +174,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
 
     // Validate overlap < size
-    if (formData.chunk_overlap >= formData.chunk_size) {
-      newErrors.chunk_overlap = "Chunk overlap must be less than chunk size";
+    if (formData.chunk_overlap_chars >= formData.chunk_size_chars) {
+      newErrors.chunk_overlap_chars = "Chunk overlap must be less than chunk size";
     }
 
     // Validate threshold is between 0 and 1
-    if (formData.rag_relevance_threshold < 0 || formData.rag_relevance_threshold > 1) {
-      newErrors.rag_relevance_threshold = "Relevance threshold must be between 0 and 1";
+    if (formData.max_distance_threshold < 0 || formData.max_distance_threshold > 1) {
+      newErrors.max_distance_threshold = "Distance threshold must be between 0 and 1";
     }
 
     // Validate retrieval window (0-3)
@@ -202,12 +202,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const { settings, formData } = get();
     if (!settings) return false;
     return (
-      formData.chunk_size !== (settings.chunk_size ?? 1000) ||
-      formData.chunk_overlap !== (settings.chunk_overlap ?? 200) ||
-      formData.max_context_chunks !== (settings.max_context_chunks ?? 5) ||
+      formData.chunk_size_chars !== (settings.chunk_size_chars ?? 2000) ||
+      formData.chunk_overlap_chars !== (settings.chunk_overlap_chars ?? 200) ||
+      formData.retrieval_top_k !== (settings.retrieval_top_k ?? 5) ||
       formData.auto_scan_enabled !== (settings.auto_scan_enabled ?? false) ||
       formData.auto_scan_interval_minutes !== (settings.auto_scan_interval_minutes ?? 60) ||
-      formData.rag_relevance_threshold !== (settings.rag_relevance_threshold ?? 0.7) ||
+      formData.max_distance_threshold !== (settings.max_distance_threshold ?? 0.7) ||
       formData.retrieval_window !== (settings.retrieval_window ?? 1) ||
       formData.vector_metric !== (settings.vector_metric ?? "cosine") ||
       formData.embedding_doc_prefix !== (settings.embedding_doc_prefix ?? "Passage: ") ||

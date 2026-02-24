@@ -89,14 +89,13 @@ export interface SettingsResponse {
   embedding_model: string;
   chat_model: string;
 
-  // Document processing (user-configurable)
-  chunk_size: number;
-  chunk_overlap: number;
-  max_context_chunks: number;
+  // Document processing (character-based)
+  chunk_size_chars: number;
+  chunk_overlap_chars: number;
+  retrieval_top_k: number;
 
-  // RAG config (user-configurable)
-  rag_relevance_threshold: number;
-  vector_top_k: number;
+  // RAG config
+  max_distance_threshold: number;
   retrieval_window: number;
   vector_metric: string;
 
@@ -122,13 +121,11 @@ export interface SettingsResponse {
 }
 
 export interface UpdateSettingsRequest {
-  chunk_size?: number;
-  chunk_overlap?: number;
-  max_context_chunks?: number;
+  chunk_size_chars?: number;
+  chunk_overlap_chars?: number;
+  retrieval_top_k?: number;
   auto_scan_enabled?: boolean;
   auto_scan_interval_minutes?: number;
-  rag_relevance_threshold?: number;
-  retrieval_top_k?: number;
   max_distance_threshold?: number;
   retrieval_window?: number;
   vector_metric?: string;
