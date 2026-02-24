@@ -606,7 +606,7 @@ async def delete_document(
         raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
 
 
-@router.delete("/batch", response_model=BatchDeleteResponse)
+@router.post("/batch", response_model=BatchDeleteResponse)
 async def batch_delete_documents(
     request: Request,
     file_ids: List[str] = Body(..., description="List of file IDs to delete"),

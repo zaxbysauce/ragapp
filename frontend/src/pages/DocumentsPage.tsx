@@ -575,7 +575,7 @@ export default function DocumentsPage() {
                   <tbody>
                     {filteredDocuments.map((doc) => {
                       const docId = String(doc.id);
-                      const isSelected = selectedIds.has(docId);
+                      const isSelected = Boolean(selectedIds.has(docId));
                       return (
                         <tr key={doc.id} className={`border-b hover:bg-muted/50 ${isSelected ? 'bg-muted/30' : ''}`}>
                           <td className="p-4">

@@ -423,7 +423,7 @@ export async function deleteDocument(fileId: string): Promise<void> {
 }
 
 export async function deleteDocuments(fileIds: string[]): Promise<{ deleted_count: number, failed_ids: string[] }> {
-  const response = await apiClient.delete<{ deleted_count: number, failed_ids: string[] }>("/documents/batch", { data: { file_ids: fileIds }, headers: { 'Content-Type': 'application/json' } });
+  const response = await apiClient.post<{ deleted_count: number, failed_ids: string[] }>("/documents/batch", { file_ids: fileIds });
   return response.data;
 }
 
