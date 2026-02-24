@@ -18,10 +18,22 @@ Phase: 6 [IN PROGRESS] | Updated: 2026-02-23
 - [x] 2.5: Fix Global HTTP Client Leak (backend/app/services/llm_client.py) [SMALL]
 
 ---
-## Phase 3: Refactoring - Batch 2: Core Architecture (Backend) [IN PROGRESS]
-- [ ] 3.1: Implement Dependency Injection for Services (Remove Global Singletons) [SMALL]
-- [ ] 3.2: Implement Database Connection Pooling (Remove new connection per request) [SMALL]
-- [ ] 3.3: Standardize Async/Sync boundaries (Fix blocking I/O) [SMALL]
+## Phase 3: Refactoring - Batch 2: Core Architecture (Backend) [COMPLETE]
+- [x] 3.1: Implement Dependency Injection for Services (Remove Global Singletons) [SMALL]
+  - COMMIT: e19c7de
+  - FILE: backend/app/services/llm_health.py, backend/app/main.py
+  - CHANGE: LLMHealthChecker now accepts embedding_service and llm_client via constructor instead of creating instances
+  - NOTE: Full DI infrastructure already in place (deps.py, app.state), removed last singleton violation
+  
+- [N/A] 3.2: Implement Database Connection Pooling [SKIP]
+  - DECISION: Keep SQLite connection-per-request pattern (SME confirmed 2026-02-11)
+  - RATIONALE: SQLite connections are cheap; true connection pool adds complexity for embedded DB
+  
+- [N/A] 3.3: Standardize Async/Sync boundaries [SKIP]
+  - STATUS: Already standardized
+  - All blocking SQLite operations use asyncio.to_thread
+  - Both sync (time.sleep) and async (asyncio.sleep) retry decorators available
+  - No blocking I/O found in async paths
 
 ---
 ## Phase 4: Refactoring - Batch 3: Frontend Modernization [PENDING]
