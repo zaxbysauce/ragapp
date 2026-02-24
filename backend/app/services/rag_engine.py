@@ -105,6 +105,15 @@ class RAGEngine:
 
         fallback_reason: Optional[str] = None
         vector_results: List[Dict[str, Any]]
+        
+        # DEBUG: Log pre-vector-search state
+        logger.debug(
+            "RAG query: retrieval_top_k=%d, vault_id=%s, vector_store_connected=%s",
+            self.retrieval_top_k,
+            vault_id,
+            getattr(self.vector_store, 'is_connected', lambda: 'unknown')()
+        )
+        
         if self.maintenance_mode:
             fallback_reason = "RAG index is under maintenance"
             vector_results = []
@@ -206,6 +215,17 @@ class RAGEngine:
         sources: List[RAGSource] = []
         distances: List[float] = []
         
+        # DEBUG: Log pre-filtering state
+        input_count = len(results)
+        logger.debug(
+            "Filtering: input_results=%d, max_distance_threshold=%s",
+            input_count,
+            self.max_distance_threshold
+        )
+        if results:
+            first_distances = [r.get("_distance", r.get("score")) for r in results[:5]]
+            logger.debug("First few _distance values: %s", first_distances)
+        
         for record in results:
             # Use _distance from LanceDB (lower is better for cosine)
             has_distance = "_distance" in record
@@ -264,6 +284,17 @@ class RAGEngine:
         # Apply window expansion if enabled
         if self.retrieval_window > 0:
             sources = self._expand_window(sources)
+        
+        # DEBUG: Log filtering results summary
+        filtered_count = len(sources)
+        if input_count > 0 and filtered_count == 0:
+            logger.warning(
+                "Filtering issue: %d input results but 0 after filtering. "
+                "Check max_distance_threshold (%.3f) - distances may exceed threshold.",
+                input_count,
+                self.max_distance_threshold
+            )
+        logger.debug("Filtering complete: %d results returned", filtered_count)
         
         return sources
     
@@ -415,6 +446,17 @@ class RAGEngine:
             messages.append(entry)
 
         context = "\n\n".join(filter(None, context_sections))
+        
+        # DEBUG: Log context being sent to LLM
+        logger.info(
+            "Building messages: chunks=%d, memories=%d, context_length=%d",
+            len(chunks),
+            len(memory_context),
+            len(context)
+        )
+        if context:
+            logger.debug("Context preview (first 500 chars): %s", context[:500])
+        
         if context:
             user_content = f"Context:\n{context}\n\n"
         else:
