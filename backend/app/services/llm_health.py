@@ -4,7 +4,7 @@ LLM service health check helper.
 Provides health check functionality for embedding and chat services
 with short timeouts suitable for health check endpoints.
 """
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import httpx
 
 from app.services.embeddings import EmbeddingService, EmbeddingError
@@ -16,16 +16,26 @@ class LLMHealthChecker:
     Health checker for LLM services (embeddings and chat).
     
     Uses short timeouts suitable for health check endpoints.
+    Supports dependency injection for optional service instances.
     """
     
-    def __init__(self, timeout: float = 5.0):
+    def __init__(
+        self,
+        timeout: float = 5.0,
+        embedding_service: Optional[EmbeddingService] = None,
+        llm_client: Optional[LLMClient] = None
+    ):
         """
         Initialize the health checker.
         
         Args:
             timeout: Request timeout in seconds for health checks (default: 5.0)
+            embedding_service: Optional injected EmbeddingService instance
+            llm_client: Optional injected LLMClient instance
         """
         self.timeout = timeout
+        self._embedding_service = embedding_service
+        self._llm_client = llm_client
     
     async def check_embeddings(self) -> Dict[str, Any]:
         """
@@ -38,9 +48,13 @@ class LLMHealthChecker:
             - ok: bool indicating if the service is healthy
             - error: Error message if not healthy, None otherwise
         """
+        service = self._embedding_service
+        created_locally = False
+        
         try:
-            # Create embedding service with short timeout for health check
-            service = EmbeddingService()
+            if service is None:
+                service = EmbeddingService()
+                created_locally = True
             
             # Temporarily override timeout for health check
             original_timeout = service.timeout
@@ -73,19 +87,19 @@ class LLMHealthChecker:
             - ok: bool indicating if the service is healthy
             - error: Error message if not healthy, None otherwise
         """
+        client = self._llm_client
+        created_locally = False
+        
         try:
-            # Create LLM client with short timeout for health check
-            client = LLMClient(timeout=self.timeout)
-            await client.start()
+            if client is None:
+                client = LLMClient(timeout=self.timeout)
+                created_locally = True
+                await client.start()
             
-            try:
-                # Attempt a simple chat completion
-                messages = [{"role": "user", "content": "ping"}]
-                await client.chat_completion(messages)
-                return {"ok": True, "error": None}
-            finally:
-                # Ensure client is closed
-                await client.close()
+            # Attempt a simple chat completion
+            messages = [{"role": "user", "content": "ping"}]
+            await client.chat_completion(messages)
+            return {"ok": True, "error": None}
                 
         except LLMError as e:
             return {"ok": False, "error": f"Chat service error: {str(e)}"}
@@ -93,6 +107,10 @@ class LLMHealthChecker:
             return {"ok": False, "error": f"Chat service timeout: {str(e)}"}
         except Exception as e:
             return {"ok": False, "error": f"Chat service unexpected error: {str(e)}"}
+        finally:
+            # Ensure locally created client is closed
+            if created_locally and client is not None:
+                await client.close()
     
     async def check_all(self) -> Dict[str, Any]:
         """

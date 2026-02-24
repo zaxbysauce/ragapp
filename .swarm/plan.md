@@ -137,8 +137,10 @@ Based on comprehensive spec for eliminating UI/backend semantic drift and modern
   - FILE: frontend/src/components/shared/MessageContent.tsx
   - NOTE: SourcesList component was already present; backend sends sources in "done" event, frontend displays via MessageContent
   
-- [ ] 6.8.6: Update RAG engine tests for new threshold behavior [SMALL]
-  - FILE: backend/tests/test_rag_engine.py or create if missing
-  - ADD: Test that chunks with distance > 0.5 are excluded
-  - ADD: Test that empty results when all chunks exceed threshold (no fallback injection)
-  - acceptance: Tests verify threshold filtering and empty context handling
+- [x] 6.8.6: Update RAG engine tests for new threshold behavior [SMALL]
+  - COMMIT: 394a9aa
+  - FILE: backend/tests/test_rag_engine.py
+  - CHANGE: Updated 4 tests to use _distance instead of score
+  - CHANGE: Added test_filter_relevant_filters_by_distance_with_lancedb_results
+  - CHANGE: Added test_no_fallback_injection_when_all_chunks_filtered
+  - acceptance: All 12 tests pass

@@ -130,7 +130,10 @@ async def lifespan(app: FastAPI):
     app.state.toggle_manager = ToggleManager(app.state.db_pool)
     app.state.csrf_manager = CSRFManager(settings.redis_url, settings.csrf_token_ttl)
     app.state.maintenance_service = MaintenanceService(app.state.db_pool)
-    app.state.llm_health_checker = LLMHealthChecker()
+    app.state.llm_health_checker = LLMHealthChecker(
+        embedding_service=app.state.embedding_service,
+        llm_client=app.state.llm_client,
+    )
     app.state.model_checker = ModelChecker()
     app.state.model_validation = (
         settings.enable_model_validation

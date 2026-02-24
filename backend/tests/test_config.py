@@ -28,7 +28,7 @@ class TestSettingsDefaults(unittest.TestCase):
         self.assertEqual(settings.chunk_overlap_chars, 200)
         self.assertEqual(settings.retrieval_top_k, 12)
         self.assertEqual(settings.vector_metric, "cosine")
-        self.assertIsNone(settings.max_distance_threshold)
+        self.assertEqual(settings.max_distance_threshold, 0.5)  # Default threshold for cosine distance
         self.assertEqual(settings.embedding_doc_prefix, "")
         self.assertEqual(settings.embedding_query_prefix, "")
         self.assertEqual(settings.retrieval_window, 1)
