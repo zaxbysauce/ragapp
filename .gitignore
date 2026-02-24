@@ -63,3 +63,6 @@ nul
 *.zip
 packaged_export/
 test_analysis.txt
+
+# Swarm local files
+.swarm/
