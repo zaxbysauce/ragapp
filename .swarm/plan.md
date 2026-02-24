@@ -68,24 +68,47 @@ Based on comprehensive spec for eliminating UI/backend semantic drift and modern
 - [x] 6.1.5: Update DocumentProcessor to store chunk metadata (file_id, chunk_index, chunk_uid) [SMALL]
   - STATUS: Already storing file_id, chunk_index, chunk_uid in vector store
   
-- [ ] 6.1.6: Update frontend to use new field names (chunk_size_chars, chunk_overlap_chars, retrieval_top_k, max_distance_threshold) [MEDIUM]
-  - FILE: frontend/src/lib/api.ts, frontend/src/stores/useSettingsStore.ts, frontend/src/pages/SettingsPage.tsx
-  - CHANGE: Update SettingsResponse interface to use new field names
-  - CHANGE: Update useSettingsStore to use new field names
-  - CHANGE: Update SettingsPage form labels and mappings
-  - RATIONALE: Frontend currently using legacy names causing semantic drift
+- [x] 6.1.6: Update frontend to use new field names (chunk_size_chars, chunk_overlap_chars, retrieval_top_k, max_distance_threshold) [MEDIUM]
+  - COMMIT: 92f4e2f
+  - FILES: frontend/src/lib/api.ts, frontend/src/stores/useSettingsStore.ts, frontend/src/pages/SettingsPage.tsx
+  - CHANGE: Updated SettingsResponse to use chunk_size_chars, chunk_overlap_chars, retrieval_top_k, max_distance_threshold
 
 ### Sprint 2: Retrieval & Threshold Fix [CRITICAL]
-- [ ] 6.2.1: Fix vector_store to expose _distance field from LanceDB [SMALL]
-- [ ] 6.2.2: Fix RAG engine threshold logic (use _distance not score) [MEDIUM]
-- [ ] 6.2.3: Change threshold to max_distance_threshold (lower=better) [SMALL]
-- [ ] 6.2.4: Add per-query logging (initial_hits, filtered_count, distance stats) [SMALL]
+- [x] 6.2.1: Fix vector_store to expose _distance field from LanceDB [SMALL]
+  - STATUS: LanceDB returns _distance by default; vector_store.search returns it
+  
+- [x] 6.2.2: Fix RAG engine threshold logic (use _distance not score) [MEDIUM]
+  - COMMIT: 924ba70
+  - FILE: backend/app/services/rag_engine.py
+  - CHANGE: _filter_relevant uses _distance field from LanceDB results
+  
+- [x] 6.2.3: Change threshold to max_distance_threshold (lower=better) [SMALL]
+  - COMMIT: 924ba70
+  - FILE: backend/app/config.py
+  - CHANGE: max_distance_threshold = 0.5 (distance-based, lower=better)
+  
+- [x] 6.2.4: Add per-query logging (initial_hits, filtered_count, distance stats) [SMALL]
+  - COMMIT: 924ba70
+  - FILE: backend/app/services/rag_engine.py
+  - CHANGE: Added logging after vector search and in _filter_relevant
 
 ### Sprint 3: Embeddings & Windowing [HIGH]
-- [ ] 6.3.1: Add embedding instruction prefixes (doc_prefix, query_prefix) [SMALL]
-- [ ] 6.3.2: Add dimension/schema validation at startup [SMALL]
-- [ ] 6.3.3: Implement adjacent-chunk windowing (fetch N±1 chunks) [MEDIUM]
-- [ ] 6.3.4: Add deduplication and capping for windowed results [SMALL]
+- [x] 6.3.1: Add embedding instruction prefixes (doc_prefix, query_prefix) [SMALL]
+  - FILE: backend/app/services/embeddings.py
+  - CHANGE: embedding_doc_prefix and embedding_query_prefix applied in embed_batch and embed_single
+  - NOTE: Auto-applied Qwen3 prefixes for Qwen models; user-configurable for others
+  
+- [x] 6.3.2: Add dimension/schema validation at startup [SMALL]
+  - FILE: backend/app/main.py (lifespan)
+  - CHANGE: Vector store schema validation with embedding dimension check
+  
+- [x] 6.3.3: Implement adjacent-chunk windowing (fetch N±1 chunks) [MEDIUM]
+  - FILE: backend/app/services/rag_engine.py
+  - CHANGE: _expand_window method fetches adjacent chunks by UID
+  
+- [x] 6.3.4: Add deduplication and capping for windowed results [SMALL]
+  - FILE: backend/app/services/rag_engine.py
+  - CHANGE: seen_uids set deduplicates; capping to retrieval_top_k
 - [x] 6.3.5: Add adaptive embedding batching for low VRAM llama.cpp limits [SMALL]
   - depends: none (hotfix independent of 6.3.1/6.3.2)
   - acceptance: catch OpenAI-mode HTTP 500 messages containing "too large to process" and "current batch size"
@@ -112,8 +135,13 @@ Based on comprehensive spec for eliminating UI/backend semantic drift and modern
   - acceptance: update existing single-overflow test + add hard-failure boundary-case test
 
 ### Sprint 4: Code Boundary Safety [MEDIUM]
-- [ ] 6.4.1: Detect and prevent splitting inside fenced code blocks [MEDIUM]
-- [ ] 6.4.2: Detect and prevent splitting inside markdown tables [MEDIUM]
+- [x] 6.4.1: Detect and prevent splitting inside fenced code blocks [MEDIUM]
+  - FILE: backend/app/services/chunking.py
+  - CHANGE: _post_process_chunks detects odd number of ``` fences and merges chunks
+  
+- [x] 6.4.2: Detect and prevent splitting inside markdown tables [MEDIUM]
+  - FILE: backend/app/services/chunking.py
+  - CHANGE: _post_process_chunks detects lines starting with | and merges table chunks
 
 ### Sprint 5: Tests & Observability [HIGH]
 - [ ] 6.5.1: Add unit tests for settings migration [SMALL]
@@ -122,11 +150,10 @@ Based on comprehensive spec for eliminating UI/backend semantic drift and modern
 - [ ] 6.5.4: Add integration test for RAG pipeline with tech docs [MEDIUM]
 
 ### Sprint 7: UX Polish [LOW]
-- [ ] 6.7.1: Resizable Filename column in DocumentsPage table [SMALL]
-  - acceptance: drag handle on right edge of Filename `<th>` changes column width
-  - acceptance: min width 120px, max 600px, default 250px
-  - acceptance: filename `title` tooltip shows full name on hover
-  - acceptance: no other columns affected; no new npm packages; build passes
+- [x] 6.7.1: Resizable Filename column in DocumentsPage table [SMALL]
+  - COMMIT: c20e931
+  - FILES: frontend/src/pages/DocumentsPage.tsx
+  - CHANGE: Added drag-to-resize handle on Filename column; removed max-w-[200px] truncation; added title tooltip
 
 ### Sprint 6: Bulk Document Operations [MEDIUM]
 - [x] 6.6.1: Add backend endpoints for batch delete and vault delete-all [SMALL]

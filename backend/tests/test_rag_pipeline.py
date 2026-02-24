@@ -307,8 +307,8 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
     async def test_relevance_threshold_zero_includes_all(self):
         """Test that threshold of 0 includes all results."""
         vector_results = [
-            {"text": "A", "file_id": "doc1", "score": 0.01, "metadata": {}},
-            {"text": "B", "file_id": "doc2", "score": 0.0, "metadata": {}},
+            {"text": "A", "file_id": "doc1", "_distance": 0.1, "metadata": {}},
+            {"text": "B", "file_id": "doc2", "_distance": 0.2, "metadata": {}},
         ]
 
         fake_memory_store = FakeMemoryStore()
@@ -323,7 +323,7 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
             llm_client=fake_llm
         )
 
-        engine.relevance_threshold = 0.0
+        engine.max_distance_threshold = 0.5
 
         results = []
         async for msg in engine.query("test", []):
@@ -335,9 +335,9 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
     async def test_relevance_threshold_high_excludes_most(self):
         """Test that high threshold excludes most results."""
         vector_results = [
-            {"text": "A", "file_id": "doc1", "score": 0.95, "metadata": {}},
-            {"text": "B", "file_id": "doc2", "score": 0.8, "metadata": {}},
-            {"text": "C", "file_id": "doc3", "score": 0.79, "metadata": {}},
+            {"text": "A", "file_id": "doc1", "_distance": 0.1, "metadata": {}},
+            {"text": "B", "file_id": "doc2", "_distance": 0.3, "metadata": {}},
+            {"text": "C", "file_id": "doc3", "_distance": 0.8, "metadata": {}},
         ]
 
         fake_memory_store = FakeMemoryStore()
@@ -352,7 +352,7 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
             llm_client=fake_llm
         )
 
-        engine.relevance_threshold = 0.8
+        engine.max_distance_threshold = 0.3
 
         results = []
         async for msg in engine.query("test", []):
@@ -361,12 +361,10 @@ class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
         done_msg = results[-1]
         sources = done_msg["sources"]
 
-        # Only scores >= 0.8 should be included (scores equal to threshold are included)
+        # Only distances <= 0.3 should be included (distances equal to threshold are included)
         self.assertEqual(len(sources), 2)
         self.assertEqual(sources[0]["file_id"], "doc1")
         self.assertEqual(sources[1]["file_id"], "doc2")
-        self.assertEqual(sources[0]["score"], 0.95)
-        self.assertEqual(sources[1]["score"], 0.8)
 
     async def test_streaming_query_yields_chunks(self):
         """Test that streaming query yields content chunks and done."""
