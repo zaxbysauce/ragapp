@@ -33,8 +33,15 @@ export const useUploadStore = create<UploadState>((set, get) => ({
   activeVaultId: null,
 
   addUploads: (files, vaultId) => {
+    const generateId = (f: File) => {
+      if (typeof crypto !== "undefined" && crypto.randomUUID) {
+        return crypto.randomUUID();
+      }
+      return `${f.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    };
+
     const newUploads: UploadFile[] = files.map((file) => ({
-      id: `${file.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: generateId(file),
       file,
       progress: 0,
       status: "pending",
@@ -110,47 +117,68 @@ export const useUploadStore = create<UploadState>((set, get) => ({
   },
 
   processQueue: async () => {
-    const { uploads, activeVaultId, isProcessing } = get();
+    let acquired = false;
     
-    if (isProcessing) return;
-    
-    const pendingUpload = uploads.find((u) => u.status === "pending");
-    if (!pendingUpload) {
-      set({ isProcessing: false });
+    // Atomic check-and-set: only acquire if not already processing
+    set((state) => {
+      if (state.isProcessing) {
+        return state;
+      }
+      acquired = true;
+      return { ...state, isProcessing: true };
+    });
+
+    if (!acquired) {
+      // Lock not acquired, another processQueue is running
       return;
     }
 
-    set({ isProcessing: true });
-    
     try {
-      get().setStatus(pendingUpload.id, "uploading");
+      while (true) {
+        // Read fresh state each iteration
+        const { uploads, activeVaultId } = get();
+        const pendingUpload = uploads.find((u) => u.status === "pending");
+
+        if (!pendingUpload) {
+          // No more pending uploads, exit loop
+          break;
+        }
+
+        // Guard against stale item: check if still pending before processing
+        const currentUpload = uploads.find((u) => u.id === pendingUpload.id);
+        if (!currentUpload || currentUpload.status !== "pending") {
+          // Item no longer pending, continue to next iteration
+          continue;
+        }
+
+        try {
+          get().setStatus(pendingUpload.id, "uploading");
+
+          await uploadDocument(
+            pendingUpload.file,
+            (progress) => {
+              get().updateProgress(pendingUpload.id, progress);
+            },
+            activeVaultId || undefined
+          );
+
+          get().setStatus(pendingUpload.id, "completed");
+          toast.success(`${pendingUpload.file.name} uploaded successfully`);
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : "Upload failed";
+          get().setStatus(pendingUpload.id, "error", errorMsg);
+          toast.error(`Failed to upload ${pendingUpload.file.name}: ${errorMsg}`);
+          // Continue with next pending file on error
+        }
+      }
+    } finally {
+      set({ isProcessing: false });
       
-      await uploadDocument(
-        pendingUpload.file,
-        (progress) => {
-          get().updateProgress(pendingUpload.id, progress);
-        },
-        activeVaultId || undefined
-      );
-
-      get().setStatus(pendingUpload.id, "completed");
-      toast.success(`${pendingUpload.file.name} uploaded successfully`);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Upload failed";
-      get().setStatus(pendingUpload.id, "error", errorMsg);
-      toast.error(`Failed to upload ${pendingUpload.file.name}: ${errorMsg}`);
+      // If any pending uploads remain, trigger processQueue once
+      const { uploads } = get();
+      if (uploads.some((u) => u.status === "pending")) {
+        get().processQueue();
+      }
     }
-
-    // Process next item
-    get().processQueue();
   },
 }));
-
-// Auto-start queue processing when store is created
-useUploadStore.subscribe((state, prevState) => {
-  // If we have pending uploads and we're not processing, start processing
-  const hasPending = state.uploads.some((u) => u.status === "pending");
-  if (hasPending && !state.isProcessing && prevState.isProcessing === false) {
-    useUploadStore.getState().processQueue();
-  }
-});

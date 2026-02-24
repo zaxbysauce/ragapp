@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     """Character-based chunk size for document processing. Default 1200 chars (~300 tokens) leaves room for instruction prefix."""
     chunk_overlap_chars: int | None = None
     """Character-based overlap between chunks. Default 120 chars (~30 tokens)."""
+    document_parsing_strategy: str = "fast"
+    """Document parsing strategy for unstructured.io: 'fast' (fastest), 'hi_res' (best quality), 'auto' (automatic selection)."""
     retrieval_top_k: int | None = None
     """Number of top chunks to retrieve (unifies max_context_chunks and vector_top_k)."""
     vector_metric: str = "cosine"
@@ -197,6 +199,15 @@ class Settings(BaseSettings):
         """Validate embedding batch size is >= 1."""
         if v < 1:
             raise ValueError("embedding_batch_size must be >= 1")
+        return v
+
+    @field_validator("document_parsing_strategy", mode="after")
+    @classmethod
+    def validate_document_parsing_strategy(cls, v: str) -> str:
+        """Validate document parsing strategy is one of: fast, hi_res, auto."""
+        allowed = {"fast", "hi_res", "auto"}
+        if v not in allowed:
+            raise ValueError(f"document_parsing_strategy must be one of: {', '.join(sorted(allowed))}")
         return v
 
     @model_validator(mode="after")

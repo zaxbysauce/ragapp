@@ -59,7 +59,7 @@ class DocumentParser:
     Parser for extracting text elements from documents using unstructured.io.
     
     Supports various formats: PDF, DOCX, TXT, HTML, and more.
-    Uses hi_res strategy for optimal extraction quality.
+    Uses configurable strategy from settings (default: fast for speed).
     """
     
     def parse(self, file_path: str) -> List[Any]:
@@ -85,10 +85,10 @@ class DocumentParser:
             raise FileNotFoundError(f"Path is not a file: {file_path}")
         
         try:
-            # Use unstructured with hi_res strategy for best extraction quality
+            # Use unstructured with configured strategy from settings
             elements = partition(
                 filename=str(path),
-                strategy="hi_res"
+                strategy=settings.document_parsing_strategy
             )
             return elements
         except Exception as e:
