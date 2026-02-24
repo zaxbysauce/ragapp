@@ -3,7 +3,7 @@ Application configuration using Pydantic Settings.
 """
 import logging
 from pathlib import Path
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     """Window size for retrieval context expansion."""
     embedding_batch_size: int = 512
     """Number of texts to send per embedding API request. Higher = better GPU utilization."""
+    embedding_batch_max_retries: int = 3
+    """Maximum number of retries for adaptive batching when token overflow occurs."""
+    embedding_batch_min_sub_size: int = 1
+    """Minimum sub-batch size for adaptive batching fallback."""
 
     # Document processing configuration (legacy - DEPRECATED)
     chunk_size: int | None = None
@@ -171,21 +175,38 @@ class Settings(BaseSettings):
             return legacy_vector_top_k
         return 12
 
-    @field_validator("max_distance_threshold", mode="before")
+    @field_validator("embedding_batch_max_retries", mode="after")
     @classmethod
-    def migrate_max_distance_threshold(cls, v: float | None, values) -> float | None:
-        """Auto-convert from legacy rag_relevance_threshold if max_distance_threshold not provided."""
-        if v is not None:
-            return v
-        legacy_rag_relevance_threshold = values.data.get("rag_relevance_threshold")
-        if legacy_rag_relevance_threshold is not None:
-            logger.warning(
-                "Deprecated: 'rag_relevance_threshold' is deprecated. Use 'max_distance_threshold' instead. "
-                f"Auto-converting rag_relevance_threshold={legacy_rag_relevance_threshold} "
-                f"to max_distance_threshold={1.0 - legacy_rag_relevance_threshold}."
+    def validate_embedding_batch_max_retries(cls, v: int) -> int:
+        """Validate embedding batch max retries is an integer in range 0..10."""
+        if v < 0 or v > 10:
+            raise ValueError("embedding_batch_max_retries must be in range 0..10")
+        return v
+
+    @field_validator("embedding_batch_min_sub_size", mode="after")
+    @classmethod
+    def validate_embedding_batch_min_sub_size(cls, v: int) -> int:
+        """Validate embedding batch minimum sub-size is an integer >= 1."""
+        if v < 1:
+            raise ValueError("embedding_batch_min_sub_size must be >= 1")
+        return v
+
+    @field_validator("embedding_batch_size", mode="after")
+    @classmethod
+    def validate_embedding_batch_size(cls, v: int) -> int:
+        """Validate embedding batch size is >= 1."""
+        if v < 1:
+            raise ValueError("embedding_batch_size must be >= 1")
+        return v
+
+    @model_validator(mode="after")
+    def validate_batch_config_consistency(self) -> "Settings":
+        """Validate embedding batch configuration consistency."""
+        if self.embedding_batch_min_sub_size > self.embedding_batch_size:
+            raise ValueError(
+                "embedding_batch_min_sub_size must be <= embedding_batch_size"
             )
-            return 1.0 - legacy_rag_relevance_threshold
-        return None
+        return self
 
     @property
     def documents_dir(self) -> Path:

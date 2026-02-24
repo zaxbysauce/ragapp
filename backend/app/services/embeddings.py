@@ -3,9 +3,12 @@ Dual-provider embedding client service supporting Ollama and OpenAI-compatible A
 """
 import asyncio
 import httpx
+import logging
 from typing import List
 from urllib.parse import urlparse
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingError(Exception):
@@ -16,19 +19,23 @@ class EmbeddingError(Exception):
 class EmbeddingService:
     """Service for generating text embeddings via Ollama or OpenAI-compatible APIs."""
     
+    # Hard caps for input validation
+    MAX_BATCH_SIZE = 512  # Maximum number of texts per batch call
+    MAX_TEXT_LENGTH = 8192  # Maximum characters per text (derived from chunk_size_chars=8192)
+
     def __init__(self):
         """Initialize the embedding service with HTTP client and provider detection."""
         base_url = settings.ollama_embedding_url
 
         # Validate base_url
         if not base_url:
-            raise EmbeddingError("OLLAMA_EMBEDDING_URL is not configured")
+            raise EmbeddingError("Embedding service is not configured")
         if not base_url.startswith(('http://', 'https://')):
-            raise EmbeddingError(f"Invalid OLLAMA_EMBEDDING_URL: {base_url}. Must start with http:// or https://")
+            raise EmbeddingError("Invalid embedding URL configuration")
 
         # Detect provider mode based on URL path
         self.provider_mode, self.embeddings_url = self._detect_provider_mode(base_url)
-        self.timeout = 180.0
+        self.timeout = 60.0
         
         # Read embedding prefixes from settings
         self.embedding_doc_prefix = settings.embedding_doc_prefix
@@ -118,17 +125,21 @@ class EmbeddingService:
         if self.provider_mode == 'openai':
             # OpenAI format: data[0].embedding
             if "data" not in data:
-                raise EmbeddingError(f"[OpenAI mode] Embedding API response missing 'data' field")
+                logger.error("Embedding API response missing 'data' field in OpenAI mode")
+                raise EmbeddingError("Embedding API response is invalid")
             if not isinstance(data["data"], list) or len(data["data"]) == 0:
-                raise EmbeddingError(f"[OpenAI mode] Embedding API response 'data' field is empty or invalid")
+                logger.error("Embedding API response 'data' field is empty or invalid in OpenAI mode")
+                raise EmbeddingError("Embedding API response is invalid")
             embedding = data["data"][0].get("embedding")
             if embedding is None:
-                raise EmbeddingError(f"[OpenAI mode] Embedding API response missing 'data[0].embedding' field")
+                logger.error("Embedding API response missing 'data[0].embedding' field in OpenAI mode")
+                raise EmbeddingError("Embedding API response is invalid")
         else:  # ollama mode
             # Ollama format: embedding
             embedding = data.get("embedding")
             if embedding is None:
-                raise EmbeddingError(f"[Ollama mode] Embedding API response missing 'embedding' field")
+                logger.error("Embedding API response missing 'embedding' field in Ollama mode")
+                raise EmbeddingError("Embedding API response is invalid")
         
         return embedding
     
@@ -166,21 +177,27 @@ class EmbeddingService:
                 )
                 
                 if response.status_code != 200:
+                    logger.warning(
+                        f"Embedding API returned status {response.status_code} for {self.provider_mode} mode: {response.text}"
+                    )
                     raise EmbeddingError(
-                        f"[{self.provider_mode.upper()} mode] Embedding API returned status {response.status_code}: {response.text}"
+                        f"Embedding API returned status {response.status_code}"
                     )
 
                 try:
                     data = response.json()
                 except ValueError as e:
-                    raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Invalid JSON response from embedding API: {e}")
+                    logger.warning(
+                        f"Invalid JSON response from embedding API for {self.provider_mode} mode: {e}, response: {response.text}"
+                    )
+                    raise EmbeddingError("Invalid response from embedding service")
 
                 return self._extract_embedding(data)
                 
             except httpx.TimeoutException as e:
-                raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Embedding request timed out: {e}")
+                raise EmbeddingError("Embedding request timed out")
             except httpx.HTTPError as e:
-                raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Embedding HTTP error: {e}")
+                raise EmbeddingError("Embedding HTTP error occurred")
     
     async def validate_embedding_dimension(self, expected_dim: int) -> bool:
         """
@@ -207,7 +224,7 @@ class EmbeddingService:
         actual_dim = len(embedding)
         if actual_dim != expected_dim:
             raise EmbeddingError(
-                f"[{self.provider_mode.upper()} mode] Embedding dimension mismatch: expected {expected_dim}, got {actual_dim}"
+                f"Embedding dimension mismatch: expected {expected_dim}, got {actual_dim}"
             )
         return True
 
@@ -236,9 +253,23 @@ class EmbeddingService:
         if not texts:
             return []
         
+        # Input validation guards
+        for idx, text in enumerate(texts):
+            if text is None:
+                raise EmbeddingError(f"Text at index {idx} is None")
+            if not text.strip():
+                raise EmbeddingError(f"Text at index {idx} is empty or whitespace only")
+            if len(text) > self.MAX_TEXT_LENGTH:
+                raise EmbeddingError(
+                    f"Text at index {idx} exceeds maximum length ({self.MAX_TEXT_LENGTH} characters)"
+                )
+        
         # Use configured batch size if not specified
         if batch_size is None:
             batch_size = settings.embedding_batch_size
+        
+        # Clamp batch_size to valid range
+        batch_size = max(1, min(batch_size, self.MAX_BATCH_SIZE))
         
         # Apply document prefix to all texts
         texts_to_embed = []
@@ -260,6 +291,9 @@ class EmbeddingService:
     async def _embed_batch_api(self, texts: List[str]) -> List[List[float]]:
         """
         Send a batch of texts to the embedding API in a single request.
+        
+        Implements adaptive batching: automatically retries with smaller sub-batches
+        when llama.cpp token overflow errors occur.
 
         Args:
             texts: List of texts to embed (already prefixed).
@@ -268,56 +302,243 @@ class EmbeddingService:
             List of embedding vectors in the same order as input texts.
 
         Raises:
-            EmbeddingError: If the API request fails.
+            EmbeddingError: If the API request fails after all retries.
         """
+        max_retries = settings.embedding_batch_max_retries
+        min_sub_size = settings.embedding_batch_min_sub_size
+        
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                # Build payload with array of inputs
-                if self.provider_mode == 'openai':
-                    payload = {
-                        "model": settings.embedding_model,
-                        "input": texts
-                    }
-                else:  # ollama mode
-                    # Ollama supports batching via multiple generate calls or single with input array
-                    # Try OpenAI-compatible batch format first
-                    payload = {
-                        "model": settings.embedding_model,
-                        "input": texts
-                    }
-                
-                response = await client.post(
-                    self.embeddings_url,
-                    json=payload
-                )
-                
-                if response.status_code != 200:
-                    raise EmbeddingError(
-                        f"[{self.provider_mode.upper()} mode] Embedding API returned status {response.status_code}: {response.text}"
+            return await self._embed_batch_with_retry(client, texts, max_retries, min_sub_size)
+    
+    async def _embed_batch_with_retry(self, client: httpx.AsyncClient, texts: List[str], 
+                                      max_retries: int, min_sub_size: int, retry_count: int = 0) -> List[List[float]]:
+        """
+        Internal method that handles the retry logic for adaptive batching.
+        
+        Args:
+            client: HTTP client for making requests
+            texts: List of texts to embed
+            max_retries: Maximum number of retry attempts
+            min_sub_size: Minimum sub-batch size before giving up
+            
+        Returns:
+            List of embedding vectors
+            
+        Raises:
+            EmbeddingError: If all retries fail
+        """
+        # Empty-input guard
+        if not texts:
+            return []
+        
+        try:
+            # Build payload with array of inputs
+            if self.provider_mode == 'openai':
+                payload = {
+                    "model": settings.embedding_model,
+                    "input": texts
+                }
+            else:  # ollama mode
+                payload = {
+                    "model": settings.embedding_model,
+                    "input": texts
+                }
+            
+            response = await client.post(
+                self.embeddings_url,
+                json=payload
+            )
+            
+            # Check for token overflow error in HTTP 500 responses
+            if response.status_code == 500:
+                error_text = response.text.lower()
+                if self._is_token_overflow_error(error_text):
+                    logger.warning(
+                        f"Token overflow error for {self.provider_mode} mode: {response.text}"
                     )
+                    # Handle overflow using the shared helper
+                    return await self._handle_overflow_retry(
+                        client, texts, max_retries, min_sub_size, retry_count
+                    )
+            
+            if response.status_code != 200:
+                logger.warning(
+                    f"Embedding API returned status {response.status_code} for {self.provider_mode} mode: {response.text}"
+                )
+                raise EmbeddingError(
+                    f"Embedding API returned status {response.status_code}"
+                )
 
-                data = response.json()
-                
-                # Extract embeddings from response
-                if self.provider_mode == 'openai':
-                    # OpenAI format: data[].embedding
-                    embeddings = [item['embedding'] for item in data['data']]
+            data = response.json()
+            
+            # Extract embeddings from response
+            if self.provider_mode == 'openai':
+                # OpenAI format: data[].embedding
+                embeddings = [item['embedding'] for item in data['data']]
+            else:
+                # Ollama format may vary - try common formats
+                if 'embeddings' in data:
+                    embeddings = data['embeddings']
+                elif 'embedding' in data:
+                    # Single embedding returned - shouldn't happen with batch
+                    embeddings = [data['embedding']]
                 else:
-                    # Ollama format may vary - try common formats
-                    if 'embeddings' in data:
-                        embeddings = data['embeddings']
-                    elif 'embedding' in data:
-                        # Single embedding returned - shouldn't happen with batch
-                        embeddings = [data['embedding']]
-                    else:
-                        raise EmbeddingError(f"Unexpected response format: {data.keys()}")
-                
-                return embeddings
-                
-            except httpx.TimeoutException as e:
-                raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Embedding batch request timed out: {e}")
-            except httpx.HTTPError as e:
-                raise EmbeddingError(f"[{self.provider_mode.upper()} mode] Embedding batch HTTP error: {e}")
+                    logger.error(
+                        f"Unexpected response format for {self.provider_mode} mode: {data.keys()}"
+                    )
+                    raise EmbeddingError("Unexpected response from embedding service")
+            
+            # Validate embedding structure
+            if not isinstance(embeddings, list):
+                logger.error("Embedding API response 'embeddings' is not a list")
+                raise EmbeddingError("Embedding API response is invalid")
+            for i, emb in enumerate(embeddings):
+                if not isinstance(emb, list):
+                    logger.error(f"Embedding at index {i} is not a list")
+                    raise EmbeddingError("Embedding API response is invalid")
+                for j, val in enumerate(emb):
+                    if not isinstance(val, (int, float)):
+                        logger.error(f"Embedding value at [{i}][{j}] is not a number")
+                        raise EmbeddingError("Embedding API response is invalid")
+            
+            # Validate embedding count matches input count
+            if len(embeddings) != len(texts):
+                logger.error(
+                    f"Embedding count mismatch for {self.provider_mode} mode: expected {len(texts)}, got {len(embeddings)}"
+                )
+                raise EmbeddingError(
+                    f"Embedding count mismatch: expected {len(texts)}, got {len(embeddings)}"
+                )
+            
+            return embeddings
+            
+        except httpx.TimeoutException as e:
+            logger.warning(
+                f"Embedding batch request timed out for {self.provider_mode} mode: {e}"
+            )
+            raise EmbeddingError("Embedding batch request timed out")
+        except httpx.HTTPError as e:
+            # Check if this is a token overflow error
+            error_msg = str(e)
+            response_text = ""
+            
+            # Try to get response text from the exception if available
+            try:
+                resp = getattr(e, 'response', None)
+                if resp is not None:
+                    response_text = resp.text.lower()
+            except Exception:
+                pass
+            
+            if self._is_token_overflow_error(error_msg) or self._is_token_overflow_error(response_text):
+                logger.warning(
+                    f"Token overflow error for {self.provider_mode} mode: {response_text}"
+                )
+                # Handle overflow using the shared helper
+                return await self._handle_overflow_retry(
+                    client, texts, max_retries, min_sub_size, retry_count
+                )
+            else:
+                # Not a token overflow error, re-raise
+                logger.error(
+                    f"Embedding batch HTTP error for {self.provider_mode} mode: {e}"
+                )
+                raise EmbeddingError("Embedding batch HTTP error occurred")
+    
+    async def _handle_overflow_retry(self, client: httpx.AsyncClient, texts: List[str],
+                                     max_retries: int, min_sub_size: int, retry_count: int) -> List[List[float]]:
+        """
+        Helper method to handle overflow retry logic with bounded retries and minimum split size.
+        
+        Args:
+            client: HTTP client for making requests
+            texts: List of texts to embed
+            max_retries: Maximum number of retry attempts
+            min_sub_size: Minimum sub-batch size before giving up
+            retry_count: Current retry attempt count
+            
+        Returns:
+            List of embedding vectors
+            
+        Raises:
+            EmbeddingError: If bounded retries exhausted or split size too small
+        """
+        # Check if we've exhausted retries
+        if retry_count > max_retries:
+            logger.error(
+                f"Max retries ({max_retries}) exhausted for embedding batch in {self.provider_mode} mode"
+            )
+            raise EmbeddingError(
+                f"Max retries ({max_retries}) exhausted for embedding batch"
+            )
+        
+        # Check if single item - this is actionable
+        if len(texts) == 1:
+            logger.warning(
+                f"Single input still overflows token limit in {self.provider_mode} mode"
+            )
+            raise EmbeddingError(
+                f"Single input exceeds token limit. Try reducing text size or ensure chunk_size_chars is below server batch size limit."
+            )
+        
+        # Check if we've reached minimum split size
+        if len(texts) <= min_sub_size:
+            logger.warning(
+                f"Cannot split batch further in {self.provider_mode} mode: {len(texts)} items below minimum split size ({min_sub_size})"
+            )
+            raise EmbeddingError(
+                f"Cannot split batch further: {len(texts)} items below minimum split size"
+            )
+        
+        # Split at midpoint and recurse with backoff
+        midpoint = len(texts) // 2
+        left_texts = texts[:midpoint]
+        right_texts = texts[midpoint:]
+        
+        # Small bounded async backoff (exponential, capped at 1s)
+        backoff_delay = min(0.5 * (2 ** retry_count), 1.0)
+        await asyncio.sleep(backoff_delay)
+        
+        # Recurse on left then right to preserve order
+        left_embeddings = await self._embed_batch_with_retry(
+            client, left_texts, max_retries, min_sub_size, retry_count=retry_count + 1
+        )
+        right_embeddings = await self._embed_batch_with_retry(
+            client, right_texts, max_retries, min_sub_size, retry_count=retry_count + 1
+        )
+        
+        return left_embeddings + right_embeddings
+    
+    def _is_token_overflow_error(self, error_msg: str) -> bool:
+        """
+        Detect if an error message indicates a token overflow from llama.cpp.
+        
+        Args:
+            error_msg: The error message string
+            
+        Returns:
+            True if this is a token overflow error, False otherwise
+        """
+        error_lower = error_msg.lower()
+        
+        # Check for common llama.cpp token overflow patterns
+        # Pattern 1: "input (X tokens) is too large" - typical llama.cpp error
+        if "input (" in error_lower and "tokens) is too large" in error_lower:
+            return True
+        
+        # Pattern 2: "too large to process" with "current batch size" - OpenAI mode error
+        if "too large to process" in error_lower and "current batch size" in error_lower:
+            return True
+        
+        # Pattern 3: "token limit exceeded"
+        if "token limit exceeded" in error_lower:
+            return True
+        
+        # Pattern 4: "batch size too small"
+        if "batch size too small" in error_lower:
+            return True
+        
+        return False
 
 
 

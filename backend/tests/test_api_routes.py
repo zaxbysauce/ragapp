@@ -204,12 +204,14 @@ class TestSettingsEndpoints(unittest.TestCase):
         data = response.json()
         self.assertIn("chunk_size", data)
         self.assertIn("rag_relevance_threshold", data)
+        self.assertIn("embedding_batch_size", data)
     
     def test_post_settings_valid(self):
         """Test POST /api/settings with valid settings updates values."""
         payload = {
             "chunk_size": 1024,
-            "rag_relevance_threshold": 0.5
+            "rag_relevance_threshold": 0.5,
+            "embedding_batch_size": 256
         }
         
         response = self.client.post("/api/settings", json=payload)
@@ -218,6 +220,7 @@ class TestSettingsEndpoints(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["chunk_size"], 1024)
         self.assertEqual(data["rag_relevance_threshold"], 0.5)
+        self.assertEqual(data["embedding_batch_size"], 256)
     
     def test_post_settings_invalid_chunk_size(self):
         """Test POST /api/settings with invalid chunk_size returns 422."""

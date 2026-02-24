@@ -28,6 +28,7 @@ class SettingsUpdate(BaseModel):
     embedding_doc_prefix: Optional[str] = None
     embedding_query_prefix: Optional[str] = None
     retrieval_window: Optional[int] = None
+    embedding_batch_size: Optional[int] = None
 
     # Feature flags (still supported)
     auto_scan_enabled: Optional[bool] = None
@@ -112,6 +113,13 @@ class SettingsUpdate(BaseModel):
             raise ValueError("auto_scan_interval_minutes must be a positive integer")
         return v
 
+    @field_validator("embedding_batch_size")
+    @classmethod
+    def validate_embedding_batch_size(cls, v):
+        if v is not None and (v < 1 or v > 2048):
+            raise ValueError("embedding_batch_size must be between 1 and 2048")
+        return v
+
     @model_validator(mode="after")
     def validate_chunk_overlap_less_than_size(self):
         chunk_overlap = self.chunk_overlap
@@ -137,6 +145,7 @@ ALLOWED_FIELDS = [
     "embedding_doc_prefix",
     "embedding_query_prefix",
     "retrieval_window",
+    "embedding_batch_size",
 ]
 
 
@@ -192,6 +201,9 @@ class SettingsResponse(BaseModel):
     auto_scan_interval_minutes: int
     enable_model_validation: bool
 
+    # Embedding config
+    embedding_batch_size: int
+
     # Limits (safe to expose)
     max_file_size_mb: int
     allowed_extensions: list[str]
@@ -236,6 +248,7 @@ def _apply_settings_update(update: SettingsUpdate) -> SettingsResponse:
         "embedding_doc_prefix": settings.embedding_doc_prefix,
         "embedding_query_prefix": settings.embedding_query_prefix,
         "retrieval_window": settings.retrieval_window,
+        "embedding_batch_size": settings.embedding_batch_size,
         "maintenance_mode": settings.maintenance_mode,
         "auto_scan_enabled": settings.auto_scan_enabled,
         "auto_scan_interval_minutes": settings.auto_scan_interval_minutes,
@@ -249,8 +262,7 @@ def _apply_settings_update(update: SettingsUpdate) -> SettingsResponse:
 
 @router.get("/settings", response_model=SettingsResponse)
 def get_settings():
-    """Get public settings - excludes secrets like admin_secret_token."""
-    # Convert settings object to dict for validation
+    """Return current public settings dict (including embedding_batch_size)."""
     settings_dict = {
         "port": settings.port,
         "data_dir": str(settings.data_dir),
@@ -271,6 +283,7 @@ def get_settings():
         "embedding_doc_prefix": settings.embedding_doc_prefix,
         "embedding_query_prefix": settings.embedding_query_prefix,
         "retrieval_window": settings.retrieval_window,
+        "embedding_batch_size": settings.embedding_batch_size,
         "maintenance_mode": settings.maintenance_mode,
         "auto_scan_enabled": settings.auto_scan_enabled,
         "auto_scan_interval_minutes": settings.auto_scan_interval_minutes,
@@ -283,30 +296,24 @@ def get_settings():
 
 
 @router.post("/settings")
-def update_settings(
+def post_settings(
     update: SettingsUpdate,
     conn: sqlite3.Connection = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Update runtime settings.
-
-    Changes are persisted to the database and applied immediately.
-    """
+    """Apply settings update and persist to database."""
     result = _apply_settings_update(update)
     _persist_settings(conn, update)
     return result
 
 
 @router.put("/settings")
-def update_settings_put(
+def put_settings(
     update: SettingsUpdate,
     conn: sqlite3.Connection = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Update runtime settings (PUT method).
-
-    Changes are persisted to the database and applied immediately.
-    """
+    """Apply settings update and persist to database."""
     result = _apply_settings_update(update)
     _persist_settings(conn, update)
     return result
