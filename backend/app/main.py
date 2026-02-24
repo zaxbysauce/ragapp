@@ -82,14 +82,69 @@ def _load_persisted_settings(sqlite_path: str) -> None:
     conn.row_factory = sqlite3.Row
     try:
         cursor = conn.execute("SELECT key, value FROM settings_kv")
-        for row in cursor.fetchall():
-            key, raw_value = row["key"], row["value"]
-            if key in ("chunk_size", "chunk_overlap", "max_context_chunks", "auto_scan_interval_minutes"):
-                setattr(settings, key, int(json.loads(raw_value)))
-            elif key == "auto_scan_enabled":
-                setattr(settings, key, bool(json.loads(raw_value)))
-            elif key == "rag_relevance_threshold":
-                setattr(settings, key, float(json.loads(raw_value)))
+        # Build persisted dict from all rows
+        persisted = {row["key"]: row["value"] for row in cursor.fetchall()}
+        
+        # Legacy keys — require JSON parsing and type conversion
+        legacy_keys = {
+            "chunk_size": int,
+            "chunk_overlap": int,
+            "max_context_chunks": int,
+            "auto_scan_interval_minutes": int,
+            "auto_scan_enabled": bool,
+            "rag_relevance_threshold": float,
+        }
+        for key, expected_type in legacy_keys.items():
+            if key in persisted:
+                try:
+                    if expected_type == bool:
+                        setattr(settings, key, bool(json.loads(persisted[key])))
+                    elif expected_type == int:
+                        setattr(settings, key, int(json.loads(persisted[key])))
+                    elif expected_type == float:
+                        setattr(settings, key, float(json.loads(persisted[key])))
+                except Exception as e:
+                    logger.warning(f"Failed to restore persisted setting {key}: {e}")
+        
+        # New fields — load directly without legacy conversion
+        NEW_DIRECT_KEYS = [
+            "chunk_size_chars",
+            "chunk_overlap_chars",
+            "retrieval_top_k",
+            "retrieval_window",
+            "max_distance_threshold",
+            "vector_metric",
+            "embedding_doc_prefix",
+            "embedding_query_prefix",
+            "embedding_batch_size",
+            "reranking_enabled",
+            "reranker_top_n",
+            "initial_retrieval_top_k",
+            "hybrid_search_enabled",
+            "hybrid_alpha",
+            "reranker_url",
+            "reranker_model",
+        ]
+        for key in NEW_DIRECT_KEYS:
+            if key in persisted:
+                try:
+                    if not hasattr(settings, key):
+                        logger.warning(f"Unknown persisted setting {key}, skipping")
+                        continue
+                    expected_type = type(getattr(settings, key))
+                    raw = persisted[key]
+                    if expected_type == type(None):  # NoneType - just set as string
+                        setattr(settings, key, raw)
+                    elif expected_type == bool:
+                        setattr(settings, key, str(raw).lower() in ("true", "1", "yes", "on"))
+                    elif expected_type == int:
+                        setattr(settings, key, int(raw))
+                    elif expected_type == float:
+                        setattr(settings, key, float(raw))
+                    else:
+                        setattr(settings, key, raw)
+                except Exception as e:
+                    logger.warning(f"Failed to restore persisted setting {key}: {e}")
     except sqlite3.OperationalError:
         pass  # Table doesn't exist yet on first run
     finally:

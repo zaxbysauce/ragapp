@@ -63,9 +63,15 @@ class RAGEngine:
         self.embedding_query_prefix = settings.embedding_query_prefix
         self.retrieval_window = settings.retrieval_window
 
-        # Legacy field support (deprecated)
+        # Legacy field support (deprecated) - warn if different from canonical fields
         self.relevance_threshold = settings.rag_relevance_threshold
         self.top_k = settings.vector_top_k
+        if self.top_k is not None and self.top_k != self.retrieval_top_k:
+            logger.warning(
+                "vector_top_k (%s) is deprecated and differs from retrieval_top_k (%s). "
+                "Using retrieval_top_k. Please update your settings.",
+                self.top_k, self.retrieval_top_k
+            )
         self.maintenance_mode = settings.maintenance_mode
 
     async def query(
@@ -104,7 +110,14 @@ class RAGEngine:
             vector_results = []
         else:
             try:
-                top_k_value = self.top_k if self.top_k is not None else self.retrieval_top_k
+                # Always use retrieval_top_k (the canonical field)
+                # Migration: warn if legacy vector_top_k differs
+                top_k_value = self.retrieval_top_k
+                if self.top_k is not None and self.top_k != self.retrieval_top_k:
+                    logger.warning(
+                        "Using retrieval_top_k=%s instead of deprecated vector_top_k=%s",
+                        self.retrieval_top_k, self.top_k
+                    )
                 vector_results = await asyncio.to_thread(
                     self.vector_store.search,
                     query_embedding,
