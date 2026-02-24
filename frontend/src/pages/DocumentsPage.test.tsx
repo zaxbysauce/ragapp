@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, screen, act, waitFor } from '@testing-library/react';
+import { render, fireEvent, act, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 // Mock API with documents so the table renders
@@ -168,7 +168,6 @@ describe('DocumentsPage - Drag to Resize Filename Column', () => {
       });
 
       // Find the Filename header which uses the width
-      const filenameHeader = container.querySelector('th[scope="col"]');
       // The first th with text content "Filename" should have style width: 250px
       const headers = Array.from(container.querySelectorAll('th[scope="col"]'));
       const filenameTh = headers.find(th => th.textContent?.includes('Filename'));
