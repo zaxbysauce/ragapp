@@ -96,7 +96,7 @@ export default function DocumentsPage() {
   }, [uploads, fetchDocuments, fetchStats]);
 
   // Bulk selection handlers
-  const handleSelectAll = useCallback((checked: boolean) => {
+  const handleSelectAll = useCallback((checked: boolean | 'indeterminate') => {
     if (checked) {
       const allIds = new Set(documents.map((doc) => String(doc.id)));
       setSelectedIds(allIds);
@@ -581,7 +581,7 @@ export default function DocumentsPage() {
                           <td className="p-4">
                             <Checkbox 
                               checked={isSelected}
-                              onCheckedChange={(checked) => handleSelectOne(docId, !!checked)}
+                              onCheckedChange={(checked) => handleSelectOne(String(doc.id), !!checked)}
                               aria-label={`Select ${doc.filename}`}
                             />
                           </td>
