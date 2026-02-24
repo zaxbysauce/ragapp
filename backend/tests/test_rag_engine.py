@@ -150,30 +150,32 @@ class RAGEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("done", stream[-1]["type"])
 
     def test_filter_relevant_filters_scores_below_threshold(self):
+        """Test that _distance field is used (lower distance = better match)."""
         engine = RAGEngine()
-        engine.relevance_threshold = 0.3
+        engine.max_distance_threshold = 0.5
         results = [
-            {"text": "low", "file_id": "f1", "metadata": {}, "score": 0.2},
-            {"text": "medium", "file_id": "f2", "metadata": {}, "score": 0.3},
-            {"text": "high", "file_id": "f3", "metadata": {}, "score": 0.5},
+            {"text": "close", "file_id": "f1", "metadata": {}, "_distance": 0.3},
+            {"text": "at_threshold", "file_id": "f2", "metadata": {}, "_distance": 0.5},
+            {"text": "far", "file_id": "f3", "metadata": {}, "_distance": 0.8},
         ]
         filtered = engine._filter_relevant(results)
+        # Keep distances <= threshold (0.3 <= 0.5, 0.5 <= 0.5), filter 0.8 > 0.5
         self.assertEqual(2, len(filtered))
-        self.assertEqual("medium", filtered[0].text)
-        self.assertEqual("high", filtered[1].text)
+        self.assertEqual("close", filtered[0].text)
+        self.assertEqual("at_threshold", filtered[1].text)
 
     def test_filter_relevant_includes_scores_equal_to_threshold(self):
+        """Test that distances equal to threshold are included (distance <= threshold)."""
         engine = RAGEngine()
-        engine.relevance_threshold = 0.3
+        engine.max_distance_threshold = 0.5
         results = [
-            {"text": "equal", "file_id": "f1", "metadata": {}, "score": 0.3},
-            {"text": "above", "file_id": "f2", "metadata": {}, "score": 0.31},
+            {"text": "at_threshold", "file_id": "f1", "metadata": {}, "_distance": 0.5},
+            {"text": "above", "file_id": "f2", "metadata": {}, "_distance": 0.6},
         ]
         filtered = engine._filter_relevant(results)
-        # Scores equal to threshold should be included
-        self.assertEqual(2, len(filtered))
-        self.assertEqual("equal", filtered[0].text)
-        self.assertEqual("above", filtered[1].text)
+        # Distances <= threshold are included: 0.5 <= 0.5 (keep), 0.6 > 0.5 (skip)
+        self.assertEqual(1, len(filtered))
+        self.assertEqual("at_threshold", filtered[0].text)
 
     def test_filter_relevant_handles_none_score_as_default(self):
         engine = RAGEngine()
@@ -188,27 +190,28 @@ class RAGEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1.0, filtered[0].score)
 
     def test_filter_relevant_with_mixed_scores(self):
+        """Test filtering with mixed distances - keep distances <= threshold."""
         engine = RAGEngine()
-        engine.relevance_threshold = 0.3
+        engine.max_distance_threshold = 0.5
         results = [
-            {"text": "a", "file_id": "f1", "metadata": {"s": 1}, "score": 0.2},
-            {"text": "b", "file_id": "f2", "metadata": {"s": 2}, "score": 0.3},
-            {"text": "c", "file_id": "f3", "metadata": {"s": 3}, "score": 0.4},
-            {"text": "d", "file_id": "f4", "metadata": {"s": 4}, "score": 0.1},
-            {"text": "e", "file_id": "f5", "metadata": {"s": 5}, "score": 0.5},
+            {"text": "a", "file_id": "f1", "metadata": {"s": 1}, "_distance": 0.4},
+            {"text": "b", "file_id": "f2", "metadata": {"s": 2}, "_distance": 0.5},
+            {"text": "c", "file_id": "f3", "metadata": {"s": 3}, "_distance": 0.6},
+            {"text": "d", "file_id": "f4", "metadata": {"s": 4}, "_distance": 0.3},
+            {"text": "e", "file_id": "f5", "metadata": {"s": 5}, "_distance": 0.8},
         ]
         filtered = engine._filter_relevant(results)
-        # Scores >= 0.3: b (0.3), c (0.4), e (0.5) = 3 results
+        # Distances <= 0.5: a(0.4), b(0.5), d(0.3) = 3 results
         self.assertEqual(3, len(filtered))
-        self.assertEqual("b", filtered[0].text)
-        self.assertEqual(0.3, filtered[0].score)
-        self.assertEqual({"s": 2}, filtered[0].metadata)
-        self.assertEqual("c", filtered[1].text)
-        self.assertEqual(0.4, filtered[1].score)
-        self.assertEqual({"s": 3}, filtered[1].metadata)
-        self.assertEqual("e", filtered[2].text)
-        self.assertEqual(0.5, filtered[2].score)
-        self.assertEqual({"s": 5}, filtered[2].metadata)
+        self.assertEqual("a", filtered[0].text)
+        self.assertEqual(0.4, filtered[0].score)
+        self.assertEqual({"s": 1}, filtered[0].metadata)
+        self.assertEqual("b", filtered[1].text)
+        self.assertEqual(0.5, filtered[1].score)
+        self.assertEqual({"s": 2}, filtered[1].metadata)
+        self.assertEqual("d", filtered[2].text)
+        self.assertEqual(0.3, filtered[2].score)
+        self.assertEqual({"s": 4}, filtered[2].metadata)
 
     def test_build_messages_with_empty_context(self):
         engine = RAGEngine()
@@ -216,7 +219,42 @@ class RAGEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(messages))
         self.assertEqual("system", messages[0]["role"])
         self.assertEqual("user", messages[1]["role"])
-        self.assertEqual("Question: my question", messages[1]["content"])
+        self.assertEqual("No relevant documents found for this query.\n\nQuestion: my question", messages[1]["content"])
+
+    def test_filter_relevant_filters_by_distance_with_lancedb_results(self):
+        """Test that _distance field from LanceDB is used correctly (lower = better)."""
+        engine = RAGEngine()
+        engine.max_distance_threshold = 0.5  # Distance threshold
+        results = [
+            {"text": "close match", "file_id": "f1", "metadata": {}, "_distance": 0.2},  # Keep (0.2 <= 0.5)
+            {"text": "at threshold", "file_id": "f2", "metadata": {}, "_distance": 0.5},  # Keep (0.5 <= 0.5)
+            {"text": "far match", "file_id": "f3", "metadata": {}, "_distance": 0.8},   # Skip (0.8 > 0.5)
+        ]
+        filtered = engine._filter_relevant(results)
+        self.assertEqual(2, len(filtered))
+        self.assertEqual("close match", filtered[0].text)
+        self.assertEqual("at threshold", filtered[1].text)
+
+    async def test_no_fallback_injection_when_all_chunks_filtered(self):
+        """Test that when all chunks are filtered by threshold, no garbage fallback is injected."""
+        # All results have distance > threshold (should all be filtered)
+        vector_results = [
+            {"text": "irrelevant1", "file_id": "f1", "metadata": {}, "_distance": 0.9},
+            {"text": "irrelevant2", "file_id": "f2", "metadata": {}, "_distance": 0.95},
+        ]
+        engine = RAGEngine()
+        engine.embedding_service = cast(EmbeddingService, FakeEmbeddingService([0.1, 0.2]))
+        engine.vector_store = cast(VectorStore, FakeVectorStore(vector_results))
+        engine.memory_store = cast(MemoryStore, FakeMemoryStore())
+        engine.llm_client = cast(LLMClient, FakeLLMClient(response="answer"))
+        
+        results = [msg async for msg in engine.query("query", [], stream=False)]
+        done = results[-1]
+        self.assertEqual("done", done["type"])
+        # Sources should be empty since all chunks were filtered
+        self.assertEqual(0, len(done["sources"]))
+        # The LLM response should just be "answer" - no fallback injection
+        self.assertEqual("answer", results[0]["content"])
 
     def test_build_system_prompt_contains_knowledgevault_and_cite_sources(self):
         engine = RAGEngine()
