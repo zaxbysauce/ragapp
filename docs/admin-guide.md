@@ -154,14 +154,16 @@ crontab -e
 
 ```
 /data/knowledgevault/
-├── documents/
-│   ├── uploads/              # Web UI uploads
-│   │   └── [file-id]/
-│   │       └── original.ext
-│   └── library/              # Direct file drops
-│       └── *.ext
+├── uploads/                  # [LEGACY] Flat uploads directory (deprecated, auto-migrated)
+├── vaults/                   # Vault-specific directories
+│   ├── 1/                    # Vault 1 (default/orphan vault)
+│   │   └── uploads/          # Uploads for vault 1
+│   ├── 2/                    # Vault 2
+│   │   └── uploads/          # Uploads for vault 2
+│   └── ...                   # Additional vaults
+├── documents/                # Legacy documents directory (kept for compatibility)
+├── library/                  # Library files
 ├── processing/               # Temporary processing
-│   └── [file-id]/
 ├── lancedb/                  # Vector database
 │   └── chunks.lance/
 │       ├── data/
@@ -170,6 +172,8 @@ crontab -e
 └── logs/
     └── knowledgevault.log
 ```
+
+**Note:** The system now stores uploads in vault-specific directories (`/data/knowledgevault/vaults/{vault_id}/uploads/`). On first startup, the system automatically migrates files from the legacy flat `uploads/` directory to the appropriate vault-specific directories. Files are renamed with `.migrated` suffix to create a safe backup. If a file cannot be associated with a specific vault, it defaults to the orphan vault (vault 1).
 
 ### Changing Data Location
 

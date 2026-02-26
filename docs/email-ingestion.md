@@ -87,7 +87,7 @@ This feature is ideal for:
    - Falls back to default vault (id=1) if vault not found or no tag present
 
 5. **Background Processing**
-   - Saves attachments to temp files in uploads directory
+    - Saves attachments to vault-specific upload directory based on target vault
    - Enqueues documents to `BackgroundProcessor`
    - Standard processing pipeline: parse → chunk → embed → vector store
    - Tracks metadata: `source='email'`, `email_subject`, `email_sender`

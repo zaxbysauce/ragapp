@@ -150,16 +150,24 @@ Open your browser to: `http://localhost:8080`
 
 ```
 data/
-├── documents/
-│   ├── uploads/          # Files uploaded via web UI
-│   └── library/          # Files placed directly by admin
-├── processing/           # Temporary processing files
-├── lancedb/              # Vector database
-│   └── chunks.lance/
-├── app.db                # SQLite database
-└── logs/
-    └── app.log
+├── knowledgevault/       # Root data directory
+│   ├── uploads/          # [LEGACY] Legacy flat uploads directory (deprecated)
+│   ├── vaults/           # Vault-specific data directories
+│   │   ├── 1/            # Vault 1 (default/orphan vault)
+│   │   │   └── uploads/  # Uploads for vault 1
+│   │   ├── 2/            # Vault 2
+│   │   │   └── uploads/  # Uploads for vault 2
+│   │   └── ...           # Additional vaults
+│   ├── documents/        # Documents (legacy, kept for compatibility)
+│   ├── library/          # Library files
+│   ├── lancedb/          # Vector database
+│   │   └── chunks.lance/
+│   ├── app.db            # SQLite database
+│   └── logs/
+│       └── app.log
 ```
+
+**Note:** The system now stores uploads in vault-specific directories (`/data/knowledgevault/vaults/{vault_id}/uploads/`). On first startup, the system automatically migrates files from the legacy flat `uploads/` directory to the appropriate vault-specific directories. Files are renamed with `.migrated` suffix to create a safe backup. If a file cannot be associated with a specific vault, it defaults to the orphan vault (vault 1).
 
 ## Ollama Models
 
@@ -348,7 +356,7 @@ The web interface uses a navigation rail with five sections:
 3. Files are automatically processed and indexed
 
 **Method 2: Direct File Placement**
-1. Place files in `data/documents/library/`
+1. Place files in `data/knowledgevault/vaults/{vault_id}/uploads/` (e.g., `data/knowledgevault/vaults/1/uploads/`)
 2. Click "Scan Directory" on Documents page
 3. Or wait for auto-scan (if enabled)
 
