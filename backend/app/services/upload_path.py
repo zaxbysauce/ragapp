@@ -235,3 +235,34 @@ def rollback_migration() -> dict:
     
     logger.info(f"Rollback complete: {len(results['moved'])} moved, {len(results['skipped'])} skipped, {len(results['failed'])} failed")
     return results
+
+
+def _rename_vault_folder(old_name: str, new_name: str) -> bool:
+    """
+    Rename vault upload folder when vault is renamed.
+    
+    Returns True if renamed, False if old folder doesn't exist.
+    """
+    # Sanitize names the same way as get_upload_dir
+    safe_old = "".join(c if c.isalnum() or c in "-_" else "_" for c in old_name)
+    safe_new = "".join(c if c.isalnum() or c in "-_" else "_" for c in new_name)
+    
+    old_path = settings.vaults_dir / safe_old
+    new_path = settings.vaults_dir / safe_new
+    
+    if not old_path.exists():
+        return False
+    
+    # Handle case where new folder already exists
+    if new_path.exists():
+        # Move contents from old to new
+        for item in old_path.glob("*"):
+            dest = new_path / item.name
+            if dest.exists():
+                continue  # Skip conflicts
+            shutil.move(str(item), str(dest))
+        old_path.rmdir()
+    else:
+        old_path.rename(new_path)
+    
+    return True

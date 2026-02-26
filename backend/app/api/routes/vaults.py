@@ -239,6 +239,18 @@ async def update_vault(
             detail=f"Vault with name '{request.name}' already exists"
         )
 
+    # Rename vault folder if name changed
+    if request.name is not None:
+        try:
+            from app.services.upload_path import _rename_vault_folder
+            old_name = row[1]  # Original vault name from line 194
+            new_name = request.name
+            if old_name != new_name:
+                await asyncio.to_thread(_rename_vault_folder, old_name, new_name)
+        except Exception as e:
+            # Log but don't fail the rename - folder rename is not critical
+            logging.getLogger(__name__).warning(f"Failed to rename vault folder: {e}")
+
     # Fetch updated record
     vault = await _fetch_vault_with_counts(conn, vault_id)
 
