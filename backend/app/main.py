@@ -29,6 +29,7 @@ from app.services.llm_client import LLMClient
 from app.services.vector_store import VectorStore, VectorStoreError
 from app.services.memory_store import MemoryStore
 from app.services.embeddings import EmbeddingService
+from app.services.reranking import RerankingService
 from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
 from app.services.maintenance import MaintenanceService
@@ -164,6 +165,13 @@ async def lifespan(app: FastAPI):
     app.state.vector_store = VectorStore()
     app.state.vector_store.connect()
     app.state.vector_store.migrate_add_vault_id()
+
+    # Initialize RerankingService
+    app.state.reranking_service = RerankingService(
+        reranker_url=settings.reranker_url,
+        reranker_model=settings.reranker_model,
+        top_n=settings.reranker_top_n,
+    )
     
     # Validate schema at startup
     try:

@@ -11,6 +11,7 @@ from app.services.llm_client import LLMClient
 from app.services.embeddings import EmbeddingService
 from app.services.vector_store import VectorStore
 from app.services.memory_store import MemoryStore
+from app.services.reranking import RerankingService
 from app.services.rag_engine import RAGEngine
 from app.services.secret_manager import SecretManager
 from app.services.toggle_manager import ToggleManager
@@ -62,11 +63,17 @@ def get_memory_store(request: Request) -> MemoryStore:
     return request.app.state.memory_store
 
 
+def get_reranking_service(request: Request):
+    """Return the RerankingService from app state."""
+    return request.app.state.reranking_service
+
+
 def get_rag_engine(
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     vector_store: VectorStore = Depends(get_vector_store),
     memory_store: MemoryStore = Depends(get_memory_store),
     llm_client: LLMClient = Depends(get_llm_client),
+    reranking_service: RerankingService = Depends(get_reranking_service),
 ) -> RAGEngine:
     """Return a new RAGEngine initialized with dependencies."""
     return RAGEngine(
@@ -74,6 +81,7 @@ def get_rag_engine(
         vector_store=vector_store,
         memory_store=memory_store,
         llm_client=llm_client,
+        reranking_service=reranking_service,
     )
 
 

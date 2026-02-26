@@ -30,6 +30,17 @@ class SettingsUpdate(BaseModel):
     retrieval_window: Optional[int] = None
     embedding_batch_size: Optional[int] = None
 
+    # Reranker config
+    reranker_url: Optional[str] = None
+    reranker_model: Optional[str] = None
+    reranking_enabled: Optional[bool] = None
+    reranker_top_n: Optional[int] = None
+    initial_retrieval_top_k: Optional[int] = None
+
+    # Hybrid search config
+    hybrid_search_enabled: Optional[bool] = None
+    hybrid_alpha: Optional[float] = None
+
     # Feature flags (still supported)
     auto_scan_enabled: Optional[bool] = None
     auto_scan_interval_minutes: Optional[int] = None
@@ -120,6 +131,27 @@ class SettingsUpdate(BaseModel):
             raise ValueError("embedding_batch_size must be between 1 and 2048")
         return v
 
+    @field_validator("reranker_top_n")
+    @classmethod
+    def validate_reranker_top_n(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("reranker_top_n must be a positive integer")
+        return v
+
+    @field_validator("initial_retrieval_top_k")
+    @classmethod
+    def validate_initial_retrieval_top_k(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("initial_retrieval_top_k must be a positive integer")
+        return v
+
+    @field_validator("hybrid_alpha")
+    @classmethod
+    def validate_hybrid_alpha(cls, v):
+        if v is not None and (v < 0 or v > 1):
+            raise ValueError("hybrid_alpha must be between 0 and 1")
+        return v
+
     @model_validator(mode="after")
     def validate_chunk_overlap_less_than_size(self):
         chunk_overlap = self.chunk_overlap
@@ -146,6 +178,13 @@ ALLOWED_FIELDS = [
     "embedding_query_prefix",
     "retrieval_window",
     "embedding_batch_size",
+    "reranker_url",
+    "reranker_model",
+    "reranking_enabled",
+    "reranker_top_n",
+    "initial_retrieval_top_k",
+    "hybrid_search_enabled",
+    "hybrid_alpha",
 ]
 
 
@@ -204,6 +243,17 @@ class SettingsResponse(BaseModel):
     # Embedding config
     embedding_batch_size: int
 
+    # Reranker config
+    reranker_url: str = ""
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranking_enabled: bool = False
+    reranker_top_n: int = 5
+    initial_retrieval_top_k: int = 20
+
+    # Hybrid search config
+    hybrid_search_enabled: bool = True
+    hybrid_alpha: float = 0.5
+
     # Limits (safe to expose)
     max_file_size_mb: int
     allowed_extensions: list[str]
@@ -256,6 +306,13 @@ def _apply_settings_update(update: SettingsUpdate) -> SettingsResponse:
         "max_file_size_mb": settings.max_file_size_mb,
         "allowed_extensions": settings.allowed_extensions,
         "backend_cors_origins": settings.backend_cors_origins,
+        "reranker_url": settings.reranker_url,
+        "reranker_model": settings.reranker_model,
+        "reranking_enabled": settings.reranking_enabled,
+        "reranker_top_n": settings.reranker_top_n,
+        "initial_retrieval_top_k": settings.initial_retrieval_top_k,
+        "hybrid_search_enabled": settings.hybrid_search_enabled,
+        "hybrid_alpha": settings.hybrid_alpha,
     }
     return SettingsResponse.model_validate(settings_dict)
 
@@ -291,6 +348,13 @@ def get_settings():
         "max_file_size_mb": settings.max_file_size_mb,
         "allowed_extensions": settings.allowed_extensions,
         "backend_cors_origins": settings.backend_cors_origins,
+        "reranker_url": settings.reranker_url,
+        "reranker_model": settings.reranker_model,
+        "reranking_enabled": settings.reranking_enabled,
+        "reranker_top_n": settings.reranker_top_n,
+        "initial_retrieval_top_k": settings.initial_retrieval_top_k,
+        "hybrid_search_enabled": settings.hybrid_search_enabled,
+        "hybrid_alpha": settings.hybrid_alpha,
     }
     return SettingsResponse.model_validate(settings_dict)
 
@@ -330,26 +394,30 @@ def get_csrf_token(
 
 @router.get("/settings/connection")
 async def test_connection():
+    """Test connectivity to Ollama endpoints and reranker."""
     targets = {
         "embeddings": settings.ollama_embedding_url,
         "chat": settings.ollama_chat_url,
     }
+    if settings.reranker_url:
+        targets["reranker"] = settings.reranker_url
+
     async with httpx.AsyncClient(timeout=5.0) as client:
         results = {}
         for name, url in targets.items():
             try:
                 response = await client.get(url)
-                results[name] = {
-                    "url": url,
-                    "status": response.status_code,
-                    "ok": response.status_code < 300,
-                }
+                results[name] = {"url": url, "status": response.status_code, "ok": response.status_code < 300}
             except Exception as exc:
-                results[name] = {
-                    "url": url,
-                    "status": None,
-                    "ok": False,
-                    "error": str(exc),
-                }
+                results[name] = {"url": url, "status": None, "ok": False, "error": str(exc)}
+        
+        # Only add local mode result if reranker wasn't tested (i.e., reranker_url was not set)
+        if "reranker" not in results:
+            results["reranker"] = {
+                "url": "local (sentence-transformers)",
+                "ok": True,
+                "status": "local",
+                "model": settings.reranker_model,
+            }
     return results
 

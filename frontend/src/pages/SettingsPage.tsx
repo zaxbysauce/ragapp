@@ -16,6 +16,7 @@ import { APIKeySettings } from "@/components/settings/APIKeySettings";
 import { ConnectionSettings } from "@/components/settings/ConnectionSettings";
 import { DocumentProcessingSettings } from "@/components/settings/DocumentProcessingSettings";
 import { RAGSettings } from "@/components/settings/RAGSettings";
+import { RetrievalSettings } from "@/components/settings/RetrievalSettings";
 import type { SettingsFormData } from "@/stores/useSettingsStore";
 
 // Internal component that renders the settings form
@@ -80,6 +81,9 @@ function SettingsPageContent() {
   const handleInputChange = (field: keyof SettingsFormData, value: string | boolean) => {
     if (typeof value === "boolean") {
       updateFormField(field, value);
+    } else if (typeof value === "string" && value === "") {
+      // Handle empty string for optional text fields
+      updateFormField(field as any, value);
     } else {
       const numValue = parseFloat(value);
       if (!isNaN(numValue)) {
@@ -109,6 +113,14 @@ function SettingsPageContent() {
         embedding_doc_prefix: formData.embedding_doc_prefix,
         embedding_query_prefix: formData.embedding_query_prefix,
         embedding_batch_size: formData.embedding_batch_size,
+        // New retrieval settings
+        reranking_enabled: formData.reranking_enabled,
+        reranker_url: formData.reranker_url,
+        reranker_model: formData.reranker_model,
+        initial_retrieval_top_k: formData.initial_retrieval_top_k,
+        reranker_top_n: formData.reranker_top_n,
+        hybrid_search_enabled: formData.hybrid_search_enabled,
+        hybrid_alpha: formData.hybrid_alpha,
       });
       setSettings(updated);
       toast.success("Settings saved successfully");
@@ -236,6 +248,13 @@ function SettingsPageContent() {
 
             {/* RAG Settings */}
             <RAGSettings
+              formData={formData}
+              errors={errors}
+              onChange={handleInputChange}
+            />
+
+            {/* Retrieval Settings */}
+            <RetrievalSettings
               formData={formData}
               errors={errors}
               onChange={handleInputChange}

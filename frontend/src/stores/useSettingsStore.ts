@@ -13,6 +13,14 @@ export interface SettingsFormData {
   embedding_doc_prefix: string;
   embedding_query_prefix: string;
   embedding_batch_size: number;
+  // Retrieval settings
+  reranking_enabled?: boolean;
+  reranker_url?: string;
+  reranker_model?: string;
+  initial_retrieval_top_k?: number;
+  reranker_top_n?: number;
+  hybrid_search_enabled?: boolean;
+  hybrid_alpha?: number;
 }
 
 export interface SettingsErrors {
@@ -26,6 +34,11 @@ export interface SettingsErrors {
   embedding_doc_prefix?: string;
   embedding_query_prefix?: string;
   embedding_batch_size?: string;
+  reranker_url?: string;
+  reranker_model?: string;
+  initial_retrieval_top_k?: string;
+  reranker_top_n?: string;
+  hybrid_alpha?: string;
 }
 
 export interface SettingsState {
@@ -80,6 +93,13 @@ const defaultFormData: SettingsFormData = {
   embedding_doc_prefix: "Passage: ",
   embedding_query_prefix: "Query: ",
   embedding_batch_size: 512,
+  reranking_enabled: false,
+  reranker_url: "",
+  reranker_model: "",
+  initial_retrieval_top_k: 20,
+  reranker_top_n: 5,
+  hybrid_search_enabled: false,
+  hybrid_alpha: 0.5,
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -146,6 +166,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         embedding_doc_prefix: settings.embedding_doc_prefix ?? "Passage: ",
         embedding_query_prefix: settings.embedding_query_prefix ?? "Query: ",
         embedding_batch_size: settings.embedding_batch_size ?? 512,
+        reranking_enabled: settings.reranking_enabled ?? false,
+        reranker_url: settings.reranker_url ?? "",
+        reranker_model: settings.reranker_model ?? "",
+        initial_retrieval_top_k: settings.initial_retrieval_top_k ?? 20,
+        reranker_top_n: settings.reranker_top_n ?? 5,
+        hybrid_search_enabled: settings.hybrid_search_enabled ?? false,
+        hybrid_alpha: settings.hybrid_alpha ?? 0.5,
       },
       loading: false,
       error: null,
@@ -194,6 +221,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       newErrors.vector_metric = "Vector metric must be cosine, euclidean, or dot_product";
     }
 
+    // Validate retrieval settings
+    if (formData.initial_retrieval_top_k !== undefined && (formData.initial_retrieval_top_k < 5 || formData.initial_retrieval_top_k > 100)) {
+      newErrors.initial_retrieval_top_k = "Initial retrieval top-k must be between 5 and 100";
+    }
+    if (formData.reranker_top_n !== undefined && (formData.reranker_top_n < 1 || formData.reranker_top_n > 20)) {
+      newErrors.reranker_top_n = "Reranker top-n must be between 1 and 20";
+    }
+    if (formData.hybrid_alpha !== undefined && (formData.hybrid_alpha < 0 || formData.hybrid_alpha > 1)) {
+      newErrors.hybrid_alpha = "Hybrid alpha must be between 0 and 1";
+    }
+
     set({ errors: newErrors });
     return Object.keys(newErrors).length === 0;
   },
@@ -212,11 +250,31 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       formData.vector_metric !== (settings.vector_metric ?? "cosine") ||
       formData.embedding_doc_prefix !== (settings.embedding_doc_prefix ?? "Passage: ") ||
       formData.embedding_query_prefix !== (settings.embedding_query_prefix ?? "Query: ") ||
-      formData.embedding_batch_size !== (settings.embedding_batch_size ?? 512)
+      formData.embedding_batch_size !== (settings.embedding_batch_size ?? 512) ||
+       formData.reranking_enabled !== (settings.reranking_enabled ?? false) ||
+       formData.reranker_url !== (settings.reranker_url ?? "") ||
+       formData.reranker_model !== (settings.reranker_model ?? "") ||
+       formData.initial_retrieval_top_k !== (settings.initial_retrieval_top_k ?? 20) ||
+       formData.reranker_top_n !== (settings.reranker_top_n ?? 5) ||
+       formData.hybrid_search_enabled !== (settings.hybrid_search_enabled ?? false) ||
+      formData.hybrid_alpha !== (settings.hybrid_alpha ?? 0.5)
     );
   },
 
   resetState: () => {
+    set({
+      settings: null,
+      formData: { ...defaultFormData },
+      loading: true,
+      saving: false,
+      error: null,
+      errors: {},
+      saveStatus: "idle",
+    });
+  },
+
+  // Alias for resetState to match task requirements
+  reset: () => {
     set({
       settings: null,
       formData: { ...defaultFormData },

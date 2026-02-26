@@ -66,6 +66,24 @@ class Settings(BaseSettings):
     embedding_batch_min_sub_size: int = 1
     """Minimum sub-batch size for adaptive batching fallback."""
 
+    # ── Reranker configuration ────────────────────────────────────────────────
+    reranker_url: str = ""
+    """TEI-compatible reranker endpoint URL. Empty = use sentence-transformers locally."""
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    """HuggingFace model ID for local reranking, or model name sent to TEI endpoint."""
+    reranking_enabled: bool = False
+    """Enable cross-encoder reranking after vector retrieval."""
+    reranker_top_n: int = 5
+    """Number of chunks to keep after reranking."""
+    initial_retrieval_top_k: int = 20
+    """Chunks fetched from vector store BEFORE reranking."""
+
+    # ── Hybrid search configuration ─────────────────────────────────────────
+    hybrid_search_enabled: bool = True
+    """Combine BM25 keyword search with dense vector search using RRF fusion."""
+    hybrid_alpha: float = 0.5
+    """Weight for dense vs sparse scores in RRF. 0.0 = pure BM25, 1.0 = pure dense."""
+
     # Document processing configuration (legacy - DEPRECATED)
     chunk_size: int | None = None
     """[DEPRECATED] Token-based chunk size. Use chunk_size_chars instead."""
@@ -248,6 +266,25 @@ class Settings(BaseSettings):
     def sqlite_path(self) -> Path:
         """Path to SQLite database."""
         return self.data_dir / "app.db"
+
+    @property
+    def effective_embedding_doc_prefix(self) -> str:
+        """Effective document prefix for embedding. BGE-M3 doesn't use prefixes."""
+        if self.embedding_doc_prefix:
+            return self.embedding_doc_prefix
+        # Auto-apply Qwen3 instruction prefix only for Qwen models
+        if "qwen" in self.embedding_model.lower():
+            return "Instruct: Represent this technical documentation passage for retrieval.\nDocument: "
+        return ""
+
+    @property
+    def effective_embedding_query_prefix(self) -> str:
+        """Effective query prefix for embedding. BGE-M3 doesn't use prefixes."""
+        if self.embedding_query_prefix:
+            return self.embedding_query_prefix
+        if "qwen" in self.embedding_model.lower():
+            return "Instruct: Retrieve relevant technical documentation passages.\nQuery: "
+        return ""
 
 
 # Global settings instance

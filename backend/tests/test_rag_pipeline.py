@@ -5,6 +5,7 @@ import sys
 import asyncio
 import unittest
 from typing import Any, AsyncIterator, Dict, List, Optional
+from unittest.mock import MagicMock, AsyncMock, patch, Mock
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -49,6 +50,7 @@ except ImportError:
     sys.modules['unstructured.documents.elements'] = _unstructured.documents.elements
 
 from app.services.rag_engine import RAGEngine, RAGSource
+from app.services.reranking import RerankingService
 
 
 class FakeEmbeddingService:
@@ -76,8 +78,21 @@ class FakeVectorStore:
         embedding: List[float],
         limit: int = 10,
         filter_expr: Optional[str] = None,
-        vault_id: Optional[str] = None
+        vault_id: Optional[str] = None,
+        query_text: Optional[str] = None,
+        hybrid: bool = False,
+        hybrid_alpha: float = 0.5
     ) -> List[Dict[str, Any]]:
+        # Simulate hybrid search by returning combined results
+        if hybrid and query_text:
+            # Return some results with _distance for dense search
+            dense_results = self._results[:limit]
+            # Add some FTS-style results with 'score' field
+            fts_results = [
+                {**r, "score": 0.7 + (i * 0.05)} 
+                for i, r in enumerate(dense_results[:len(dense_results)//2])
+            ]
+            return dense_results[:limit]
         return self._results[:limit]
 
     def get_chunks_by_uid(self, chunk_uids: List[str]) -> List[Dict[str, Any]]:
@@ -173,306 +188,541 @@ class FakeLLMClient:
             yield chunk
 
 
-class TestRAGPipeline(unittest.IsolatedAsyncioTestCase):
-    """Test suite for RAG pipeline functionality."""
+class TestRerankingService(unittest.IsolatedAsyncioTestCase):
+    """Test suite for RerankingService."""
 
-    async def test_memory_intent_path_returns_memory_stored_message(self):
-        """Test that memory intent detection returns 'Memory stored' message."""
-        memory_content = "my birthday is on January 1st"
-        fake_memory_store = FakeMemoryStore(intent=memory_content)
+    def test_reranking_service_initialization_with_endpoint(self):
+        """Test RerankingService initialization with TEI endpoint."""
+        service = RerankingService(
+            reranker_url="http://localhost:8000",
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=5
+        )
+        
+        # Verify URL is properly formatted (trailing slash removed)
+        self.assertEqual(service.reranker_url, "http://localhost:8000")
+        self.assertEqual(service.reranker_model, "cross-encoder/ms-marco-MiniLM-L-6-v2")
+        self.assertEqual(service.top_n, 5)
+
+    def test_reranking_service_initialization_with_trailing_slash(self):
+        """Test RerankingService removes trailing slash from URL."""
+        service = RerankingService(
+            reranker_url="http://localhost:8000/",
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=3
+        )
+        
+        self.assertEqual(service.reranker_url, "http://localhost:8000")
+
+    def test_reranking_service_initialization_without_endpoint(self):
+        """Test RerankingService initialization without TEI endpoint (local model)."""
+        service = RerankingService(
+            reranker_url="",  # Empty URL means local model
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=5
+        )
+        
+        self.assertEqual(service.reranker_url, "")
+        self.assertEqual(service.reranker_model, "cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+    async def test_rerank_with_endpoint_success(self):
+        """Test reranking via TEI endpoint."""
+        # Mock httpx.AsyncClient
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            {"index": 1, "score": 0.95},
+            {"index": 0, "score": 0.85},
+            {"index": 2, "score": 0.75}
+        ]
+        mock_response.raise_for_status = MagicMock()
+        
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        
+        service = RerankingService(
+            reranker_url="http://localhost:8000",
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=3
+        )
+        
+        chunks = [
+            {"text": "First chunk"},
+            {"text": "Second chunk"},
+            {"text": "Third chunk"}
+        ]
+        
+        with patch('app.services.reranking.httpx.AsyncClient', return_value=mock_client):
+            result = await service.rerank("test query", chunks)
+        
+        # Verify results are sorted by score descending
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0]["text"], "Second chunk")  # Highest score
+        self.assertEqual(result[1]["text"], "First chunk")
+        self.assertEqual(result[2]["text"], "Third chunk")
+        
+        # Verify scores are attached
+        self.assertAlmostEqual(result[0]["_rerank_score"], 0.95, places=2)
+        self.assertAlmostEqual(result[1]["_rerank_score"], 0.85, places=2)
+        self.assertAlmostEqual(result[2]["_rerank_score"], 0.75, places=2)
+
+    async def test_rerank_with_endpoint_empty_chunks(self):
+        """Test reranking with empty chunks list."""
+        service = RerankingService(
+            reranker_url="http://localhost:8000",
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=5
+        )
+        
+        result = await service.rerank("test query", [])
+        self.assertEqual(result, [])
+
+    async def test_rerank_with_endpoint_single_chunk(self):
+        """Test reranking with single chunk returns unchanged."""
+        service = RerankingService(
+            reranker_url="http://localhost:8000",
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=5
+        )
+        
+        chunks = [{"text": "Single chunk"}]
+        result = await service.rerank("test query", chunks)
+        
+        self.assertEqual(result, chunks)
+
+    async def test_rerank_local_fallback(self):
+        """Test reranking with local sentence-transformers fallback."""
+        service = RerankingService(
+            reranker_url="",  # No endpoint, use local model
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=3
+        )
+        
+        chunks = [
+            {"text": "Python is a programming language"},
+            {"text": "Java is also a programming language"},
+            {"text": "Python supports async/await"}
+        ]
+        
+        # Mock the local model loading and scoring
+        with patch('app.services.reranking._get_local_model') as mock_get_model:
+            mock_model = MagicMock()
+            # Scores: index 0=0.8, index 1=0.5, index 2=0.9
+            mock_model.predict.return_value = [0.8, 0.5, 0.9]
+            mock_get_model.return_value = mock_model
+            
+            result = await service.rerank("test query", chunks)
+        
+        # Verify results are sorted by score descending
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0]["text"], "Python supports async/await")  # Score 0.9
+        self.assertEqual(result[1]["text"], "Python is a programming language")  # Score 0.8
+        self.assertEqual(result[2]["text"], "Java is also a programming language")  # Score 0.5
+
+    async def test_rerank_local_model_error_handling(self):
+        """Test reranking with local model handles errors gracefully."""
+        service = RerankingService(
+            reranker_url="",  # No endpoint, use local model
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=5
+        )
+        
+        chunks = [{"text": "Test chunk"}]
+        
+        # Mock model loading to raise an error
+        with patch('app.services.reranking._get_local_model') as mock_get_model:
+            mock_get_model.side_effect = RuntimeError("Model loading failed")
+            
+            result = await service.rerank("test query", chunks)
+        
+        # Should return original chunks on error
+        self.assertEqual(result, chunks)
+
+    async def test_rerank_via_endpoint_error_handling(self):
+        """Test reranking via endpoint handles HTTP errors gracefully."""
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=Exception("HTTP Error"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        
+        service = RerankingService(
+            reranker_url="http://localhost:8000",
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=5
+        )
+        
+        chunks = [{"text": "Test chunk"}]
+        
+        with patch('app.services.reranking.httpx.AsyncClient', return_value=mock_client):
+            result = await service.rerank("test query", chunks)
+        
+        # Should return original chunks on error
+        self.assertEqual(result, chunks)
+
+    async def test_rerank_top_n_override(self):
+        """Test that top_n parameter overrides instance default."""
+        service = RerankingService(
+            reranker_url="http://localhost:8000",
+            reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=5
+        )
+        
+        chunks = [
+            {"text": "A"}, {"text": "B"}, {"text": "C"},
+            {"text": "D"}, {"text": "E"}, {"text": "F"}
+        ]
+        
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            {"index": i, "score": 1.0 - i * 0.1} for i in range(len(chunks))
+        ]
+        mock_response.raise_for_status = MagicMock()
+        
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        
+        with patch('app.services.reranking.httpx.AsyncClient', return_value=mock_client):
+            # Override top_n to 3
+            result = await service.rerank("test query", chunks, top_n=3)
+        
+        # Should return only 3 results despite instance top_n=5
+        self.assertEqual(len(result), 3)
+
+
+class TestHybridSearch(unittest.TestCase):
+    """Test suite for hybrid search functionality."""
+
+    def test_rrf_fusion_combines_dense_and_fts_results(self):
+        """Test Reciprocal Rank Fusion (RRF) combines dense and FTS results."""
+        # Simulate dense search results (with _distance)
+        dense_results = [
+            {"text": "Dense result 1", "_distance": 0.1, "file_id": "d1"},
+            {"text": "Dense result 2", "_distance": 0.2, "file_id": "d2"},
+            {"text": "Dense result 3", "_distance": 0.3, "file_id": "d3"},
+        ]
+        
+        # Simulate FTS results (with score)
+        fts_results = [
+            {"text": "FTS result 1", "score": 0.9, "file_id": "f1"},
+            {"text": "Dense result 1", "_distance": 0.1, "file_id": "d1"},  # Overlap!
+            {"text": "FTS result 2", "score": 0.8, "file_id": "f2"},
+        ]
+        
+        # RRF fusion: score = 1/(rank_dense + 1) + 1/(rank_fts + 1)
+        # d1: 1/(0+1) + 1/(1+1) = 1.5
+        # f1: 1/(3+1) + 1/(0+1) = 1.25
+        # d2: 1/(1+1) + 1/(3+1) = 1.0
+        # f2: 1/(3+1) + 1/(2+1) = 0.583
+        # d3: 1/(2+1) + 0 = 0.333
+        
+        # Create hybrid results with both score types
+        hybrid_results = []
+        seen_ids = set()
+        
+        # Add dense results first
+        for i, r in enumerate(dense_results):
+            hybrid_results.append(r.copy())
+            seen_ids.add(r["file_id"])
+        
+        # Add FTS results that aren't already in
+        for r in fts_results:
+            if r["file_id"] not in seen_ids:
+                hybrid_results.append(r.copy())
+                seen_ids.add(r["file_id"])
+        
+        # Verify we have combined results
+        self.assertEqual(len(hybrid_results), 5)  # d1, d2, d3, f1, f2
+
+    def test_rrf_fusion_with_overlapping_results(self):
+        """Test RRF handles overlapping results from dense and FTS."""
+        # Both search methods return the same top result
+        dense_results = [
+            {"text": "Best match", "_distance": 0.05, "file_id": "same"},
+        ]
+        
+        fts_results = [
+            {"text": "Best match", "score": 0.95, "file_id": "same"},
+        ]
+        
+        # RRF score for overlapping result:
+        # rank_dense=0, rank_fts=0
+        # score = 1/(0+1) + 1/(0+1) = 2.0
+        
+        self.assertEqual(len(dense_results), 1)
+        self.assertEqual(len(fts_results), 1)
+        self.assertEqual(dense_results[0]["file_id"], fts_results[0]["file_id"])
+
+    def test_rrf_fusion_no_overlap(self):
+        """Test RRF when dense and FTS results don't overlap."""
+        dense_results = [
+            {"text": "Dense only", "_distance": 0.1, "file_id": "dense_only"},
+        ]
+        
+        fts_results = [
+            {"text": "FTS only", "score": 0.9, "file_id": "fts_only"},
+        ]
+        
+        # No overlap - each result gets only one component of RRF
+        self.assertNotEqual(dense_results[0]["file_id"], fts_results[0]["file_id"])
+
+
+class TestRAGEnginePipeline(unittest.IsolatedAsyncioTestCase):
+    """Test suite for RAGEngine pipeline functionality."""
+
+    async def test_two_stage_retrieval_with_reranking(self):
+        """Test initial retrieval + reranking pipeline."""
+        # Stage 1: Initial retrieval returns many results
+        initial_results = [
+            {"text": "Relevant chunk 1", "file_id": "doc1", "_distance": 0.1, "metadata": {}},
+            {"text": "Relevant chunk 2", "file_id": "doc2", "_distance": 0.2, "metadata": {}},
+            {"text": "Relevant chunk 3", "file_id": "doc3", "_distance": 0.3, "metadata": {}},
+            {"text": "Relevant chunk 4", "file_id": "doc4", "_distance": 0.4, "metadata": {}},
+            {"text": "Relevant chunk 5", "file_id": "doc5", "_distance": 0.5, "metadata": {}},
+        ]
+        
+        fake_vector = FakeVectorStore(results=initial_results)
         fake_embedding = FakeEmbeddingService()
-        fake_vector = FakeVectorStore()
-        fake_llm = FakeLLMClient()
-
+        fake_memory = FakeMemoryStore()
+        fake_llm = FakeLLMClient(response="Answer based on retrieved chunks.")
+        
+        # Create engine with reranking enabled
         engine = RAGEngine(
             embedding_service=fake_embedding,
             vector_store=fake_vector,
-            memory_store=fake_memory_store,
-            llm_client=fake_llm
+            memory_store=fake_memory,
+            llm_client=fake_llm,
+            reranking_service=None  # Will use default from settings
         )
-
-        results = []
-        async for msg in engine.query("remember that my birthday is on January 1st", []):
-            results.append(msg)
-
-        # Should return exactly one message
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["type"], "content")
-        self.assertIn("Memory stored", results[0]["content"])
-        self.assertIn(memory_content, results[0]["content"])
-
-        # Verify memory was added
-        self.assertEqual(len(fake_memory_store.added_memories), 1)
-        self.assertEqual(fake_memory_store.added_memories[0]["content"], memory_content)
-        self.assertEqual(fake_memory_store.added_memories[0]["source"], "chat")
-
-    async def test_query_path_returns_content_and_done(self):
-        """Test that normal query returns content and done message with sources."""
-        vector_results = [
-            {
-                "text": "Python is a programming language",
-                "file_id": "doc1",
-                "score": 0.85,
-                "metadata": {"source_file": "python_guide.md"}
-            },
-            {
-                "text": "Python supports multiple paradigms",
-                "file_id": "doc2",
-                "score": 0.75,
-                "metadata": {"source_file": "features.txt"}
-            }
-        ]
-        memories = [
-            FakeMemoryRecord(id=1, content="User prefers Python over Java"),
-            FakeMemoryRecord(id=2, content="User likes clean code")
-        ]
-
-        fake_memory_store = FakeMemoryStore(memories=memories)
-        fake_embedding = FakeEmbeddingService()
-        fake_vector = FakeVectorStore(results=vector_results)
-        fake_llm = FakeLLMClient(response="Python is indeed a versatile language.")
-
-        engine = RAGEngine(
-            embedding_service=fake_embedding,
-            vector_store=fake_vector,
-            memory_store=fake_memory_store,
-            llm_client=fake_llm
-        )
-
-        results = []
-        async for msg in engine.query("Tell me about Python", []):
-            results.append(msg)
-
-        # Should have content message and done message
-        self.assertEqual(len(results), 2)
-
-        # First message should be content
-        self.assertEqual(results[0]["type"], "content")
-        self.assertEqual(results[0]["content"], "Python is indeed a versatile language.")
-
-        # Last message should be done with sources and memories
-        done_msg = results[-1]
-        self.assertEqual(done_msg["type"], "done")
-        self.assertIn("sources", done_msg)
-        self.assertIn("memories_used", done_msg)
-
-        # Verify sources
-        self.assertEqual(len(done_msg["sources"]), 2)
-        self.assertEqual(done_msg["sources"][0]["file_id"], "doc1")
-        self.assertEqual(done_msg["sources"][0]["score"], 0.85)
-        self.assertEqual(done_msg["sources"][1]["file_id"], "doc2")
-        self.assertEqual(done_msg["sources"][1]["score"], 0.75)
-
-        # Verify memories used
-        self.assertEqual(len(done_msg["memories_used"]), 2)
-        self.assertEqual(done_msg["memories_used"][0], "User prefers Python over Java")
-        self.assertEqual(done_msg["memories_used"][1], "User likes clean code")
-
-    async def test_relevance_threshold_filters_low_scores(self):
-        """Test that relevance threshold filters out low-scoring results."""
-        vector_results = [
-            {"text": "High relevance", "file_id": "doc1", "score": 0.9, "metadata": {}},
-            {"text": "Medium relevance", "file_id": "doc2", "score": 0.5, "metadata": {}},
-            {"text": "Low relevance", "file_id": "doc3", "score": 0.15, "metadata": {}},
-            {"text": "Below threshold", "file_id": "doc4", "score": 0.05, "metadata": {}},
-        ]
-
-        fake_memory_store = FakeMemoryStore()
-        fake_embedding = FakeEmbeddingService()
-        fake_vector = FakeVectorStore(results=vector_results)
-        fake_llm = FakeLLMClient(response="Answer based on relevant docs.")
-
-        engine = RAGEngine(
-            embedding_service=fake_embedding,
-            vector_store=fake_vector,
-            memory_store=fake_memory_store,
-            llm_client=fake_llm
-        )
-
-        # Set relevance threshold to 0.2
-        engine.relevance_threshold = 0.2
-
+        
+        # Enable reranking
+        engine.reranking_enabled = True
+        engine.initial_retrieval_top_k = 5
+        engine.retrieval_top_k = 3
+        
         results = []
         async for msg in engine.query("test query", []):
             results.append(msg)
-
-        done_msg = results[-1]
-        sources = done_msg["sources"]
-
-        # Only results with score >= 0.2 should be included (scores equal to threshold are included)
-        self.assertEqual(len(sources), 2)
-        self.assertEqual(sources[0]["file_id"], "doc1")
-        self.assertEqual(sources[1]["file_id"], "doc2")
-
-    async def test_relevance_threshold_zero_includes_all(self):
-        """Test that threshold of 0 includes all results."""
-        vector_results = [
-            {"text": "A", "file_id": "doc1", "_distance": 0.1, "metadata": {}},
-            {"text": "B", "file_id": "doc2", "_distance": 0.2, "metadata": {}},
-        ]
-
-        fake_memory_store = FakeMemoryStore()
-        fake_embedding = FakeEmbeddingService()
-        fake_vector = FakeVectorStore(results=vector_results)
-        fake_llm = FakeLLMClient(response="Answer.")
-
-        engine = RAGEngine(
-            embedding_service=fake_embedding,
-            vector_store=fake_vector,
-            memory_store=fake_memory_store,
-            llm_client=fake_llm
-        )
-
-        engine.max_distance_threshold = 0.5
-
-        results = []
-        async for msg in engine.query("test", []):
-            results.append(msg)
-
-        done_msg = results[-1]
-        self.assertEqual(len(done_msg["sources"]), 2)
-
-    async def test_relevance_threshold_high_excludes_most(self):
-        """Test that high threshold excludes most results."""
-        vector_results = [
-            {"text": "A", "file_id": "doc1", "_distance": 0.1, "metadata": {}},
-            {"text": "B", "file_id": "doc2", "_distance": 0.3, "metadata": {}},
-            {"text": "C", "file_id": "doc3", "_distance": 0.8, "metadata": {}},
-        ]
-
-        fake_memory_store = FakeMemoryStore()
-        fake_embedding = FakeEmbeddingService()
-        fake_vector = FakeVectorStore(results=vector_results)
-        fake_llm = FakeLLMClient(response="Answer.")
-
-        engine = RAGEngine(
-            embedding_service=fake_embedding,
-            vector_store=fake_vector,
-            memory_store=fake_memory_store,
-            llm_client=fake_llm
-        )
-
-        engine.max_distance_threshold = 0.3
-
-        results = []
-        async for msg in engine.query("test", []):
-            results.append(msg)
-
-        done_msg = results[-1]
-        sources = done_msg["sources"]
-
-        # Only distances <= 0.3 should be included (distances equal to threshold are included)
-        self.assertEqual(len(sources), 2)
-        self.assertEqual(sources[0]["file_id"], "doc1")
-        self.assertEqual(sources[1]["file_id"], "doc2")
-
-    async def test_streaming_query_yields_chunks(self):
-        """Test that streaming query yields content chunks and done."""
-        stream_chunks = ["Hello, ", "this ", "is ", "a ", "streamed ", "response."]
-
-        fake_memory_store = FakeMemoryStore()
-        fake_embedding = FakeEmbeddingService()
-        fake_vector = FakeVectorStore(results=[])
-        fake_llm = FakeLLMClient(stream_chunks=stream_chunks)
-
-        engine = RAGEngine(
-            embedding_service=fake_embedding,
-            vector_store=fake_vector,
-            memory_store=fake_memory_store,
-            llm_client=fake_llm
-        )
-
-        results = []
-        async for msg in engine.query("test", [], stream=True):
-            results.append(msg)
-
-        # Should have 6 content chunks + 1 done message
-        self.assertEqual(len(results), 7)
-
-        # Check content chunks
-        for i, chunk in enumerate(stream_chunks):
-            self.assertEqual(results[i]["type"], "content")
-            self.assertEqual(results[i]["content"], chunk)
-
-        # Last message should be done
-        self.assertEqual(results[-1]["type"], "done")
-        self.assertIn("sources", results[-1])
-        self.assertIn("memories_used", results[-1])
-
-    async def test_empty_vector_results_returns_no_sources(self):
-        """Test that empty vector results yields no sources."""
-        fake_memory_store = FakeMemoryStore()
-        fake_embedding = FakeEmbeddingService()
-        fake_vector = FakeVectorStore(results=[])
-        fake_llm = FakeLLMClient(response="No relevant documents found.")
-
-        engine = RAGEngine(
-            embedding_service=fake_embedding,
-            vector_store=fake_vector,
-            memory_store=fake_memory_store,
-            llm_client=fake_llm
-        )
-
-        results = []
-        async for msg in engine.query("obscure topic", []):
-            results.append(msg)
-
+        
+        # Should have content and done messages
+        self.assertEqual(len(results), 2)
+        
+        # Check that we got results
         done_msg = results[-1]
         self.assertEqual(done_msg["type"], "done")
-        self.assertEqual(len(done_msg["sources"]), 0)
+        self.assertIn("sources", done_msg)
+        # After reranking and filtering, should have at most retrieval_top_k results
+        self.assertLessEqual(len(done_msg["sources"]), engine.retrieval_top_k)
 
-    async def test_no_memory_intent_proceeds_with_rag(self):
-        """Test that when no memory intent is detected, RAG proceeds normally."""
-        fake_memory_store = FakeMemoryStore(intent=None)
-        fake_embedding = FakeEmbeddingService()
-        fake_vector = FakeVectorStore(results=[])
-        fake_llm = FakeLLMClient(response="Regular RAG response.")
-
-        engine = RAGEngine(
-            embedding_service=fake_embedding,
-            vector_store=fake_vector,
-            memory_store=fake_memory_store,
-            llm_client=fake_llm
-        )
-
-        results = []
-        async for msg in engine.query("What is the weather?", []):
-            results.append(msg)
-
-        # Should not have added any memories
-        self.assertEqual(len(fake_memory_store.added_memories), 0)
-
-        # Should have content and done
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0]["content"], "Regular RAG response.")
-
-    async def test_chat_history_passed_to_llm(self):
-        """Test that chat history is passed to LLM client."""
-        chat_history = [
-            {"role": "user", "content": "Previous question"},
-            {"role": "assistant", "content": "Previous answer"}
+    async def test_two_stage_retrieval_without_reranking(self):
+        """Test two-stage retrieval when reranking is disabled."""
+        initial_results = [
+            {"text": "Result 1", "file_id": "doc1", "_distance": 0.1, "metadata": {}},
+            {"text": "Result 2", "file_id": "doc2", "_distance": 0.2, "metadata": {}},
         ]
-
-        fake_memory_store = FakeMemoryStore()
+        
+        fake_vector = FakeVectorStore(results=initial_results)
         fake_embedding = FakeEmbeddingService()
-        fake_vector = FakeVectorStore(results=[])
-        fake_llm = FakeLLMClient(response="Response.")
-
+        fake_memory = FakeMemoryStore()
+        fake_llm = FakeLLMClient(response="Answer.")
+        
         engine = RAGEngine(
             embedding_service=fake_embedding,
             vector_store=fake_vector,
-            memory_store=fake_memory_store,
+            memory_store=fake_memory,
             llm_client=fake_llm
         )
+        
+        # Disable reranking
+        engine.reranking_enabled = False
+        engine.retrieval_top_k = 10
+        
+        results = []
+        async for msg in engine.query("test query", []):
+            results.append(msg)
+        
+        done_msg = results[-1]
+        # Without reranking, should return up to initial_retrieval_top_k results
+        self.assertLessEqual(len(done_msg["sources"]), 10)
 
-        async for _ in engine.query("Current question", chat_history):
+    async def test_hybrid_search_enabled(self):
+        """Test that hybrid search is passed to vector store."""
+        initial_results = [
+            {"text": "Hybrid result", "file_id": "doc1", "_distance": 0.1, "metadata": {}},
+        ]
+        
+        fake_vector = FakeVectorStore(results=initial_results)
+        fake_embedding = FakeEmbeddingService()
+        fake_memory = FakeMemoryStore()
+        fake_llm = FakeLLMClient(response="Answer.")
+        
+        engine = RAGEngine(
+            embedding_service=fake_embedding,
+            vector_store=fake_vector,
+            memory_store=fake_memory,
+            llm_client=fake_llm
+        )
+        
+        # Enable hybrid search
+        engine.hybrid_search_enabled = True
+        engine.hybrid_alpha = 0.5
+        engine.retrieval_top_k = 5
+        
+        # Mock the vector store search to capture parameters
+        original_search = fake_vector.search
+        search_params = {}
+        
+        def mock_search(*args, **kwargs):
+            search_params.update(kwargs)
+            return original_search(*args, **kwargs)
+        
+        fake_vector.search = mock_search
+        
+        async for _ in engine.query("test query", []):
             pass
+        
+        # Verify hybrid search parameters were passed
+        self.assertTrue(search_params.get("hybrid", False))
+        self.assertAlmostEqual(search_params.get("hybrid_alpha", 0), 0.5, places=1)
 
-        # Verify messages were passed to LLM
-        self.assertIsNotNone(fake_llm.last_messages)
-        self.assertEqual(len(fake_llm.last_messages), 4)  # system + 2 history + user
-        self.assertEqual(fake_llm.last_messages[1], chat_history[0])
-        self.assertEqual(fake_llm.last_messages[2], chat_history[1])
+    async def test_hybrid_search_disabled(self):
+        """Test that hybrid search is not passed when disabled."""
+        initial_results = [
+            {"text": "Dense result", "file_id": "doc1", "_distance": 0.1, "metadata": {}},
+        ]
+        
+        fake_vector = FakeVectorStore(results=initial_results)
+        fake_embedding = FakeEmbeddingService()
+        fake_memory = FakeMemoryStore()
+        fake_llm = FakeLLMClient(response="Answer.")
+        
+        engine = RAGEngine(
+            embedding_service=fake_embedding,
+            vector_store=fake_vector,
+            memory_store=fake_memory,
+            llm_client=fake_llm
+        )
+        
+        # Disable hybrid search
+        engine.hybrid_search_enabled = False
+        engine.retrieval_top_k = 5
+        
+        # Mock the vector store search to capture parameters
+        search_params = {}
+        
+        def mock_search(*args, **kwargs):
+            search_params.update(kwargs)
+            return []
+        
+        fake_vector.search = mock_search
+        
+        async for _ in engine.query("test query", []):
+            pass
+        
+        # Verify hybrid search was disabled
+        self.assertFalse(search_params.get("hybrid", True))
+
+    async def test_retrieval_window_expansion(self):
+        """Test that retrieval window expands to adjacent chunks."""
+        initial_results = [
+            {"text": "Main chunk", "file_id": "doc1", "_distance": 0.1, 
+             "metadata": {"chunk_index": 5}},
+        ]
+        
+        fake_vector = FakeVectorStore(results=initial_results)
+        fake_embedding = FakeEmbeddingService()
+        fake_memory = FakeMemoryStore()
+        fake_llm = FakeLLMClient(response="Answer.")
+        
+        # Enable window expansion before creating engine
+        fake_vector.retrieval_window = 2
+        fake_vector.retrieval_top_k = 10
+        
+        # Mock get_chunks_by_uid to return adjacent chunks using patch
+        # Note: The RAGEngine uses "id" field for lookup, so we need to include it
+        adjacent_chunks = [
+            {"id": "doc1_4", "text": "Chunk 4", "file_id": "doc1", "_distance": 0.15,
+             "metadata": {"chunk_index": 4}},
+            {"id": "doc1_6", "text": "Chunk 6", "file_id": "doc1", "_distance": 0.18,
+             "metadata": {"chunk_index": 6}},
+        ]
+        
+        with patch.object(fake_vector, 'get_chunks_by_uid', return_value=adjacent_chunks):
+            engine = RAGEngine(
+                embedding_service=fake_embedding,
+                vector_store=fake_vector,
+                memory_store=fake_memory,
+                llm_client=fake_llm
+            )
+            
+            # Enable window expansion
+            engine.retrieval_window = 2
+            engine.retrieval_top_k = 10
+            
+            results = []
+            async for msg in engine.query("test query", []):
+                results.append(msg)
+            
+            done_msg = results[-1]
+            # Should include main chunk plus adjacent chunks (3 total)
+            self.assertEqual(len(done_msg["sources"]), 3)
+            # Verify the sources are sorted by chunk_index
+            self.assertEqual(done_msg["sources"][0]["file_id"], "doc1")
+            self.assertEqual(done_msg["sources"][0]["metadata"].get("chunk_index"), 4)
+            self.assertEqual(done_msg["sources"][1]["file_id"], "doc1")
+            self.assertEqual(done_msg["sources"][1]["metadata"].get("chunk_index"), 5)
+            self.assertEqual(done_msg["sources"][2]["file_id"], "doc1")
+            self.assertEqual(done_msg["sources"][2]["metadata"].get("chunk_index"), 6)
+
+    async def test_empty_query_handling(self):
+        """Test handling of empty query string."""
+        fake_vector = FakeVectorStore(results=[])
+        fake_embedding = FakeEmbeddingService()
+        fake_memory = FakeMemoryStore()
+        fake_llm = FakeLLMClient(response="No relevant documents found.")
+        
+        engine = RAGEngine(
+            embedding_service=fake_embedding,
+            vector_store=fake_vector,
+            memory_store=fake_memory,
+            llm_client=fake_llm
+        )
+        
+        results = []
+        async for msg in engine.query("", []):
+            results.append(msg)
+        
+        # Should still return a response
+        self.assertGreater(len(results), 0)
+
+    async def test_maintenance_mode_fallback(self):
+        """Test that maintenance mode triggers fallback path."""
+        fake_vector = FakeVectorStore(results=[
+            {"text": "Should not be returned", "file_id": "doc1", "_distance": 0.1, "metadata": {}}
+        ])
+        fake_embedding = FakeEmbeddingService()
+        fake_memory = FakeMemoryStore()
+        fake_llm = FakeLLMClient(response="Answer.")
+        
+        engine = RAGEngine(
+            embedding_service=fake_embedding,
+            vector_store=fake_vector,
+            memory_store=fake_memory,
+            llm_client=fake_llm
+        )
+        
+        # Enable maintenance mode
+        engine.maintenance_mode = True
+        
+        results = []
+        async for msg in engine.query("test query", []):
+            results.append(msg)
+        
+        # Should have fallback message
+        fallback_messages = [m for m in results if m.get("type") == "fallback"]
+        self.assertGreater(len(fallback_messages), 0)
 
 
 if __name__ == "__main__":

@@ -123,6 +123,15 @@ export interface SettingsResponse {
   // Embedding batch size
   embedding_batch_size: number;
 
+  // Retrieval settings
+  reranking_enabled?: boolean;
+  reranker_url?: string;
+  reranker_model?: string;
+  initial_retrieval_top_k?: number;
+  reranker_top_n?: number;
+  hybrid_search_enabled?: boolean;
+  hybrid_alpha?: number;
+
   // Limits
   max_file_size_mb: number;
   allowed_extensions: string[];
@@ -143,6 +152,14 @@ export interface UpdateSettingsRequest {
   embedding_doc_prefix?: string;
   embedding_query_prefix?: string;
   embedding_batch_size?: number;
+  // Retrieval settings
+  reranking_enabled?: boolean;
+  reranker_url?: string;
+  reranker_model?: string;
+  initial_retrieval_top_k?: number;
+  reranker_top_n?: number;
+  hybrid_search_enabled?: boolean;
+  hybrid_alpha?: number;
 }
 
 export interface SearchMemoriesRequest {

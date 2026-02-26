@@ -106,6 +106,26 @@ class VectorStore:
         except Exception as e:
             raise VectorStoreConnectionError(f"Failed to initialize 'chunks' table: {e}") from e
         
+        # Create vector index with configured metric (only for new tables)
+        if "chunks" not in self.db.table_names():
+            try:
+                self.table.create_index(
+                    metric=settings.vector_metric,  # "cosine" or "l2"
+                    num_partitions=256,
+                    num_sub_vectors=96,
+                    replace=True,
+                )
+                logger.info(f"Vector index created with metric={settings.vector_metric}")
+            except Exception as e:
+                logger.warning(f"Vector index creation failed: {e}")
+        
+        # Create full-text search index on 'text' column for hybrid search
+        try:
+            self.table.create_fts_index("text", replace=True)
+            logger.info("Full-text search index created on 'text' column")
+        except Exception as e:
+            logger.warning(f"FTS index creation failed (hybrid search will be unavailable): {e}")
+        
         return self
     
     def _get_expected_embedding_dim(self) -> Optional[int]:
@@ -193,7 +213,10 @@ class VectorStore:
         embedding: List[float],
         limit: int = 10,
         filter_expr: Optional[str] = None,
-        vault_id: Optional[str] = None
+        vault_id: Optional[str] = None,
+        query_text: str = "",
+        hybrid: bool = True,
+        hybrid_alpha: float = 0.5,
     ) -> List[Dict[str, Any]]:
         """
         Search for similar chunks by embedding.
@@ -203,12 +226,16 @@ class VectorStore:
             limit: Maximum number of results.
             filter_expr: Optional filter expression (LanceDB syntax).
             vault_id: Optional vault ID to filter results. If provided, only returns
-                     chunks from the specified vault.
+                      chunks from the specified vault.
+            query_text: Raw query text for BM25 FTS search (used in hybrid search).
+            hybrid: If True, combine dense vector search with BM25 FTS using RRF.
+            hybrid_alpha: Weight for RRF fusion (not directly used in pure RRF).
 
         Returns:
             List of matching records with similarity scores. Each record includes:
             - All original fields (id, text, file_id, chunk_index, metadata, etc.)
             - _distance: Cosine distance from query embedding (lower = more similar)
+            - _rrf_score: Reciprocal Rank Fusion score (when hybrid=True)
             Empty list if no table exists.
             
         Note:
@@ -251,6 +278,10 @@ class VectorStore:
                     # If we can't determine embedding_dim, leave it as None
                     pass
         
+        # Fetch more results for RRF fusion (standard practice)
+        fetch_k = limit * 2
+        
+        # Dense vector search
         query = self.table.search(embedding)
 
         # Apply vault filter if specified
@@ -265,8 +296,51 @@ class VectorStore:
         if filter_expr:
             query = query.where(filter_expr)
         
-        results = query.limit(limit).to_list()
-        return results
+        dense_results = query.limit(fetch_k).to_list()
+        
+        # If hybrid disabled, return dense results only
+        if not hybrid or not query_text:
+            return dense_results
+        
+        # If hybrid enabled, run FTS search
+        try:
+            fts_query = self.table.search(query_text)  # LanceDB FTS
+            if vault_id:
+                fts_query = fts_query.where(f"vault_id = '{vault_id}'")
+            if filter_expr:
+                # FTS doesn't support complex filter_expr, apply basic vault filter only
+                fts_query = fts_query.where(filter_expr)
+            fts_results = fts_query.limit(fetch_k).to_list()
+        except Exception as e:
+            logger.warning(f"FTS search failed (falling back to dense-only): {e}")
+            fts_results = []
+
+        # RRF Fusion
+        k_rrf = 60
+        rrf_scores: dict = {}
+        id_to_record: dict = {}
+
+        # Add dense results
+        for rank, record in enumerate(dense_results):
+            uid = record.get("id", f"dense_{rank}")
+            rrf_scores[uid] = rrf_scores.get(uid, 0.0) + 1.0 / (k_rrf + rank + 1)
+            id_to_record[uid] = record
+
+        # Add FTS results
+        for rank, record in enumerate(fts_results):
+            uid = record.get("id", f"fts_{rank}")
+            rrf_scores[uid] = rrf_scores.get(uid, 0.0) + 1.0 / (k_rrf + rank + 1)
+            if uid not in id_to_record:
+                id_to_record[uid] = record
+
+        # Sort by RRF score and return top limit
+        sorted_uids = sorted(rrf_scores, key=lambda u: rrf_scores[u], reverse=True)
+        fused = []
+        for uid in sorted_uids[:limit]:
+            record = dict(id_to_record[uid])
+            record["_rrf_score"] = rrf_scores[uid]
+            fused.append(record)
+        return fused
     
     def delete_by_file(self, file_id: str) -> int:
         """

@@ -42,7 +42,7 @@ KnowledgeVault enables you to:
                                |
                         +------v---------------------------+
                         |  Ollama (External)               |
-                        |  - Embeddings (nomic-embed-text) |
+                         |  - Embeddings (bge-m3) |
                         |  - Chat (your choice of model)   |
                         +----------------------------------+
 ```
@@ -101,7 +101,7 @@ ollama list
 
 ```bash
 # Required: Embedding model
-ollama pull nomic-embed-text
+ollama pull bge-m3
 
 # Required: Chat model (choose one)
 ollama pull qwen2.5:32b    # Recommended for technical content
@@ -129,7 +129,7 @@ Open your browser to: `http://localhost:8080`
 | `DATA_DIR` | /app/data | Container data path |
 | `OLLAMA_EMBEDDING_URL` | http://host.docker.internal:11434 | Ollama embedding endpoint |
 | `OLLAMA_CHAT_URL` | http://host.docker.internal:11434 | Ollama chat endpoint |
-| `EMBEDDING_MODEL` | nomic-embed-text | Embedding model name |
+| `EMBEDDING_MODEL` | bge-m3 | Embedding model name |
 | `CHAT_MODEL` | qwen2.5:32b | Chat model name |
 | `CHUNK_SIZE` | 512 | Document chunk size (tokens) |
 | `CHUNK_OVERLAP` | 50 | Chunk overlap (tokens) |
@@ -167,14 +167,14 @@ data/
 
 #### Embedding Model
 
-**nomic-embed-text** (Required)
+**bge-m3** (Required)
 - 768 dimensions
 - 8192 token context
 - ~0.5GB VRAM
 - Excellent for technical content
 
 ```bash
-ollama pull nomic-embed-text
+ollama pull bge-m3
 ```
 
 #### Chat Models
@@ -199,7 +199,7 @@ curl http://localhost:11434/api/tags
 
 # Test embedding model
 curl http://localhost:11434/api/embeddings -d '{
-  "model": "nomic-embed-text",
+  "model": "bge-m3",
   "prompt": "test"
 }'
 ```

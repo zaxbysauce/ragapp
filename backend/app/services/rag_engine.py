@@ -37,11 +37,13 @@ class RAGEngine:
         vector_store: Optional[VectorStore] = None,
         memory_store: Optional[MemoryStore] = None,
         llm_client: Optional[LLMClient] = None,
+        reranking_service=None,  # NEW
     ) -> None:
         self.embedding_service = embedding_service or EmbeddingService()
         self.vector_store = vector_store or VectorStore()
         self.memory_store = memory_store or MemoryStore()
         self.llm_client = llm_client or LLMClient()
+        self.reranking_service = reranking_service
 
         # Log warnings for missing dependencies (indicates non-DI usage)
         if embedding_service is None:
@@ -62,6 +64,15 @@ class RAGEngine:
         self.embedding_doc_prefix = settings.embedding_doc_prefix
         self.embedding_query_prefix = settings.embedding_query_prefix
         self.retrieval_window = settings.retrieval_window
+
+        # Reranking config
+        self.reranking_enabled = settings.reranking_enabled
+        self.reranker_top_n = settings.reranker_top_n
+        self.initial_retrieval_top_k = settings.initial_retrieval_top_k
+
+        # Hybrid search config
+        self.hybrid_search_enabled = settings.hybrid_search_enabled
+        self.hybrid_alpha = settings.hybrid_alpha
 
         # Legacy field support (deprecated) - warn if different from canonical fields
         self.relevance_threshold = settings.rag_relevance_threshold
@@ -119,19 +130,18 @@ class RAGEngine:
             vector_results = []
         else:
             try:
-                # Always use retrieval_top_k (the canonical field)
-                # Migration: warn if legacy vector_top_k differs
-                top_k_value = self.retrieval_top_k
-                if self.top_k is not None and self.top_k != self.retrieval_top_k:
-                    logger.warning(
-                        "Using retrieval_top_k=%s instead of deprecated vector_top_k=%s",
-                        self.retrieval_top_k, self.top_k
-                    )
+                # Stage 1: Initial retrieval
+                fetch_k = self.initial_retrieval_top_k if self.reranking_enabled else self.retrieval_top_k
+                top_k_value = fetch_k if fetch_k is not None else self.retrieval_top_k
+
                 vector_results = await asyncio.to_thread(
                     self.vector_store.search,
                     query_embedding,
                     int(top_k_value),
                     vault_id=str(vault_id) if vault_id is not None else None,
+                    query_text=user_input,  # NEW: pass raw query for BM25
+                    hybrid=self.hybrid_search_enabled,  # NEW: enable hybrid search
+                    hybrid_alpha=self.hybrid_alpha,
                 )
                 
                 # Log vector search results
@@ -142,6 +152,30 @@ class RAGEngine:
                     len(vector_results),
                     [r.get("_distance") for r in vector_results[:3]] if vector_results else "N/A"
                 )
+
+                # Filter by distance threshold
+                filtered_results = []
+                for record in vector_results:
+                    distance = record.get("_distance")
+                    if distance is not None and self.max_distance_threshold:
+                        if distance > self.max_distance_threshold:
+                            continue
+                    filtered_results.append(record)
+                vector_results = filtered_results
+
+                # Stage 2: Reranking (if enabled)
+                if self.reranking_enabled and self.reranking_service and vector_results:
+                    try:
+                        vector_results = await self.reranking_service.rerank(
+                            query=user_input,
+                            chunks=vector_results,
+                            top_n=self.reranker_top_n,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Reranking failed, using original results: {e}")
+
+                # Final limit to retrieval_top_k
+                vector_results = vector_results[:self.retrieval_top_k]
             except Exception as exc:
                 fallback_reason = str(exc)
                 vector_results = []
