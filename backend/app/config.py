@@ -253,6 +253,18 @@ class Settings(BaseSettings):
         return self.data_dir / "uploads"
     
     @property
+    def vaults_dir(self) -> Path:
+        """Directory for vault-specific data."""
+        path = self.data_dir / "vaults"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    
+    @property
+    def orphan_vault_id(self) -> int:
+        """Default vault ID for files not associated with a specific vault."""
+        return 1
+    
+    @property
     def library_dir(self) -> Path:
         """Directory for library files."""
         return self.data_dir / "library"

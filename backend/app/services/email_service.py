@@ -25,6 +25,7 @@ from email.header import decode_header
 from app.config import Settings
 from app.models.database import SQLiteConnectionPool
 from app.services.background_tasks import BackgroundProcessor
+from app.services.upload_path import UploadPathProvider
 
 
 logger = logging.getLogger(__name__)
@@ -393,7 +394,7 @@ class EmailIngestionService:
                 continue
 
             # Save attachment to temp file
-            file_path = await self._save_attachment(part)
+            file_path = await self._save_attachment(part, vault_id)
 
             # Enqueue for processing
             await self.background_processor.enqueue(
@@ -503,15 +504,16 @@ class EmailIngestionService:
 
         return True, ""
 
-    async def _save_attachment(self, part) -> str:
+    async def _save_attachment(self, part, vault_id: int) -> str:
         """
-        Save attachment to a temporary file in uploads directory.
+        Save attachment to a temporary file in vault-specific uploads directory.
 
-        Uses tempfile.mkstemp() in settings.uploads_dir with appropriate
+        Uses tempfile.mkstemp() in vault-specific upload dir with appropriate
         extension based on filename.
 
         Args:
             part: Email message part (attachment)
+            vault_id: Target vault ID for upload directory
 
         Returns:
             Path to the saved temp file
@@ -548,14 +550,18 @@ class EmailIngestionService:
         }
         ext = ext_map.get(content_type, '.bin')
 
+        # Use vault-specific upload directory
+        provider = UploadPathProvider()
+        upload_dir = provider.get_upload_dir(vault_id)
+
         # Ensure uploads directory exists
-        self.settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+        upload_dir.mkdir(parents=True, exist_ok=True)
 
         # Create temp file
         fd, temp_path = tempfile.mkstemp(
             prefix="email_",
             suffix=ext,
-            dir=self.settings.uploads_dir
+            dir=upload_dir
         )
 
         try:

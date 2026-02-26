@@ -158,6 +158,16 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database and services
     run_migrations(str(settings.sqlite_path))
     _load_persisted_settings(str(settings.sqlite_path))
+
+    # Migrate uploads to per-vault directories (run before accepting requests)
+    try:
+        from app.services.upload_path import migrate_uploads
+        import asyncio
+        logger.info("Checking for upload migration...")
+        await asyncio.to_thread(migrate_uploads, False)
+    except Exception as e:
+        logger.warning(f"Upload migration failed (continuing anyway): {e}")
+
     app.state.db_pool = get_pool(str(settings.sqlite_path), max_size=10)
     app.state.llm_client = LLMClient()
     await app.state.llm_client.start()

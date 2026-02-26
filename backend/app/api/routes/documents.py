@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.config import settings, Settings
 from app.services.document_processor import DocumentProcessor, DocumentProcessingError, DuplicateFileError
 from app.services.vector_store import VectorStore
+from app.services.upload_path import UploadPathProvider
 from app.services.embeddings import EmbeddingService
 from app.services.secret_manager import SecretManager
 from app.models.database import SQLiteConnectionPool
@@ -396,8 +397,9 @@ async def _do_upload(
         raise HTTPException(status_code=400, detail="Filename cannot be empty")
 
     # Ensure uploads directory exists
-    uploads_dir = settings_dep.uploads_dir
-    uploads_dir.mkdir(parents=True, exist_ok=True)
+    provider = UploadPathProvider()
+    upload_dir = provider.get_upload_dir(vault_id or settings.orphan_vault_id)
+    upload_dir.mkdir(parents=True, exist_ok=True)
     
     # Sanitize filename
     file_name = secure_filename(file.filename or "unnamed_file")
@@ -427,7 +429,7 @@ async def _do_upload(
             pass  # Invalid content-length header, will check during streaming
     
     # Generate safe file path
-    file_path = uploads_dir / file_name
+    file_path = upload_dir / file_name
     
     # Handle duplicate file names
     counter = 1
@@ -435,14 +437,14 @@ async def _do_upload(
     while file_path.exists():
         stem = original_path.stem
         suffix = original_path.suffix
-        file_path = uploads_dir / f"{stem}_{counter}{suffix}"
+        file_path = upload_dir / f"{stem}_{counter}{suffix}"
         counter += 1
     
-    # Path safety: ensure file_path is within uploads_dir
+    # Path safety: ensure file_path is within upload_dir
     try:
         resolved_path = file_path.resolve()
-        resolved_uploads_dir = uploads_dir.resolve()
-        if not str(resolved_path).startswith(str(resolved_uploads_dir)):
+        resolved_upload_dir = upload_dir.resolve()
+        if not str(resolved_path).startswith(str(resolved_upload_dir)):
             raise HTTPException(status_code=400, detail="Invalid file path")
     except (OSError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid file path")
