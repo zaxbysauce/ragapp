@@ -243,26 +243,36 @@ def _rename_vault_folder(old_name: str, new_name: str) -> bool:
     
     Returns True if renamed, False if old folder doesn't exist.
     """
-    # Sanitize names the same way as get_upload_dir
-    safe_old = "".join(c if c.isalnum() or c in "-_" else "_" for c in old_name)
-    safe_new = "".join(c if c.isalnum() or c in "-_" else "_" for c in new_name)
-    
-    old_path = settings.vaults_dir / safe_old
-    new_path = settings.vaults_dir / safe_new
-    
-    if not old_path.exists():
+    try:
+        # Sanitize names the same way as get_upload_dir
+        safe_old = "".join(c if c.isalnum() or c in "-_" else "_" for c in old_name)
+        safe_new = "".join(c if c.isalnum() or c in "-_" else "_" for c in new_name)
+        
+        old_path = settings.vaults_dir / safe_old
+        new_path = settings.vaults_dir / safe_new
+        
+        if not old_path.exists():
+            return False
+        
+        # Handle case where new folder already exists
+        if new_path.exists():
+            # Move contents from old to new, rename conflicts with suffix
+            for item in old_path.glob("*"):
+                dest = new_path / item.name
+                if dest.exists():
+                    # Rename with suffix to avoid conflict
+                    stem = item.stem
+                    suffix = item.suffix
+                    counter = 1
+                    while dest.exists():
+                        dest = new_path / f"{stem}_{counter}{suffix}"
+                        counter += 1
+                shutil.move(str(item), str(dest))
+            old_path.rmdir()
+        else:
+            old_path.rename(new_path)
+        
+        return True
+    except (OSError, PermissionError, shutil.Error) as e:
+        logger.error(f"Failed to rename vault folder: {e}")
         return False
-    
-    # Handle case where new folder already exists
-    if new_path.exists():
-        # Move contents from old to new
-        for item in old_path.glob("*"):
-            dest = new_path / item.name
-            if dest.exists():
-                continue  # Skip conflicts
-            shutil.move(str(item), str(dest))
-        old_path.rmdir()
-    else:
-        old_path.rename(new_path)
-    
-    return True
