@@ -116,10 +116,14 @@ class FileWatcher:
             pool = get_pool(str(settings.sqlite_path))
             conn = pool.get_connection()
             try:
-                vaults = conn.execute("SELECT id FROM vaults").fetchall()
+                vaults = conn.execute("SELECT id, name FROM vaults").fetchall()
                 for row in vaults:
                     vault_id = row[0]
-                    directories.append(provider.get_upload_dir(vault_id))
+                    vault_name = row[1]
+                    # Sanitize vault name for filesystem
+                    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in vault_name)
+                    vault_upload_dir = settings.vaults_dir / safe_name / "uploads"
+                    directories.append(vault_upload_dir)
             finally:
                 pool.release_connection(conn)
         except Exception as e:

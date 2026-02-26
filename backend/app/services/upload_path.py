@@ -24,9 +24,29 @@ class UploadPathProvider:
         
         Creates the directory if it doesn't exist.
         """
-        vault_dir = settings.vaults_dir / str(vault_id) / "uploads"
+        vault_name = self._get_vault_name(vault_id)
+        # Sanitize vault name for filesystem (replace invalid chars)
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in vault_name)
+        vault_dir = settings.vaults_dir / safe_name / "uploads"
         vault_dir.mkdir(parents=True, exist_ok=True)
         return vault_dir
+    
+    def _get_vault_name(self, vault_id: int) -> str:
+        """Lookup vault name from database."""
+        try:
+            from app.models.database import get_pool
+            pool = get_pool(str(settings.sqlite_path))
+            conn = pool.get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT name FROM vaults WHERE id = ?",
+                    (vault_id,)
+                ).fetchone()
+                return row[0] if row else f"vault_{vault_id}"
+            finally:
+                pool.release_connection(conn)
+        except Exception:
+            return f"vault_{vault_id}"
     
     def resolve(self, filename: str, vault_id: int) -> Path:
         """Returns full path for an existing upload file."""
