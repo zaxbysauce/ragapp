@@ -1,6 +1,7 @@
 """
 LanceDB vector store service for semantic search.
 """
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import lancedb
@@ -9,6 +10,7 @@ import numpy as np
 import logging
 
 from app.config import settings
+from app.utils.fusion import rrf_fuse
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +87,8 @@ class VectorStore:
             ("file_id", pa.string()),
             ("vault_id", pa.string()),  # Vault isolation
             ("chunk_index", pa.int32()),
+            ("chunk_scale", pa.string()),  # Scale label like "512", "1024", "default"
+            ("sparse_embedding", pa.string()),  # JSON string for sparse vectors (BGE-M3)
             ("metadata", pa.string()),  # JSON string for flexibility
             ("embedding", pa.list_(pa.float32(), embedding_dim)),
         ])
@@ -201,13 +205,115 @@ class VectorStore:
                 "file_id": record["file_id"],
                 "vault_id": record.get("vault_id", "1"),  # Default to vault "1"
                 "chunk_index": record["chunk_index"],
+                "chunk_scale": record.get("chunk_scale", "default"),  # Scale label
+                "sparse_embedding": record.get("sparse_embedding"),  # JSON string for sparse vectors
                 "metadata": record.get("metadata", "{}"),
                 "embedding": embedding,
             }
+            
+            # Validate sparse_embedding JSON format if provided
+            sparse_emb = processed_record.get("sparse_embedding")
+            if sparse_emb is not None:
+                try:
+                    json.loads(sparse_emb)  # Validate it's valid JSON
+                except json.JSONDecodeError:
+                    raise VectorStoreValidationError("sparse_embedding must be valid JSON")
             processed_records.append(processed_record)
         
         self.table.add(processed_records)
     
+    def _search_single_scale(
+        self,
+        embedding: List[float],
+        scale: str,
+        fetch_k: int,
+        filter_expr: Optional[str] = None,
+        vault_id: Optional[str] = None,
+        query_text: str = "",
+        hybrid: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Search within a single chunk scale.
+
+        Args:
+            embedding: Query embedding vector.
+            scale: The chunk_scale value to filter by (e.g., "512", "1024", "default").
+            fetch_k: Number of results to fetch per search type.
+            filter_expr: Optional additional filter expression.
+            vault_id: Optional vault ID to filter results.
+            query_text: Raw query text for BM25 FTS search.
+            hybrid: If True, combine dense vector search with BM25 FTS using RRF.
+
+        Returns:
+            List of matching records for this scale with RRF scores.
+        """
+        # Build scale filter
+        safe_scale = str(scale).replace("'", "\\'")
+        scale_filter = f"chunk_scale = '{safe_scale}'"
+        
+        # Combine with vault filter if present
+        if vault_id is not None:
+            safe_vault_id = str(vault_id).replace("'", "\\'")
+            vault_filter = f"vault_id = '{safe_vault_id}'"
+            if filter_expr:
+                combined_filter = f"({filter_expr}) AND ({scale_filter}) AND ({vault_filter})"
+            else:
+                combined_filter = f"{scale_filter} AND ({vault_filter})"
+        elif filter_expr:
+            combined_filter = f"({filter_expr}) AND ({scale_filter})"
+        else:
+            combined_filter = scale_filter
+
+        # Dense vector search with scale filter
+        query = self.table.search(embedding)
+        if combined_filter:
+            query = query.where(combined_filter)
+        dense_results = query.limit(fetch_k).to_list()
+
+        # If hybrid disabled, return dense results only
+        if not hybrid or not query_text:
+            return dense_results
+
+        # Run FTS search with scale filter
+        try:
+            fts_query = self.table.search(query_text)
+            fts_filter_parts = [scale_filter]
+            if vault_id:
+                safe_vault_id = str(vault_id).replace("'", "\\'")
+                fts_filter_parts.append(f"vault_id = '{safe_vault_id}'")
+            if filter_expr:
+                fts_filter_parts.append(f"({filter_expr})")
+            fts_combined_filter = " AND ".join(f"({f})" for f in fts_filter_parts)
+            fts_query = fts_query.where(fts_combined_filter)
+            fts_results = fts_query.limit(fetch_k).to_list()
+        except Exception as e:
+            logger.warning(f"FTS search failed for scale {scale} (falling back to dense-only): {e}")
+            fts_results = []
+
+        # RRF Fusion for this scale
+        k_rrf = 60
+        rrf_scores: dict = {}
+        id_to_record: dict = {}
+
+        for rank, record in enumerate(dense_results):
+            uid = record.get("id", f"dense_{rank}")
+            rrf_scores[uid] = rrf_scores.get(uid, 0.0) + 1.0 / (k_rrf + rank + 1)
+            id_to_record[uid] = record
+
+        for rank, record in enumerate(fts_results):
+            uid = record.get("id", f"fts_{rank}")
+            rrf_scores[uid] = rrf_scores.get(uid, 0.0) + 1.0 / (k_rrf + rank + 1)
+            if uid not in id_to_record:
+                id_to_record[uid] = record
+
+        # Return results with RRF scores (unsorted, to be sorted in cross-scale RRF)
+        result_list = []
+        for uid in rrf_scores:
+            record = dict(id_to_record[uid])
+            record["_rrf_score"] = rrf_scores[uid]
+            result_list.append(record)
+        return result_list
+
     def search(
         self,
         embedding: List[float],
@@ -278,8 +384,66 @@ class VectorStore:
                     # If we can't determine embedding_dim, leave it as None
                     pass
         
-        # Fetch more results for RRF fusion (standard practice)
+        # Check for multi-scale search
         fetch_k = limit * 2
+        
+        if (
+            settings.multi_scale_indexing_enabled
+            and settings.multi_scale_chunk_sizes
+        ):
+            # Parse scale sizes
+            scale_strs = [
+                s.strip() for s in settings.multi_scale_chunk_sizes.split(",")
+                if s.strip()
+            ]
+            
+            if len(scale_strs) > 1:
+                # Multi-scale search: query each scale and perform cross-scale RRF
+                all_scale_results: List[Dict[str, Any]] = []
+                
+                for scale in scale_strs:
+                    scale_results = self._search_single_scale(
+                        embedding=embedding,
+                        scale=scale,
+                        fetch_k=fetch_k,
+                        filter_expr=filter_expr,
+                        vault_id=vault_id,
+                        query_text=query_text,
+                        hybrid=hybrid,
+                    )
+                    all_scale_results.extend(scale_results)
+                
+                # Cross-scale RRF fusion
+                k_rrf = 60
+                cross_scale_scores: dict = {}
+                id_to_record: dict = {}
+                
+                # Add results from each scale with their RRF contributions
+                for rank, record in enumerate(all_scale_results):
+                    uid = record.get("id", f"scale_{rank}")
+                    # Use the per-scale RRF score as contribution
+                    scale_rrf = record.get("_rrf_score", 0.0)
+                    cross_scale_scores[uid] = cross_scale_scores.get(uid, 0.0) + scale_rrf
+                    if uid not in id_to_record:
+                        id_to_record[uid] = record
+                
+                # Sort by cross-scale RRF score and return top limit
+                sorted_uids = sorted(
+                    cross_scale_scores, key=lambda u: cross_scale_scores[u], reverse=True
+                )
+                fused = []
+                for uid in sorted_uids[:limit]:
+                    record = dict(id_to_record[uid])
+                    record["_rrf_score"] = cross_scale_scores[uid]
+                    fused.append(record)
+                
+                logger.info(
+                    f"Multi-scale search: queried {len(scale_strs)} scales, "
+                    f"returning {len(fused)} results"
+                )
+                return fused
+        
+        # Single-scale or multi-scale disabled: use existing behavior
         
         # Dense vector search
         query = self.table.search(embedding)
@@ -315,32 +479,8 @@ class VectorStore:
             logger.warning(f"FTS search failed (falling back to dense-only): {e}")
             fts_results = []
 
-        # RRF Fusion
-        k_rrf = 60
-        rrf_scores: dict = {}
-        id_to_record: dict = {}
-
-        # Add dense results
-        for rank, record in enumerate(dense_results):
-            uid = record.get("id", f"dense_{rank}")
-            rrf_scores[uid] = rrf_scores.get(uid, 0.0) + 1.0 / (k_rrf + rank + 1)
-            id_to_record[uid] = record
-
-        # Add FTS results
-        for rank, record in enumerate(fts_results):
-            uid = record.get("id", f"fts_{rank}")
-            rrf_scores[uid] = rrf_scores.get(uid, 0.0) + 1.0 / (k_rrf + rank + 1)
-            if uid not in id_to_record:
-                id_to_record[uid] = record
-
-        # Sort by RRF score and return top limit
-        sorted_uids = sorted(rrf_scores, key=lambda u: rrf_scores[u], reverse=True)
-        fused = []
-        for uid in sorted_uids[:limit]:
-            record = dict(id_to_record[uid])
-            record["_rrf_score"] = rrf_scores[uid]
-            fused.append(record)
-        return fused
+        # RRF Fusion using shared utility
+        return rrf_fuse([dense_results, fts_results], k=60, limit=limit)
     
     def delete_by_file(self, file_id: str) -> int:
         """
@@ -540,6 +680,208 @@ class VectorStore:
             except Exception as e:
                 logger.warning(f"LanceDB vault_id migration failed: {e}")
                 return 0
+
+    def migrate_add_chunk_scale(self) -> int:
+        """
+        Migration: Backfill chunk_scale='default' on existing chunks that lack it.
+
+        LanceDB doesn't support ALTER TABLE or UPDATE, so this reads all data,
+        adds the chunk_scale field, and rewrites the table. This is idempotent —
+        safe to call multiple times (no-op if all records already have chunk_scale).
+
+        Returns:
+            Number of records migrated. 0 if no migration was needed.
+        """
+        if self.db is None:
+            self.connect()
+
+        if self.db is None:
+            logger.info("LanceDB chunk_scale migration: no connection available")
+            return 0
+
+        try:
+            table_names = self.db.table_names()
+        except Exception as e:
+            logger.warning(f"LanceDB chunk_scale migration failed: {e}")
+            return 0
+
+        if "chunks" not in table_names:
+            logger.info("LanceDB chunk_scale migration: no table exists")
+            return 0
+
+        try:
+            table = self.db.open_table("chunks")
+        except Exception as e:
+            logger.warning(f"LanceDB chunk_scale migration failed: {e}")
+            return 0
+
+        # Check if chunk_scale column exists in schema
+        schema = table.schema
+        field_names = [schema.field(i).name for i in range(len(schema))]
+
+        if "chunk_scale" in field_names:
+            # Column exists — check if any rows have null chunk_scale
+            try:
+                df = table.to_pandas()
+                null_count = df["chunk_scale"].isna().sum()
+                if null_count == 0:
+                    logger.info("LanceDB chunk_scale migration: no migration needed")
+                    return 0  # All records already have chunk_scale
+
+                # Backfill null chunk_scales with "default"
+                df["chunk_scale"] = df["chunk_scale"].fillna("default")
+                count = int(null_count)
+
+                # Drop and recreate table with updated data
+                self.db.drop_table("chunks")
+                try:
+                    self.table = self.db.create_table("chunks", data=df)
+                except Exception as create_err:
+                    logger.critical(f"LanceDB chunk_scale migration: table dropped but recreate failed: {create_err}. Data may need manual recovery from backup.")
+                    raise
+                logger.info(f"LanceDB chunk_scale migration: backfilled {count} records")
+                return count
+            except Exception as e:
+                logger.warning(f"LanceDB chunk_scale migration failed: {e}")
+                return 0
+        else:
+            # Column doesn't exist — add it to all records
+            try:
+                df = table.to_pandas()
+                if len(df) == 0:
+                    # Empty table — just drop and recreate with new schema
+                    # Try to get embedding_dim from existing schema before dropping
+                    if self._embedding_dim is None:
+                        try:
+                            embedding_field = table.schema.field("embedding")
+                            if hasattr(embedding_field.type, 'list_size'):
+                                self._embedding_dim = embedding_field.type.list_size
+                        except Exception:
+                            pass
+
+                    self.db.drop_table("chunks")
+                    try:
+                        if self._embedding_dim:
+                            self.init_table(self._embedding_dim)
+                    except Exception as create_err:
+                        logger.critical(f"LanceDB chunk_scale migration: empty table dropped but recreate failed: {create_err}")
+                        raise
+                    logger.info("LanceDB chunk_scale migration: empty table, recreated with new schema")
+                    return 0
+
+                # Add chunk_scale column with default "default"
+                df["chunk_scale"] = "default"
+                migrated_count = len(df)
+
+                # Drop and recreate table with updated data
+                self.db.drop_table("chunks")
+                try:
+                    self.table = self.db.create_table("chunks", data=df)
+                except Exception as create_err:
+                    logger.critical(f"LanceDB chunk_scale migration: table dropped but recreate failed: {create_err}. Data may need manual recovery from backup.")
+                    raise
+                logger.info(f"LanceDB chunk_scale migration: backfilled {migrated_count} records")
+                return migrated_count
+            except Exception as e:
+                logger.warning(f"LanceDB chunk_scale migration failed: {e}")
+                return 0
+
+    def migrate_add_sparse_embedding(self) -> int:
+        """
+        Migration: Add sparse_embedding column to existing chunks table.
+
+        LanceDB doesn't support ALTER TABLE, so this reads all data,
+        adds the sparse_embedding field (default null), and rewrites the table.
+        This is idempotent — safe to call multiple times.
+
+        Returns:
+            Number of records migrated. 0 if no migration was needed.
+        """
+        if self.db is None:
+            self.connect()
+
+        if self.db is None:
+            logger.info("LanceDB sparse_embedding migration: no connection available")
+            return 0
+
+        try:
+            table_names = self.db.table_names()
+        except Exception as e:
+            logger.warning(f"LanceDB sparse_embedding migration failed: {e}")
+            return 0
+
+        if "chunks" not in table_names:
+            logger.info("LanceDB sparse_embedding migration: no table exists")
+            return 0
+
+        try:
+            table = self.db.open_table("chunks")
+        except Exception as e:
+            logger.warning(f"LanceDB sparse_embedding migration failed: {e}")
+            return 0
+
+        # Check if sparse_embedding column exists in schema
+        schema = table.schema
+        field_names = [schema.field(i).name for i in range(len(schema))]
+
+        if "sparse_embedding" in field_names:
+            logger.info("LanceDB sparse_embedding migration: column already exists")
+            return 0
+
+        # Column doesn't exist — add it to all records (default None/null)
+        try:
+            df = table.to_pandas()
+            if len(df) == 0:
+                # Empty table — just drop and recreate with new schema
+                if self._embedding_dim is None:
+                    try:
+                        embedding_field = table.schema.field("embedding")
+                        if hasattr(embedding_field.type, 'list_size'):
+                            self._embedding_dim = embedding_field.type.list_size
+                    except Exception:
+                        pass
+                
+                # Explicit error if embedding_dim cannot be determined
+                if self._embedding_dim is None:
+                    raise VectorStoreError("Cannot determine embedding dimension for migration")
+                
+                self.db.drop_table("chunks")
+                try:
+                    if self._embedding_dim:
+                        self.init_table(self._embedding_dim)
+                except Exception as create_err:
+                    logger.critical(f"LanceDB sparse_embedding migration: empty table dropped but recreate failed: {create_err}")
+                    raise
+                logger.info("LanceDB sparse_embedding migration: empty table, recreated with new schema")
+                return 0
+
+            # Add sparse_embedding column with default None (null)
+            df["sparse_embedding"] = None
+            migrated_count = len(df)
+
+            # Drop and recreate table with updated data
+            self.db.drop_table("chunks")
+            try:
+                self.table = self.db.create_table("chunks", data=df)
+                # Recreate vector index
+                self.table.create_index(
+                    metric=settings.vector_metric,
+                    num_partitions=256,
+                    num_sub_vectors=96,
+                    replace=True,
+                )
+                logger.info(f"Vector index recreated with metric={settings.vector_metric}")
+                # Recreate FTS index
+                self.table.create_fts_index("text", replace=True)
+                logger.info("Full-text search index recreated on 'text' column")
+            except Exception as create_err:
+                logger.critical(f"LanceDB sparse_embedding migration: table dropped but recreate failed: {create_err}")
+                raise
+            logger.info(f"LanceDB sparse_embedding migration: added column to {migrated_count} records")
+            return migrated_count
+        except Exception as e:
+            logger.warning(f"LanceDB sparse_embedding migration failed: {e}")
+            return 0
 
     def get_chunks_by_uid(self, chunk_uids: List[str]) -> List[Dict[str, Any]]:
         """

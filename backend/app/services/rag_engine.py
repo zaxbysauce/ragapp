@@ -11,6 +11,9 @@ from app.services.embeddings import EmbeddingService, EmbeddingError
 from app.services.llm_client import LLMClient, LLMError
 from app.services.memory_store import MemoryRecord, MemoryStore
 from app.services.vector_store import VectorStore
+from app.services.query_transformer import QueryTransformer
+from app.services.retrieval_evaluator import RetrievalEvaluator
+from app.utils.fusion import rrf_fuse
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +88,12 @@ class RAGEngine:
             )
         self.maintenance_mode = settings.maintenance_mode
 
+        # Query transformer instance (lazy-loaded)
+        self._query_transformer: Optional[QueryTransformer] = None
+
+        # Retrieval evaluator instance (lazy-loaded)
+        self._retrieval_evaluator: Optional[RetrievalEvaluator] = None
+
     async def query(
         self,
         user_input: str,
@@ -105,17 +114,42 @@ class RAGEngine:
         except Exception as exc:
             logger.error("Memory intent detection/add failed: %s", exc)
 
-        try:
-            query_embedding = await self.embedding_service.embed_single(user_input)
-        except EmbeddingError as exc:
-            error_msg = f"Unable to encode query: {exc}"
+        # Query transformation for broader retrieval (if enabled)
+        transformed_queries: List[str] = [user_input]
+        if settings.query_transformation_enabled and self.llm_client is not None:
+            try:
+                if self._query_transformer is None:
+                    self._query_transformer = QueryTransformer(self.llm_client)
+                transformed_queries = await self._query_transformer.transform(user_input)
+                if len(transformed_queries) > 1:
+                    logger.info(
+                        "Query transformation: original='%s', step_back='%s'",
+                        transformed_queries[0],
+                        transformed_queries[1]
+                    )
+            except Exception as e:
+                logger.warning("Query transformation failed: %s, using original query only", e)
+                transformed_queries = [user_input]
+
+        # Embed all transformed queries
+        query_embeddings: List[List[float]] = []
+        for query_text in transformed_queries:
+            try:
+                embedding = await self.embedding_service.embed_single(query_text)
+                query_embeddings.append(embedding)
+            except EmbeddingError as exc:
+                logger.warning("Failed to embed query variant '%s': %s", query_text, exc)
+
+        if not query_embeddings:
+            error_msg = "Unable to encode any query variants"
             if stream:
                 yield {"type": "error", "message": error_msg, "code": "EMBEDDING_ERROR"}
                 return
-            raise RAGEngineError(error_msg) from exc
+            raise RAGEngineError(error_msg)
 
         fallback_reason: Optional[str] = None
         vector_results: List[Dict[str, Any]]
+        relevance_hint: Optional[str] = None
         
         # DEBUG: Log pre-vector-search state
         logger.debug(
@@ -134,15 +168,26 @@ class RAGEngine:
                 fetch_k = self.initial_retrieval_top_k if self.reranking_enabled else self.retrieval_top_k
                 top_k_value = fetch_k if fetch_k is not None else self.retrieval_top_k
 
-                vector_results = await asyncio.to_thread(
-                    self.vector_store.search,
-                    query_embedding,
-                    int(top_k_value),
-                    vault_id=str(vault_id) if vault_id is not None else None,
-                    query_text=user_input,  # NEW: pass raw query for BM25
-                    hybrid=self.hybrid_search_enabled,  # NEW: enable hybrid search
-                    hybrid_alpha=self.hybrid_alpha,
-                )
+                # Search with all query embeddings and fuse results
+                all_results: List[List[Dict[str, Any]]] = []
+                for embedding in query_embeddings:
+                    results = await asyncio.to_thread(
+                        self.vector_store.search,
+                        embedding,
+                        int(top_k_value),
+                        vault_id=str(vault_id) if vault_id is not None else None,
+                        query_text=user_input if embedding is query_embeddings[0] else "",
+                        hybrid=self.hybrid_search_enabled and embedding is query_embeddings[0],
+                        hybrid_alpha=self.hybrid_alpha,
+                    )
+                    all_results.append(results)
+
+                # Fuse results from all query variants using RRF
+                if len(all_results) > 1:
+                    vector_results = rrf_fuse(all_results, k=60, limit=fetch_k)
+                    logger.info("Fused results from %d query variants: %d results", len(all_results), len(vector_results))
+                else:
+                    vector_results = all_results[0] if all_results else []
                 
                 # Log vector search results
                 logger.info(
@@ -176,6 +221,21 @@ class RAGEngine:
 
                 # Final limit to retrieval_top_k
                 vector_results = vector_results[:self.retrieval_top_k]
+
+                # Retrieval evaluation (CRAG-style self-evaluation)
+                relevance_hint = None
+                if settings.retrieval_evaluation_enabled and self.llm_client is not None:
+                    try:
+                        if self._retrieval_evaluator is None:
+                            self._retrieval_evaluator = RetrievalEvaluator(self.llm_client)
+                        eval_result = await self._retrieval_evaluator.evaluate(user_input, vector_results)
+                        if eval_result == "NO_MATCH":
+                            logger.info("Retrieval evaluation: NO_MATCH for query '%s'", user_input)
+                            relevance_hint = "Note: The retrieved documents may not be directly relevant to your query."
+                        elif eval_result == "AMBIGUOUS":
+                            logger.warning("Retrieval evaluation: AMBIGUOUS for query '%s'", user_input)
+                    except Exception as e:
+                        logger.warning("Retrieval evaluation failed: %s", e)
             except Exception as exc:
                 fallback_reason = str(exc)
                 vector_results = []
@@ -201,7 +261,7 @@ class RAGEngine:
             logger.error("Memory search failed: %s", exc)
             memories = []
 
-        messages = self._build_messages(user_input, chat_history, relevant_chunks, memories)
+        messages = self._build_messages(user_input, chat_history, relevant_chunks, memories, relevance_hint)
 
         if stream:
             try:
@@ -347,13 +407,19 @@ class RAGEngine:
         
         window = self.retrieval_window
         
-        # Group sources by file_id to track chunk indices per document
+        # Group sources by (file_id, chunk_scale) to avoid cross-scale window mixing
         file_chunks: Dict[str, List[RAGSource]] = {}
         for source in sources:
-            file_id = source.file_id
-            if file_id not in file_chunks:
-                file_chunks[file_id] = []
-            file_chunks[file_id].append(source)
+            # Use (file_id, chunk_scale) as key to separate different scales
+            chunk_scale = source.metadata.get("chunk_scale", "default")
+            if chunk_scale == "default" or chunk_scale is None:
+                group_key = source.file_id
+            else:
+                group_key = f"{source.file_id}_{chunk_scale}"
+            
+            if group_key not in file_chunks:
+                file_chunks[group_key] = []
+            file_chunks[group_key].append(source)
         
         # Collect all chunk_uids to fetch (including adjacent chunks)
         chunk_uids_to_fetch: List[str] = []
@@ -361,9 +427,21 @@ class RAGEngine:
         # Track chunk_count per file from the initial results
         file_chunk_indices: Dict[str, List[int]] = {}
         
-        for file_id, file_sources in file_chunks.items():
+        for group_key, file_sources in file_chunks.items():
+            # Extract file_id and chunk_scale from group_key
+            # group_key is either "file_id" (default) or "file_id_scale"
+            if "_" in group_key:
+                parts = group_key.rsplit("_", 1)
+                if len(parts) == 2:
+                    file_id, chunk_scale = parts
+                else:
+                    file_id = group_key
+                    chunk_scale = "default"
+            else:
+                file_id = group_key
+                chunk_scale = "default"
+            
             indices = [int(s.metadata.get("chunk_index", 0)) for s in file_sources]
-            file_chunk_indices[file_id] = indices
             
             # Calculate adjacent indices for each chunk
             for chunk_index in indices:
@@ -372,8 +450,12 @@ class RAGEngine:
                 end_idx = chunk_index + window
                 
                 # Generate UIDs for all indices in the window
+                # Handle both 2-part (file_id_idx) and 3-part (file_id_scale_idx) formats
                 for idx in range(start_idx, end_idx + 1):
-                    chunk_uid = f"{file_id}_{idx}"
+                    if chunk_scale != "default":
+                        chunk_uid = f"{file_id}_{chunk_scale}_{idx}"
+                    else:
+                        chunk_uid = f"{file_id}_{idx}"
                     chunk_uids_to_fetch.append(chunk_uid)
         
         # Fetch adjacent chunks from vector store
@@ -394,7 +476,12 @@ class RAGEngine:
             # First, add the original sources
             for source in sources:
                 chunk_index = source.metadata.get("chunk_index", 0)
-                uid = f"{source.file_id}_{chunk_index}"
+                # Handle both 2-part and 3-part UID formats based on chunk_scale
+                chunk_scale = source.metadata.get("chunk_scale", "default")
+                if chunk_scale and chunk_scale != "default":
+                    uid = f"{source.file_id}_{chunk_scale}_{chunk_index}"
+                else:
+                    uid = f"{source.file_id}_{chunk_index}"
                 if uid not in seen_uids:
                     expanded_sources.append(source)
                     seen_uids.add(uid)
@@ -404,12 +491,20 @@ class RAGEngine:
                 if chunk_uid in seen_uids:
                     continue
                 
-                # Parse uid to get file_id and chunk_index
-                parts = chunk_uid.rsplit("_", 1)
-                if len(parts) != 2:
+                # Parse uid to get file_id, chunk_scale (optional), and chunk_index
+                # Handle both 3-part (file_id_scale_index) and 2-part (file_id_index) formats
+                parts = chunk_uid.rsplit("_", 2)
+                
+                if len(parts) == 3:
+                    # 3-part format: file_id_scale_index
+                    file_id, chunk_scale, chunk_index_str = parts
+                elif len(parts) == 2:
+                    # 2-part format: file_id_index
+                    file_id, chunk_index_str = parts
+                    chunk_scale = None
+                else:
                     continue
                 
-                file_id, chunk_index_str = parts
                 try:
                     chunk_index = int(chunk_index_str)
                 except ValueError:
@@ -428,11 +523,16 @@ class RAGEngine:
                             score = 1.0
                         distance = score
                     
+                    # Get metadata and add chunk_scale if parsed from 3-part UID
+                    metadata = self._normalize_metadata(chunk.get("metadata"))
+                    if chunk_scale:
+                        metadata["chunk_scale"] = chunk_scale
+                    
                     expanded_source = RAGSource(
                         text=chunk.get("text", ""),
                         file_id=file_id,
                         score=distance,
-                        metadata=self._normalize_metadata(chunk.get("metadata")),
+                        metadata=metadata,
                     )
                     expanded_sources.append(expanded_source)
                     seen_uids.add(chunk_uid)
@@ -469,6 +569,7 @@ class RAGEngine:
         chat_history: List[Dict[str, Any]],
         chunks: List[RAGSource],
         memories: List[MemoryRecord],
+        relevance_hint: Optional[str] = None,
     ) -> List[Dict[str, str]]:
         context_sections = [self._format_chunk(ch) for ch in chunks]
         memory_context = [mem.content for mem in memories if mem.content]
@@ -491,10 +592,14 @@ class RAGEngine:
         if context:
             logger.debug("Context preview (first 500 chars): %s", context[:500])
         
+        user_content_parts = []
+        if relevance_hint:
+            user_content_parts.append(relevance_hint)
         if context:
-            user_content = f"Context:\n{context}\n\n"
+            user_content_parts.append(f"Context:\n{context}")
         else:
-            user_content = "No relevant documents found for this query.\n\n"
+            user_content_parts.append("No relevant documents found for this query.")
+        user_content = "\n\n".join(user_content_parts) + "\n\n"
 
         memory_text = "\n".join(memory_context)
         if memory_text:

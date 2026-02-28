@@ -7,12 +7,13 @@ while tracking processing status in SQLite and handling file deduplication.
 
 import asyncio
 import json
+import logging
 import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import List, Any, Optional
+from typing import List, Any, Optional, Tuple
 
 from unstructured.partition.auto import partition
 
@@ -21,9 +22,13 @@ from ..models.database import SQLiteConnectionPool, get_pool
 from ..utils.file_utils import compute_file_hash
 from ..utils.retry import with_retry
 from .chunking import SemanticChunker, ProcessedChunk
+from .contextual_chunking import ContextualChunker
 from .embeddings import EmbeddingService
+from .llm_client import LLMClient
 from .schema_parser import SchemaParser
 from .vector_store import VectorStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -116,6 +121,8 @@ class DocumentProcessor:
         vector_store: Optional[VectorStore] = None,
         embedding_service: Optional[EmbeddingService] = None,
         pool: Optional['SQLiteConnectionPool'] = None,
+        llm_client: Optional[LLMClient] = None,
+        contextual_chunker: Optional[ContextualChunker] = None,
     ):
         """
         Initialize the document processor.
@@ -126,6 +133,8 @@ class DocumentProcessor:
             vector_store: VectorStore instance for storing chunk embeddings
             embedding_service: EmbeddingService instance for generating embeddings
             pool: SQLiteConnectionPool instance for database connections
+            llm_client: LLMClient instance for contextual chunking (optional)
+            contextual_chunker: Pre-configured ContextualChunker instance (optional)
         """
         self.parser = DocumentParser()
         self.chunker = SemanticChunker(
@@ -139,6 +148,25 @@ class DocumentProcessor:
         self.pool = pool
         self.vector_store = vector_store
         self.embedding_service = embedding_service
+        self._llm_client = llm_client
+        self._contextual_chunker = contextual_chunker
+
+    def _get_contextual_chunker(self) -> Optional[ContextualChunker]:
+        """
+        Lazily create a ContextualChunker when needed.
+
+        Returns:
+            ContextualChunker instance if contextual_chunking_enabled is True
+            and llm_client exists, None otherwise.
+        """
+        if not settings.contextual_chunking_enabled:
+            return None
+        if self._llm_client is None:
+            logger.warning("Contextual chunking enabled but no LLM client available")
+            return None
+        if self._contextual_chunker is None:
+            self._contextual_chunker = ContextualChunker(self._llm_client)
+        return self._contextual_chunker
 
     @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def _check_duplicate(self, file_hash: str, conn: sqlite3.Connection, vault_id: int = 1) -> Optional[sqlite3.Row]:
@@ -327,7 +355,8 @@ class DocumentProcessor:
                 metadata={
                     **chunk_data['metadata'],
                     'chunk_index': idx,
-                    'total_chunks': len(schema_chunks)
+                    'total_chunks': len(schema_chunks),
+                    'chunk_scale': 'default'  # Schema files don't use multi-scale
                 },
                 chunk_index=idx
             )
@@ -335,18 +364,65 @@ class DocumentProcessor:
 
         return processed_chunks
 
-    async def _process_document_file(self, file_path: str) -> List[ProcessedChunk]:
+    async def _process_document_file(
+        self,
+        file_path: str,
+        file_id: Optional[int] = None
+    ) -> Tuple[List[ProcessedChunk], str]:
         """
         Process a document file using DocumentParser and SemanticChunker.
 
         Args:
             file_path: Path to the document file
+            file_id: Database ID of the file (required for multi-scale indexing)
 
         Returns:
-            List of ProcessedChunk objects
+            Tuple of (List of ProcessedChunk objects, document text as string)
         """
         elements = await asyncio.to_thread(self.parser.parse, file_path)
-        return await asyncio.to_thread(self.chunker.chunk_elements, elements)
+        # Join all element texts for use as context in contextual chunking
+        document_text = "\n".join([str(e) for e in elements])
+
+        # Check if multi-scale indexing is enabled
+        if settings.multi_scale_indexing_enabled:
+            # Parse chunk sizes from settings
+            scale_strs = settings.multi_scale_chunk_sizes.split(',')
+            scales = [int(s.strip()) for s in scale_strs if s.strip()]
+
+            all_chunks = []
+            for scale in scales:
+                # Create chunker for this scale
+                chunk_overlap = int(scale * settings.multi_scale_overlap_ratio)
+                scale_chunker = SemanticChunker(
+                    chunk_size_chars=scale,
+                    chunk_overlap_chars=chunk_overlap
+                )
+
+                # Chunk elements with this scale's chunker
+                scale_chunks = await asyncio.to_thread(scale_chunker.chunk_elements, elements)
+
+                # Add chunk_scale metadata to each chunk
+                for idx, chunk in enumerate(scale_chunks):
+                    chunk.metadata['chunk_scale'] = str(scale)
+                    # Use scale-aware index format for multi-scale
+                    if file_id is not None:
+                        chunk.metadata['chunk_index'] = f"{scale}_{idx}"
+
+                all_chunks.extend(scale_chunks)
+
+            total_chunks = len(all_chunks)
+            scale_list = [str(s) for s in scales]
+            logger.info(
+                "Multi-scale chunking processed %d chunks across scales %s",
+                total_chunks,
+                scale_list
+            )
+
+            return all_chunks, document_text
+        else:
+            # Existing single-scale behavior
+            chunks = await asyncio.to_thread(self.chunker.chunk_elements, elements)
+            return chunks, document_text
 
     async def process_file(
         self,
@@ -412,8 +488,38 @@ class DocumentProcessor:
             # Process the file based on type
             if self._is_schema_file(file_path):
                 chunks = await self._process_schema_file(file_path)
+                document_text = ""
             else:
-                chunks = await self._process_document_file(file_path)
+                chunks, document_text = await self._process_document_file(file_path, file_id)
+
+            # Apply contextual chunking if enabled
+            if settings.contextual_chunking_enabled and chunks and document_text:
+                chunker = self._get_contextual_chunker()
+                if chunker is not None:
+                    source_filename = Path(file_path).name
+                    logger.info(
+                        "Contextual chunking: processing %d chunks for %s",
+                        len(chunks),
+                        source_filename
+                    )
+                    try:
+                        await chunker.contextualize_chunks(
+                            document_text=document_text,
+                            chunks=chunks,
+                            source_filename=source_filename
+                        )
+                        logger.info(
+                            "Contextual chunking: completed for %s (%d chunks contextualized)",
+                            source_filename,
+                            len(chunks)
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Contextual chunking failed for %s: %s",
+                            source_filename,
+                            str(e)
+                        )
+                # else: _get_contextual_chunker already logged a warning if needed
 
             # Generate embeddings and store in vector store
             if self.embedding_service is not None and self.vector_store is not None:
@@ -421,8 +527,25 @@ class DocumentProcessor:
                 if chunks:
                     # Extract texts from chunks
                     texts = [c.text for c in chunks]
-                    # Generate embeddings
-                    embeddings = await self.embedding_service.embed_batch(texts)
+                    
+                    # Check if tri-vector embeddings are supported
+                    use_tri_vector = self.embedding_service.supports_tri_vector
+                    if use_tri_vector:
+                        logger.info("Tri-vector embedding enabled: generating dense + sparse vectors")
+                        # Generate tri-vector embeddings (dense + sparse + colbert)
+                        tri_vectors = await self.embedding_service.embed_multi(texts)
+                        # Validate tri-vectors count matches chunks count
+                        if len(tri_vectors) != len(chunks):
+                            raise DocumentProcessingError(
+                                f"Tri-vector embedding count mismatch: expected {len(chunks)}, got {len(tri_vectors)}"
+                            )
+                        embeddings = [tv["dense"] for tv in tri_vectors]
+                        sparse_embeddings = [tv.get("sparse") for tv in tri_vectors]
+                    else:
+                        # Generate standard embeddings (dense only)
+                        embeddings = await self.embedding_service.embed_batch(texts)
+                        sparse_embeddings = [None] * len(chunks)
+                    
                     # Validate embeddings count matches chunks count
                     if len(embeddings) != len(chunks):
                         raise DocumentProcessingError(
@@ -435,17 +558,33 @@ class DocumentProcessor:
                         )
                     # Map chunks to records for vector store
                     records = []
-                    for chunk, embedding in zip(chunks, embeddings):
+                    for chunk, embedding, sparse_emb in zip(chunks, embeddings, sparse_embeddings):
+                        # Determine chunk_scale from metadata (set during chunking)
+                        chunk_scale = chunk.metadata.get('chunk_scale', 'default')
+
                         # Create chunk_uid for windowing support
-                        chunk_uid = f"{file_id}_{chunk.chunk_index}"
+                        # Use scale-aware format when multi-scale indexing is enabled
+                        if settings.multi_scale_indexing_enabled and chunk_scale != 'default':
+                            # Multi-scale: format is {file_id}_{scale}_{index}
+                            chunk_index_value = chunk.metadata.get('chunk_index', chunk.chunk_index)
+                            if isinstance(chunk_index_value, str) and '_' in chunk_index_value:
+                                # Already formatted as scale_index from _process_document_file
+                                chunk_uid = f"{file_id}_{chunk_index_value}"
+                            else:
+                                chunk_uid = f"{file_id}_{chunk_scale}_{chunk.chunk_index}"
+                        else:
+                            # Standard format: {file_id}_{index}
+                            chunk_uid = f"{file_id}_{chunk.chunk_index}"
                         
                         # Add chunk_uid to metadata for adjacent chunk lookups
                         chunk_metadata = chunk.metadata.copy()
                         chunk_metadata['chunk_uid'] = chunk_uid
                         chunk_metadata['file_id'] = str(file_id)
                         chunk_metadata['chunk_count'] = chunk.metadata.get('total_chunks', len(chunks))
+                        # Ensure chunk_scale is included in metadata
+                        chunk_metadata['chunk_scale'] = chunk_scale
                         
-                        records.append({
+                        record = {
                             "id": chunk_uid,
                             "text": chunk.text,
                             "file_id": str(file_id),
@@ -453,7 +592,20 @@ class DocumentProcessor:
                             "vault_id": str(vault_id),
                             "metadata": json.dumps(chunk_metadata),
                             "embedding": embedding
-                        })
+                        }
+                        # Add sparse embedding if available (tri-vector mode)
+                        if sparse_emb is not None:
+                            try:
+                                record["sparse_embedding"] = json.dumps(sparse_emb)
+                            except (TypeError, ValueError) as e:
+                                logger.warning(f"Failed to serialize sparse embedding: {e}")
+                                record["sparse_embedding"] = None
+                        records.append(record)
+                    
+                    # Log tri-vector usage
+                    if use_tri_vector:
+                        logger.info(f"Tri-vector embedding: stored {len(records)} chunks with sparse vectors")
+                    
                     # Initialize vector table with embedding dimension and add chunks
                     embedding_dim = len(embeddings[0])
                     await asyncio.to_thread(self.vector_store.init_table, embedding_dim)

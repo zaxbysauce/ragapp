@@ -222,6 +222,7 @@ async def lifespan(app: FastAPI):
         embedding_service=app.state.embedding_service,
         maintenance_service=app.state.maintenance_service,
         pool=app.state.db_pool,
+        llm_client=app.state.llm_client,
     )
     await app.state.background_processor.start()
     
@@ -253,6 +254,7 @@ async def lifespan(app: FastAPI):
     await app.state.file_watcher.stop()
     await app.state.background_processor.stop()
     await app.state.llm_client.close()
+    await app.state.embedding_service.close()
     app.state.vector_store.close()
     app.state.db_pool.close_all()
 

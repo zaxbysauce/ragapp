@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .document_processor import DocumentProcessor, DocumentProcessingError
+from .llm_client import LLMClient
 from .vector_store import VectorStore
 from .embeddings import EmbeddingService
 from .maintenance import MaintenanceService
@@ -32,6 +33,7 @@ def get_background_processor(
     embedding_service: Optional[EmbeddingService] = None,
     maintenance_service: Optional[MaintenanceService] = None,
     pool: Optional["SQLiteConnectionPool"] = None,
+    llm_client: Optional[LLMClient] = None,
 ) -> "BackgroundProcessor":
     """
     Get or create the singleton BackgroundProcessor instance.
@@ -49,6 +51,7 @@ def get_background_processor(
         embedding_service: EmbeddingService instance for generating embeddings
         maintenance_service: MaintenanceService instance for maintenance mode checks
         pool: SQLiteConnectionPool instance for database connections
+        llm_client: LLMClient instance for contextual chunking
 
     Returns:
         The singleton BackgroundProcessor instance
@@ -64,6 +67,7 @@ def get_background_processor(
             embedding_service=embedding_service,
             maintenance_service=maintenance_service,
             pool=pool,
+            llm_client=llm_client,
         )
         logger.info("Created singleton BackgroundProcessor instance")
     return _processor_instance
@@ -125,6 +129,7 @@ class BackgroundProcessor:
         embedding_service: Optional[EmbeddingService] = None,
         maintenance_service: Optional[MaintenanceService] = None,
         pool: Optional["SQLiteConnectionPool"] = None,
+        llm_client: Optional[LLMClient] = None,
     ):
         """
         Initialize the background processor.
@@ -138,6 +143,7 @@ class BackgroundProcessor:
             embedding_service: EmbeddingService instance for generating embeddings
             maintenance_service: MaintenanceService instance for maintenance mode
             pool: SQLiteConnectionPool instance for database connections
+            llm_client: LLMClient instance for contextual chunking
         """
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -149,6 +155,7 @@ class BackgroundProcessor:
             vector_store=vector_store,
             embedding_service=embedding_service,
             pool=pool,
+            llm_client=llm_client,
         )
         self._worker_task: Optional[asyncio.Task] = None
         self._running = False

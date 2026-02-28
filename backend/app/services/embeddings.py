@@ -5,7 +5,7 @@ import asyncio
 import httpx
 import logging
 from typing import List
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,17 @@ class EmbeddingService:
 
         # Detect provider mode based on URL path
         self.provider_mode, self.embeddings_url = self._detect_provider_mode(base_url)
+        
+        # Tri-vector embedding configuration
+        self._tri_vector_enabled = settings.tri_vector_search_enabled
+        self._supports_tri_vector: bool = False  # Lazy-detected via property
+        self._flag_base_url: str | None = None
+        
+        if self._tri_vector_enabled:
+            # Use FlagEmbedding URL if tri-vector is enabled
+            self._flag_base_url = settings.flag_embedding_url or base_url
+            self.embeddings_url = self._flag_base_url
+        
         self.timeout = 60.0
         
         # Read embedding prefixes from settings
@@ -49,6 +60,32 @@ class EmbeddingService:
                 self.embedding_doc_prefix = "Instruct: Represent this technical documentation passage for retrieval.\nDocument: "
             if not self.embedding_query_prefix:
                 self.embedding_query_prefix = "Instruct: Retrieve relevant technical documentation passages.\nQuery: "
+        
+        # Persistent HTTP client — created once, reused for all embedding calls
+        self._client = httpx.AsyncClient(
+            timeout=self.timeout,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    
+    @property
+    def supports_tri_vector(self) -> bool:
+        """
+        Lazy detection - returns True if FlagEmbedding server detected.
+        
+        Performs synchronous detection on first access using httpx sync client.
+        """
+        if self._supports_tri_vector:
+            return True
+        if not self._tri_vector_enabled or not self._flag_base_url:
+            return False
+        
+        # Run detection synchronously using httpx sync client (only first time)
+        self._supports_tri_vector = self._detect_flag_embedding_server_sync()
+        if self._supports_tri_vector:
+            logger.info("FlagEmbedding server detected - tri-vector embeddings enabled")
+        else:
+            logger.warning("Tri-vector enabled but FlagEmbedding server not detected - falling back to dense-only")
+        return self._supports_tri_vector
     
     def _detect_provider_mode(self, base_url: str) -> tuple:
         """
@@ -88,6 +125,28 @@ class EmbeddingService:
             # Default to Ollama mode
             base_url = base_url.rstrip('/') + '/api/embeddings'
             return ('ollama', base_url)
+
+    def _detect_flag_embedding_server_sync(self) -> bool:
+        """
+        Synchronously detect if the embedding server is a FlagEmbedding server with tri-vector support.
+        
+        Used for lazy detection during initialization.
+        
+        Returns:
+            True if FlagEmbedding server detected, False otherwise.
+        """
+        # Type guard: urljoin requires non-None base URL
+        assert self._flag_base_url is not None, "Flag base URL must be set for tri-vector detection"
+        try:
+            health_url = urljoin(self._flag_base_url, '/health')
+            import httpx
+            response = httpx.get(health_url, timeout=5.0)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('supports_sparse', False)
+        except Exception as e:
+            logger.debug(f"FlagEmbedding detection failed: {e}")
+        return False
     
     def _build_payload(self, text: str) -> dict:
         """
@@ -170,35 +229,34 @@ class EmbeddingService:
         # Apply query prefix for retrieval queries
         text_to_embed = self.embedding_query_prefix + text if self.embedding_query_prefix else text
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.post(
-                    self.embeddings_url,
-                    json=self._build_payload(text_to_embed)
+        try:
+            response = await self._client.post(
+                self.embeddings_url,
+                json=self._build_payload(text_to_embed)
+            )
+            
+            if response.status_code != 200:
+                logger.warning(
+                    f"Embedding API returned status {response.status_code} for {self.provider_mode} mode: {response.text}"
                 )
-                
-                if response.status_code != 200:
-                    logger.warning(
-                        f"Embedding API returned status {response.status_code} for {self.provider_mode} mode: {response.text}"
-                    )
-                    raise EmbeddingError(
-                        f"Embedding API returned status {response.status_code}"
-                    )
+                raise EmbeddingError(
+                    f"Embedding API returned status {response.status_code}"
+                )
 
-                try:
-                    data = response.json()
-                except ValueError as e:
-                    logger.warning(
-                        f"Invalid JSON response from embedding API for {self.provider_mode} mode: {e}, response: {response.text}"
-                    )
-                    raise EmbeddingError("Invalid response from embedding service")
+            try:
+                data = response.json()
+            except ValueError as e:
+                logger.warning(
+                    f"Invalid JSON response from embedding API for {self.provider_mode} mode: {e}, response: {response.text}"
+                )
+                raise EmbeddingError("Invalid response from embedding service")
 
-                return self._extract_embedding(data)
-                
-            except httpx.TimeoutException as e:
-                raise EmbeddingError("Embedding request timed out")
-            except httpx.HTTPError as e:
-                raise EmbeddingError("Embedding HTTP error occurred")
+            return self._extract_embedding(data)
+            
+        except httpx.TimeoutException:
+            raise EmbeddingError("Embedding request timed out")
+        except httpx.HTTPError:
+            raise EmbeddingError("Embedding HTTP error occurred")
     
     async def validate_embedding_dimension(self, expected_dim: int) -> bool:
         """
@@ -289,6 +347,40 @@ class EmbeddingService:
         
         return all_embeddings
 
+    async def embed_multi(self, texts: List[str]) -> List[dict]:
+        """
+        Generate tri-vector embeddings (dense + sparse + colbert) for multiple texts.
+        
+        Args:
+            texts: List of texts to embed
+            
+        Returns:
+            List of dicts with keys: 'dense' (list), 'sparse' (dict), 'colbert' (None)
+            If server doesn't support tri-vector, returns dense-only with sparse=None.
+        """
+        # Use property to trigger lazy detection if not already done
+        if not self.supports_tri_vector:
+            # Fall back to dense-only
+            dense_embeddings = await self.embed_batch(texts)
+            return [
+                {"dense": emb, "sparse": None, "colbert": None}
+                for emb in dense_embeddings
+            ]
+        
+        # Call FlagEmbedding /embed endpoint
+        try:
+            embed_url = urljoin(self.embeddings_url, '/embed')
+            response = await self._client.post(
+                embed_url,
+                json={"input": texts},
+                headers={"Content-Type": "application/json"}
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Tri-vector embedding failed: {e}")
+            raise EmbeddingError(f"Failed to generate tri-vector embeddings: {e}")
+
     async def _embed_batch_api(self, texts: List[str]) -> List[List[float]]:
         """
         Send a batch of texts to the embedding API in a single request.
@@ -308,8 +400,7 @@ class EmbeddingService:
         max_retries = settings.embedding_batch_max_retries
         min_sub_size = settings.embedding_batch_min_sub_size
         
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            return await self._embed_batch_with_retry(client, texts, max_retries, min_sub_size)
+        return await self._embed_batch_with_retry(self._client, texts, max_retries, min_sub_size)
     
     async def _embed_batch_with_retry(self, client: httpx.AsyncClient, texts: List[str], 
                                       max_retries: int, min_sub_size: int, retry_count: int = 0) -> List[List[float]]:
@@ -600,8 +691,8 @@ class EmbeddingService:
                     f"Text split produced empty side (left={len(left_text)}, right={len(right_text)}) for text of length {len(single_text)}"
                 )
                 raise EmbeddingError(
-                    f"Cannot split text for embedding recovery: split produced empty segment. "
-                    f"Ensure chunk_size_chars is within server limits."
+                    "Cannot split text for embedding recovery: split produced empty segment. "
+                    "Ensure chunk_size_chars is within server limits."
                 )
             
             logger.info(
@@ -687,5 +778,15 @@ class EmbeddingService:
         
         return False
 
+
+    async def close(self) -> None:
+        """Close the persistent HTTP client and release connection pool resources.
+
+        Idempotent — safe to call multiple times or if __init__ failed before
+        client creation.
+        """
+        client = getattr(self, "_client", None)
+        if client is not None and not client.is_closed:
+            await client.aclose()
 
 

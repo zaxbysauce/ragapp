@@ -84,6 +84,34 @@ class Settings(BaseSettings):
     hybrid_alpha: float = 0.5
     """Weight for dense vs sparse scores in RRF. 0.0 = pure BM25, 1.0 = pure dense."""
 
+    # ── Contextual chunking configuration ─────────────────────────────────────
+    contextual_chunking_enabled: bool = False
+    """Enable LLM-based contextual chunking (prepends document context to each chunk)."""
+    contextual_chunking_concurrency: int = 5
+    """Maximum concurrent LLM calls for contextual chunking."""
+
+    # ── Multi-scale chunk indexing configuration ──────────────────────────────
+    multi_scale_indexing_enabled: bool = False
+    """Enable multi-scale chunk indexing (index chunks at multiple sizes for varied recall)."""
+    multi_scale_chunk_sizes: str = "512,1024,2048"
+    """Comma-separated list of chunk sizes (in characters) for multi-scale indexing."""
+    multi_scale_overlap_ratio: float = 0.1
+    """Overlap ratio between adjacent chunks at each scale (0.0-1.0)."""
+
+    # ── Query transformation configuration ────────────────────────────────────
+    query_transformation_enabled: bool = False
+    """Enable query transformation using step-back prompting for broader retrieval."""
+
+    # ── Retrieval evaluation configuration ────────────────────────────────────
+    retrieval_evaluation_enabled: bool = False
+    """Enable CRAG-style retrieval evaluation (CONFIDENT/AMBIGUOUS/NO_MATCH classification)."""
+
+    # ── Tri-vector embedding configuration (BGE-M3) ────────────────────────────
+    tri_vector_search_enabled: bool = False
+    """Enable BGE-M3 tri-vector embeddings (dense + sparse). Requires FlagEmbedding server."""
+    flag_embedding_url: str = "http://embedding-server:18080"
+    """URL of the FlagEmbedding server for BGE-M3 tri-vector embeddings."""
+
     # Document processing configuration (legacy - DEPRECATED)
     chunk_size: int | None = None
     """[DEPRECATED] Token-based chunk size. Use chunk_size_chars instead."""
@@ -231,6 +259,29 @@ class Settings(BaseSettings):
         allowed = {"fast", "hi_res", "auto"}
         if v not in allowed:
             raise ValueError(f"document_parsing_strategy must be one of: {', '.join(sorted(allowed))}")
+        return v
+
+    @field_validator("multi_scale_chunk_sizes", mode="after")
+    @classmethod
+    def validate_multi_scale_chunk_sizes(cls, v: str) -> str:
+        """Validate multi_scale_chunk_sizes is a comma-separated list of unique positive integers."""
+        sizes = [int(x.strip()) for x in v.split(",") if x.strip()]
+        if not sizes:
+            raise ValueError("multi_scale_chunk_sizes cannot be empty")
+        unique_sizes = sorted(set(sizes))
+        if len(unique_sizes) != len(sizes):
+            raise ValueError("multi_scale_chunk_sizes must contain unique values")
+        for size in unique_sizes:
+            if size <= 0:
+                raise ValueError("multi_scale_chunk_sizes must contain only positive integers")
+        return ",".join(str(x) for x in unique_sizes)
+
+    @field_validator("multi_scale_overlap_ratio", mode="after")
+    @classmethod
+    def validate_multi_scale_overlap_ratio(cls, v: float) -> float:
+        """Validate multi_scale_overlap_ratio is in range 0.0-1.0."""
+        if v < 0.0 or v > 1.0:
+            raise ValueError("multi_scale_overlap_ratio must be in range 0.0-1.0")
         return v
 
     @model_validator(mode="after")
