@@ -1,28 +1,4 @@
 services:
-  embedding-server:
-    build:
-      context: ./backend/embedding_server
-      dockerfile: Dockerfile
-    container_name: knowledgevault_embedding_server
-    ports:
-      - "18080:18080"
-    environment:
-      - PORT=18080
-    # GPU support - remove deploy.resources for CPU-only deployment
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; exit(0 if urllib.request.urlopen('http://localhost:18080/health').getcode() == 200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   knowledgevault:
     build:
       context: .
@@ -34,9 +10,9 @@ services:
       - ${HOST_DATA_DIR:-./data}:/data/knowledgevault
     environment:
       - DATA_DIR=/data/knowledgevault
-      - OLLAMA_EMBEDDING_URL=${OLLAMA_EMBEDDING_URL:-http://host.docker.internal:11434}
+      - OLLAMA_EMBEDDING_URL=${OLLAMA_EMBEDDING_URL:-http://host.docker.internal:18080/v1/embeddings}
       - OLLAMA_CHAT_URL=${OLLAMA_CHAT_URL:-http://host.docker.internal:11434}
-      - FLAG_EMBEDDING_URL=${FLAG_EMBEDDING_URL:-http://embedding-server:18080}
+      - FLAG_EMBEDDING_URL=${FLAG_EMBEDDING_URL:-http://host.docker.internal:18080}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
       - CHAT_MODEL=${CHAT_MODEL:-qwen3:8b}
       - RERANKER_URL=${RERANKER_URL:-}
@@ -54,8 +30,6 @@ services:
     restart: unless-stopped
     depends_on:
       redis:
-        condition: service_healthy
-      embedding-server:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; exit(0 if urllib.request.urlopen('http://localhost:8080/health').getcode() == 200 else 1)\""]
