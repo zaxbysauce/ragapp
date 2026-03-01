@@ -10,9 +10,9 @@ services:
       - ${HOST_DATA_DIR:-./data}:/data/knowledgevault
     environment:
       - DATA_DIR=/data/knowledgevault
-      - OLLAMA_EMBEDDING_URL=${OLLAMA_EMBEDDING_URL:-http://host.docker.internal:18080/v1/embeddings}
+      - OLLAMA_EMBEDDING_URL=${OLLAMA_EMBEDDING_URL:-http://flag-embed:18080/v1/embeddings}
       - OLLAMA_CHAT_URL=${OLLAMA_CHAT_URL:-http://host.docker.internal:11434}
-      - FLAG_EMBEDDING_URL=${FLAG_EMBEDDING_URL:-http://host.docker.internal:18080}
+      - FLAG_EMBEDDING_URL=${FLAG_EMBEDDING_URL:-http://flag-embed:18080}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
       - CHAT_MODEL=${CHAT_MODEL:-qwen3:8b}
       - RERANKER_URL=${RERANKER_URL:-}
@@ -24,9 +24,10 @@ services:
       - HYBRID_ALPHA=${HYBRID_ALPHA:-0.5}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - TRI_VECTOR_SEARCH_ENABLED=${TRI_VECTOR_SEARCH_ENABLED:-false}
+      - TRI_VECTOR_SEARCH_ENABLED=${TRI_VECTOR_SEARCH_ENABLED:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "flag-embed:host-gateway"
     restart: unless-stopped
     depends_on:
       redis:
