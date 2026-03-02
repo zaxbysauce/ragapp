@@ -1,4 +1,4 @@
-import { MessageSquare, FileText, Brain, Settings, Database } from "lucide-react";
+import { MessageSquare, FileText, Brain, Settings, Database, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { NavItem, NavItemId, NavigationProps } from "./navigationTypes";
 
@@ -7,6 +7,7 @@ export type { NavItemId, NavigationProps };
 
 const navItems: NavItem[] = [
   { id: "chat", label: "Chat", icon: MessageSquare },
+  { id: "chatNew", label: "Chat (New)", icon: Sparkles },
   { id: "documents", label: "Documents", icon: FileText },
   { id: "memory", label: "Memory", icon: Brain },
   { id: "vaults", label: "Vaults", icon: Database },
@@ -48,15 +49,17 @@ export function NavigationRail({ activeItem, onItemSelect, healthStatus }: Navig
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeItem === item.id;
+          const isNewChat = item.id === "chatNew";
 
           return (
             <button
               key={item.id}
-              onClick={() => onItemSelect(item.id)}
+              onClick={isNewChat ? () => window.location.href = "/chat/redesign" : () => onItemSelect(item.id)}
               className={cn(
                 "group relative flex flex-col items-center gap-1 p-3 rounded-xl transition-all duration-200 ease-out",
                 "hover:bg-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                isActive && "bg-primary/10"
+                isActive && "bg-primary/10",
+                isNewChat && "bg-gradient-to-br from-purple-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-pink-500/20 border border-purple-500/30"
               )}
               aria-label={item.label}
               aria-current={isActive ? "page" : undefined}
@@ -67,14 +70,22 @@ export function NavigationRail({ activeItem, onItemSelect, healthStatus }: Navig
                   "relative p-2 rounded-lg transition-all duration-200",
                   isActive
                     ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground group-hover:text-foreground"
+                    : "text-muted-foreground group-hover:text-foreground",
+                  isNewChat && "bg-gradient-to-br from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/25"
                 )}
               >
-                <Icon className="w-5 h-5" />
-                
+                <Icon className={cn("w-5 h-5", isNewChat && "animate-pulse")} />
+
                 {/* Active Indicator */}
-                {isActive && (
+                {isActive && !isNewChat && (
                   <span className="absolute -right-1 top-1/2 -translate-y-1/2 w-1 h-4 bg-primary rounded-full" />
+                )}
+
+                {/* New Badge */}
+                {isNewChat && (
+                  <span className="absolute -top-1 -right-1 px-1.5 py-0.5 text-[8px] font-bold bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-full shadow-md">
+                    NEW
+                  </span>
                 )}
               </div>
 
@@ -84,7 +95,8 @@ export function NavigationRail({ activeItem, onItemSelect, healthStatus }: Navig
                   "text-[10px] font-medium transition-colors duration-200",
                   isActive
                     ? "text-primary"
-                    : "text-muted-foreground group-hover:text-foreground"
+                    : "text-muted-foreground group-hover:text-foreground",
+                  isNewChat && "font-bold bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent"
                 )}
               >
                 {item.label}
