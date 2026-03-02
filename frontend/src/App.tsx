@@ -3,6 +3,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { PageShell } from "@/components/layout/PageShell";
 import ChatPage from "@/pages/ChatPage";
+import ChatPageRedesigned from "@/pages/ChatPageRedesigned";
 import DocumentsPage from "@/pages/DocumentsPage";
 import MemoryPage from "@/pages/MemoryPage";
 import VaultsPage from "@/pages/VaultsPage";
@@ -44,6 +45,14 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/chat/redesign"
+            element={
+              <ProtectedRoute>
+                <ChatPageRedesigned />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/*"
             element={
