@@ -45,7 +45,7 @@ class EmbeddingService:
         if self._tri_vector_enabled:
             # Use FlagEmbedding URL if tri-vector is enabled
             self._flag_base_url = settings.flag_embedding_url or base_url
-            self.embeddings_url = self._flag_base_url
+            self.embeddings_url = urljoin(self._flag_base_url, '/v1/embeddings')
         
         self.timeout = 60.0
         
