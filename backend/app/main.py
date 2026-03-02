@@ -6,7 +6,7 @@ import logging
 import sqlite3
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 
 logger = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
@@ -310,8 +310,20 @@ static_dir = Path("/app/static")
 logger.info(f"Checking for static files at: {static_dir} (exists: {static_dir.exists()})")
 if static_dir.exists():
     try:
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        # Mount assets only (without html=True to avoid catch-all behavior)
+        app.mount("/assets", StaticFiles(directory=str(static_dir / "assets"), html=False), name="assets")
         logger.info(f"Static files mounted successfully from {static_dir}")
+
+        # Catch-all route for SPA client-side routing
+        # Serves index.html for any unmatched frontend routes (not API routes)
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str):
+            # Return 404 for API and assets paths to avoid shadowing (case-insensitive)
+            normalized_path = full_path.lower()
+            if normalized_path == "api" or normalized_path == "assets" or normalized_path.startswith("api/") or normalized_path.startswith("assets/"):
+                raise HTTPException(status_code=404, detail="Not found")
+            return FileResponse(static_dir / "index.html")
+
     except Exception as e:
         logger.error(f"Failed to mount static files: {e}")
 else:
@@ -322,10 +334,3 @@ else:
         logger.info(f"Contents of /app: {[p.name for p in app_contents]}")
     except Exception as e:
         logger.error(f"Could not list /app contents: {e}")
-
-
-# Catch-all route for SPA client-side routing
-# Serves index.html for any unmatched frontend routes (not API routes)
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    return FileResponse(str(static_dir / "index.html"))
