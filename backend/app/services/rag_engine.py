@@ -198,16 +198,6 @@ class RAGEngine:
                     [r.get("_distance") for r in vector_results[:3]] if vector_results else "N/A"
                 )
 
-                # Filter by distance threshold
-                filtered_results = []
-                for record in vector_results:
-                    distance = record.get("_distance")
-                    if distance is not None and self.max_distance_threshold:
-                        if distance > self.max_distance_threshold:
-                            continue
-                    filtered_results.append(record)
-                vector_results = filtered_results
-
                 # Stage 2: Reranking (if enabled)
                 if self.reranking_enabled and self.reranking_service and vector_results:
                     try:
@@ -382,14 +372,47 @@ class RAGEngine:
         # DEBUG: Log filtering results summary
         filtered_count = len(sources)
         if input_count > 0 and filtered_count == 0:
-            logger.warning(
-                "Filtering issue: %d input results but 0 after filtering. "
-                "Check max_distance_threshold (%.3f) - distances may exceed threshold.",
-                input_count,
-                self.max_distance_threshold
-            )
-        logger.debug("Filtering complete: %d results returned", filtered_count)
-        
+            # Use safe threshold value for logging
+            safe_threshold = self.max_distance_threshold
+            if safe_threshold is None:
+                safe_threshold = self.relevance_threshold
+            # Log with %s if still None, otherwise format as float
+            if safe_threshold is None:
+                logger.warning(
+                    "Threshold filtering removed all %d results (max_distance_threshold=%s). "
+                    "Applying fallback: returning top %d results without threshold filtering.",
+                    input_count,
+                    safe_threshold,
+                    min(self.retrieval_top_k, len(results))
+                )
+            else:
+                logger.warning(
+                    "Threshold filtering removed all %d results (max_distance_threshold=%.3f). "
+                    "Applying fallback: returning top %d results without threshold filtering.",
+                    input_count,
+                    safe_threshold,
+                    min(self.retrieval_top_k, len(results))
+                )
+            # Fallback: return first min(retrieval_top_k, len(results)) results without threshold filtering
+            fallback_limit = min(self.retrieval_top_k, len(results))
+            sources = []
+            for record in results[:fallback_limit]:
+                distance = record.get("_distance")
+                if distance is None:
+                    score = record.get("score")
+                    if score is None:
+                        score = 1.0
+                    distance = score
+                sources.append(
+                    RAGSource(
+                        text=record.get("text", ""),
+                        file_id=record.get("file_id", ""),
+                        score=distance,
+                        metadata=self._normalize_metadata(record.get("metadata")),
+                    )
+                )
+        logger.debug("Filtering complete: %d results returned", len(sources))
+
         return sources
     
     def _expand_window(self, sources: List[RAGSource]) -> List[RAGSource]:
