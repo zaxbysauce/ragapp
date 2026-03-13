@@ -1,13 +1,15 @@
+import { forwardRef } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 // Mock framer-motion
 vi.mock('framer-motion', () => ({
   motion: {
     div: ({ children, ...props }: { children: React.ReactNode }) => <div {...props}>{children}</div>,
-    AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    aside: ({ children, ...props }: { children: React.ReactNode }) => <aside {...props}>{children}</aside>,
   },
+  AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 // Mock lucide-react icons
@@ -25,13 +27,23 @@ vi.mock('lucide-react', () => ({
   X: () => <svg data-testid="mock-x">✕</svg>,
   Check: () => <svg data-testid="mock-check">✓</svg>,
   Copy: () => <svg data-testid="mock-copy">📋</svg>,
+  Sparkles: () => <svg data-testid="mock-sparkles">✨</svg>,
+  BookOpen: () => <svg data-testid="mock-book-open">📚</svg>,
+  Search: () => <svg data-testid="mock-search">🔍</svg>,
+  Layers: () => <svg data-testid="mock-layers">🗂️</svg>,
+  HelpCircle: () => <svg data-testid="mock-help-circle">?</svg>,
+  MessageSquare: () => <svg data-testid="mock-message-square">💬</svg>,
+  Trash2: () => <svg data-testid="mock-trash">🗑️</svg>,
+  Edit3: () => <svg data-testid="mock-edit">✏️</svg>,
+  ThumbsUp: () => <svg data-testid="mock-thumbs-up">👍</svg>,
+  ThumbsDown: () => <svg data-testid="mock-thumbs-down">👎</svg>,
 }));
 
 // Mock UI components
 vi.mock('@/components/ui/scroll-area', () => ({
-  ScrollArea: ({ children, ref }: { children: React.ReactNode; ref?: React.RefObject<any> }) => (
+  ScrollArea: forwardRef<HTMLDivElement, { children: React.ReactNode }>(({ children }, ref) => (
     <div ref={ref} data-testid="mock-scroll-area">{children}</div>
-  ),
+  )),
 }));
 
 vi.mock('@/components/ui/button', () => ({
@@ -43,7 +55,18 @@ vi.mock('@/components/ui/button', () => ({
 }));
 
 vi.mock('@/components/ui/textarea', () => ({
-  Textarea: ({ value, onChange, onKeyDown, onInput, disabled, placeholder, className, ref }: any) => (
+  Textarea: forwardRef<
+    HTMLTextAreaElement,
+    {
+      value: string;
+      onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
+      onKeyDown?: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+      onInput?: (event: React.FormEvent<HTMLTextAreaElement>) => void;
+      disabled?: boolean;
+      placeholder?: string;
+      className?: string;
+    }
+  >(({ value, onChange, onKeyDown, onInput, disabled, placeholder, className }, ref) => (
     <textarea
       ref={ref}
       value={value}
@@ -55,15 +78,23 @@ vi.mock('@/components/ui/textarea', () => ({
       className={className}
       data-testid="mock-textarea"
     />
-  ),
+  )),
 }));
 
 // Mock stores - MUST be before component imports
-const mockUseChatStore = vi.fn();
-const mockUseChatStoreRedesign = vi.fn();
-const mockUseVaultStore = vi.fn();
-const mockUseSendMessage = vi.fn();
-const mockUseChatHistory = vi.fn();
+const {
+  mockUseChatStore,
+  mockUseChatStoreRedesign,
+  mockUseVaultStore,
+  mockUseSendMessage,
+  mockUseChatHistory,
+} = vi.hoisted(() => ({
+  mockUseChatStore: vi.fn(),
+  mockUseChatStoreRedesign: vi.fn(),
+  mockUseVaultStore: vi.fn(),
+  mockUseSendMessage: vi.fn(),
+  mockUseChatHistory: vi.fn(),
+}));
 
 vi.mock('@/stores/useChatStore', () => ({
   useChatStore: mockUseChatStore,
@@ -80,6 +111,7 @@ vi.mock('@/stores/useVaultStore', () => ({
 // Mock hooks
 vi.mock('@/hooks/useSendMessage', () => ({
   useSendMessage: mockUseSendMessage,
+  MAX_INPUT_LENGTH: 4000,
 }));
 
 vi.mock('@/hooks/useChatHistory', () => ({
@@ -97,36 +129,6 @@ vi.mock('@/components/shared/KeyboardShortcuts', () => ({
 // Mock vault selector
 vi.mock('@/components/vault/VaultSelector', () => ({
   VaultSelector: () => <div data-testid="mock-vault-selector">Vault</div>,
-}));
-
-// Mock MessageContent
-vi.mock('./MessageContent', () => ({
-  MessageContent: ({ content, sources, isStreaming }: any) => (
-    <div data-testid="mock-message-content">
-      <div>{content}</div>
-      {sources && <div data-testid="mock-sources">Sources: {sources.length}</div>}
-      {isStreaming && <span data-testid="mock-streaming">...</span>}
-    </div>
-  ),
-}));
-
-// Mock canvas components
-vi.mock('@/components/canvas/DocumentPreview', () => ({
-  DocumentPreview: ({ source }: any) => (
-    <div data-testid="mock-document-preview">
-      <span>{source.filename}</span>
-      <span>{source.snippet}</span>
-    </div>
-  ),
-}));
-
-vi.mock('@/components/canvas/CodeViewer', () => ({
-  CodeViewer: ({ source }: any) => (
-    <div data-testid="mock-code-viewer">
-      <span>{source.filename}</span>
-      <span>{source.snippet}</span>
-    </div>
-  ),
 }));
 
 vi.mock('@/components/canvas/ResizableHandle', () => ({
@@ -188,7 +190,13 @@ describe('ChatMessages Component', () => {
       activeVaultId: 'vault-1',
     });
     mockUseSendMessage.mockReturnValue(mockSendMessageReturn);
-    mockUseChatHistory.mockReturnValue({ refreshHistory: vi.fn() });
+    mockUseChatHistory.mockReturnValue({
+      chatHistory: [],
+      isChatLoading: false,
+      chatHistoryError: null,
+      handleLoadChat: vi.fn(),
+      refreshHistory: vi.fn(),
+    });
   });
 
   afterEach(() => {
@@ -210,7 +218,10 @@ describe('ChatMessages Component', () => {
     render(<ChatMessages toggleCanvasCollapse={vi.fn()} canvasCollapsed={true} />);
 
     expect(screen.getByText(/How can I help you today\?/)).toBeInTheDocument();
-    expect(screen.getByText(/Ask anything\. Attach documents\. Get answers\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Ask anything about your documents, or pick a suggestion below\./)
+    ).toBeInTheDocument();
+    expect(screen.getByText('Summarize documents')).toBeInTheDocument();
   });
 
   it('should render messages with MessageBubble components', () => {
@@ -295,48 +306,45 @@ describe('ChatMessages Component', () => {
   });
 
   it('should export chat when export button is clicked', async () => {
-    const originalCreateObjectURL = URL.createObjectURL;
-    const originalRevokeObjectURL = URL.revokeObjectURL;
-    const originalBodyAppendChild = document.body.appendChild;
-    const originalBodyRemoveChild = document.body.removeChild;
+    vi.useFakeTimers();
+    const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url');
+    const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
 
-    URL.createObjectURL = vi.fn(() => 'blob:mock-url');
-    URL.revokeObjectURL = vi.fn();
-    document.body.appendChild = vi.fn();
-    document.body.removeChild = vi.fn();
+    try {
+      mockUseChatStore.mockReturnValue({
+        messages: [
+          { id: '1', role: 'user' as const, content: 'Hello' },
+          { id: '2', role: 'assistant' as const, content: 'Hi there!' },
+        ],
+        isStreaming: false,
+        newChat: vi.fn(),
+        input: '',
+        setInput: vi.fn(),
+        inputError: null,
+      });
 
-    mockUseChatStore.mockReturnValue({
-      messages: [
-        { id: '1', role: 'user' as const, content: 'Hello' },
-        { id: '2', role: 'assistant' as const, content: 'Hi there!' },
-      ],
-      isStreaming: false,
-      newChat: vi.fn(),
-      input: '',
-      setInput: vi.fn(),
-      inputError: null,
-    });
+      render(<ChatMessages toggleCanvasCollapse={vi.fn()} canvasCollapsed={true} />);
 
-    render(<ChatMessages toggleCanvasCollapse={vi.fn()} canvasCollapsed={true} />);
+      const exportButton = screen.getByTestId('mock-download').closest('button')!;
+      await act(async () => {
+        fireEvent.click(exportButton);
+        vi.runAllTimers();
+      });
 
-    const exportButton = screen.getByTestId('mock-download').closest('button')!;
-    await act(async () => {
-      fireEvent.click(exportButton);
-    });
-
-    // Verify blob was created with correct content
-    expect(URL.createObjectURL).toHaveBeenCalled();
-    const blobArg = (URL.createObjectURL as any).mock.calls[0][0];
-    expect(blobArg).toBeInstanceOf(Blob);
-
-    // Verify cleanup
-    expect(URL.revokeObjectURL).toHaveBeenCalled();
-
-    // Restore
-    URL.createObjectURL = originalCreateObjectURL;
-    URL.revokeObjectURL = originalRevokeObjectURL;
-    document.body.appendChild = originalBodyAppendChild;
-    document.body.removeChild = originalBodyRemoveChild;
+      expect(createObjectURLSpy).toHaveBeenCalled();
+      const blobArg = createObjectURLSpy.mock.calls[0][0];
+      expect(blobArg).toBeInstanceOf(Blob);
+      expect(clickSpy).toHaveBeenCalled();
+      expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:mock-url');
+    } finally {
+      vi.useRealTimers();
+      createObjectURLSpy.mockRestore();
+      revokeObjectURLSpy.mockRestore();
+      clickSpy.mockRestore();
+    }
   });
 });
 
@@ -378,7 +386,6 @@ describe('MessageBubble Component', () => {
 
     render(<MessageBubble message={message} />);
 
-    expect(screen.getByTestId('mock-message-content')).toBeInTheDocument();
     expect(screen.getByText('Test content')).toBeInTheDocument();
   });
 
@@ -392,8 +399,8 @@ describe('MessageBubble Component', () => {
 
     render(<MessageBubble message={message} />);
 
-    expect(screen.getByTestId('mock-sources')).toBeInTheDocument();
-    expect(screen.getByText('Sources: 1')).toBeInTheDocument();
+    expect(screen.getByText('Sources')).toBeInTheDocument();
+    expect(screen.getByText('doc.pdf')).toBeInTheDocument();
   });
 
   it('should render error message when present', () => {
@@ -437,7 +444,7 @@ describe('MessageBubble Component', () => {
     // Assistant message should have bg-muted/30
     // These are applied via className, so we verify the component renders correctly
     expect(screen.getByText('User')).toBeInTheDocument();
-    expect(screen.getByText('Assistant')).toBeInTheDocument();
+    expect(screen.getAllByText('Assistant').length).toBeGreaterThan(0);
   });
 });
 
@@ -463,7 +470,7 @@ describe('ChatInput Component', () => {
     render(<ChatInput onSend={vi.fn()} onStop={vi.fn()} isStreaming={false} />);
 
     expect(screen.getByTestId('mock-textarea')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/Message\.\.\. \(Enter to send/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Message.*Enter to send/)).toBeInTheDocument();
   });
 
   it('should render send button when not streaming', () => {
@@ -666,8 +673,8 @@ describe('CanvasPanel Component', () => {
     );
 
     expect(screen.getByRole('combobox')).toBeInTheDocument();
-    expect(screen.getByText('doc1.pdf')).toBeInTheDocument();
-    expect(screen.getByText('doc2.pdf')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'doc1.pdf' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'doc2.pdf' })).toBeInTheDocument();
   });
 
   it('should show DocumentPreview when document tab is active', () => {
@@ -689,8 +696,8 @@ describe('CanvasPanel Component', () => {
       />
     );
 
-    expect(screen.getByTestId('mock-document-preview')).toBeInTheDocument();
     expect(screen.getByText('doc.pdf')).toBeInTheDocument();
+    expect(screen.getByText('content')).toBeInTheDocument();
   });
 
   it('should show CodeViewer when code tab is active', () => {
@@ -712,8 +719,8 @@ describe('CanvasPanel Component', () => {
       />
     );
 
-    expect(screen.getByTestId('mock-code-viewer')).toBeInTheDocument();
     expect(screen.getByText('code.py')).toBeInTheDocument();
+    expect(screen.getByText('print("hello")')).toBeInTheDocument();
   });
 
   it('should show no document message when no sources', () => {
@@ -782,7 +789,21 @@ describe('ChatPageRedesigned Component', () => {
     vi.clearAllMocks();
     mockUseChatStoreRedesign.mockReturnValue(mockCanvasState);
     mockUseVaultStore.mockReturnValue({ activeVaultId: 'vault-1' });
-    mockUseChatHistory.mockReturnValue({ refreshHistory: vi.fn() });
+    mockUseChatStore.mockReturnValue({
+      messages: [],
+      isStreaming: false,
+      newChat: vi.fn(),
+      input: '',
+      setInput: vi.fn(),
+      inputError: null,
+    });
+    mockUseChatHistory.mockReturnValue({
+      chatHistory: [],
+      isChatLoading: false,
+      chatHistoryError: null,
+      handleLoadChat: vi.fn(),
+      refreshHistory: vi.fn(),
+    });
   });
 
   afterEach(() => {
@@ -795,7 +816,7 @@ describe('ChatPageRedesigned Component', () => {
     render(<ChatPageRedesigned />);
 
     expect(screen.getByTestId('mock-scroll-area')).toBeInTheDocument();
-    expect(screen.getByText('Resize')).toBeInTheDocument();
+    expect(screen.getByText('Conversations')).toBeInTheDocument();
   });
 
   it('should pass canvas state to CanvasPanel', () => {
@@ -846,8 +867,8 @@ describe('MessageContent Component', () => {
   it('should render markdown content', () => {
     render(<MessageContent content="# Header\n\n**Bold text**" />);
 
-    // The markdown should be rendered
-    expect(document.body).toBeTruthy();
+    expect(screen.getByText(/Header/)).toBeInTheDocument();
+    expect(screen.getByText('Bold text')).toBeInTheDocument();
   });
 
   it('should render sources when provided', () => {
@@ -862,37 +883,33 @@ describe('MessageContent Component', () => {
 
     expect(screen.getByText('Sources')).toBeInTheDocument();
     expect(screen.getByText('doc.pdf')).toBeInTheDocument();
-    expect(screen.getByText('95% match')).toBeInTheDocument();
+    expect(screen.getByText('95%')).toBeInTheDocument();
   });
 
   it('should show streaming indicator when isStreaming is true', () => {
-    render(<MessageContent content="Answer" isStreaming={true} />);
+    const { container } = render(<MessageContent content="Answer" isStreaming={true} />);
 
-    expect(screen.getByTestId('mock-streaming')).toBeInTheDocument();
+    expect(container.querySelector('.animate-pulse')).toBeInTheDocument();
   });
 
-  it('should have copy button that appears on hover', () => {
-    render(<MessageContent content="Test content" />);
+  it('should render a code block copy button for fenced code', () => {
+    render(<MessageContent content={'```ts\nconst value = 1;\n```'} />);
 
-    // Copy button should exist but be hidden initially
-    const copyButton = screen.getByTestId('mock-copy').closest('button');
-    expect(copyButton).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /copy/i })).toBeInTheDocument();
   });
 
-  it('should copy content to clipboard when copy button is clicked', async () => {
-    const originalWriteText = navigator.clipboard.writeText;
-    navigator.clipboard.writeText = vi.fn();
+  it('should copy code block content to clipboard when copy button is clicked', async () => {
+    const writeTextMock = vi.mocked(navigator.clipboard.writeText);
+    writeTextMock.mockResolvedValue(undefined);
 
-    render(<MessageContent content="Test content to copy" />);
+    render(<MessageContent content={'```ts\nconst value = 1;\n```'} />);
 
-    const copyButton = screen.getByTestId('mock-copy').closest('button')!;
+    const copyButton = screen.getByRole('button', { name: /copy/i });
     await act(async () => {
       fireEvent.click(copyButton!);
     });
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Test content to copy');
-
-    navigator.clipboard.writeText = originalWriteText;
+    expect(writeTextMock).toHaveBeenCalledWith('const value = 1;');
   });
 });
 
@@ -932,8 +949,8 @@ describe('CodeViewer Component', () => {
   });
 
   it('should copy snippet to clipboard when copy button is clicked', async () => {
-    const originalWriteText = navigator.clipboard.writeText;
-    navigator.clipboard.writeText = vi.fn();
+    const writeTextMock = vi.mocked(navigator.clipboard.writeText);
+    writeTextMock.mockResolvedValue(undefined);
 
     render(<CodeViewer source={{ id: 's1', filename: 'test.py', snippet: 'print("hello")' }} />);
 
@@ -942,8 +959,6 @@ describe('CodeViewer Component', () => {
       fireEvent.click(copyButton!);
     });
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('print("hello")');
-
-    navigator.clipboard.writeText = originalWriteText;
+    expect(writeTextMock).toHaveBeenCalledWith('print("hello")');
   });
 });
