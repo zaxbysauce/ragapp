@@ -229,6 +229,7 @@ class VectorStore:
         vault_id: Optional[str] = None,
         query_text: str = "",
         hybrid: bool = True,
+        query_sparse: Optional[dict] = None,
     ) -> List[Dict[str, Any]]:
         """
         Search within a single chunk scale.
@@ -269,24 +270,34 @@ class VectorStore:
         dense_results = query.limit(fetch_k).to_list()
 
         # If hybrid disabled, return dense results only
-        if not hybrid or not query_text:
+        if not hybrid or (not query_text and not query_sparse):
             return dense_results
 
-        # Run FTS search with scale filter
-        try:
-            fts_query = self.table.search(query_text)
-            fts_filter_parts = [scale_filter]
-            if vault_id:
-                safe_vault_id = str(vault_id).replace("'", "\\'")
-                fts_filter_parts.append(f"vault_id = '{safe_vault_id}'")
-            if filter_expr:
-                fts_filter_parts.append(f"({filter_expr})")
-            fts_combined_filter = " AND ".join(f"({f})" for f in fts_filter_parts)
-            fts_query = fts_query.where(fts_combined_filter)
-            fts_results = fts_query.limit(fetch_k).to_list()
-        except Exception as e:
-            logger.warning(f"FTS search failed for scale {scale} (falling back to dense-only): {e}")
-            fts_results = []
+        # Use sparse retrieval when query_sparse provided, else BM25 FTS
+        if query_sparse:
+            fts_results = self._sparse_search(
+                query_sparse,
+                fetch_k,
+                vault_id=vault_id,
+                filter_expr=filter_expr,
+                scale=scale,
+            )
+        else:
+            # Run FTS search with scale filter
+            try:
+                fts_query = self.table.search(query_text)
+                fts_filter_parts = [scale_filter]
+                if vault_id:
+                    safe_vault_id = str(vault_id).replace("'", "\\'")
+                    fts_filter_parts.append(f"vault_id = '{safe_vault_id}'")
+                if filter_expr:
+                    fts_filter_parts.append(f"({filter_expr})")
+                fts_combined_filter = " AND ".join(f"({f})" for f in fts_filter_parts)
+                fts_query = fts_query.where(fts_combined_filter)
+                fts_results = fts_query.limit(fetch_k).to_list()
+            except Exception as e:
+                logger.warning(f"FTS search failed for scale {scale} (falling back to dense-only): {e}")
+                fts_results = []
 
         # RRF Fusion for this scale
         k_rrf = 60
@@ -312,6 +323,62 @@ class VectorStore:
             result_list.append(record)
         return result_list
 
+    def _sparse_search(
+        self,
+        query_sparse: dict,
+        limit: int,
+        vault_id: Optional[str] = None,
+        filter_expr: Optional[str] = None,
+        scale: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Compute dot-product similarity between query sparse vector and stored sparse embeddings.
+
+        Fetches candidates from LanceDB where sparse_embedding IS NOT NULL, computes
+        dot-product scores, and returns top results sorted by score descending.
+
+        Falls back to empty list on any error (e.g. missing sparse_embedding column).
+        """
+        try:
+            filter_parts = ["sparse_embedding IS NOT NULL"]
+            if vault_id is not None:
+                safe_vault_id = str(vault_id).replace("'", "\\'")
+                filter_parts.append(f"vault_id = '{safe_vault_id}'")
+            if scale is not None:
+                safe_scale = str(scale).replace("'", "\\'")
+                filter_parts.append(f"chunk_scale = '{safe_scale}'")
+            if filter_expr:
+                filter_parts.append(f"({filter_expr})")
+            combined_filter = " AND ".join(filter_parts)
+
+            max_candidates = settings.sparse_search_max_candidates
+            candidates = (
+                self.table.search()
+                .where(combined_filter)
+                .limit(max_candidates)
+                .to_list()
+            )
+
+            scored = []
+            for record in candidates:
+                sparse_str = record.get("sparse_embedding")
+                if not sparse_str:
+                    continue
+                try:
+                    doc_sparse = json.loads(sparse_str)
+                except (ValueError, TypeError):
+                    continue
+                score = sum(query_sparse.get(k, 0.0) * v for k, v in doc_sparse.items())
+                rec = dict(record)
+                rec["_sparse_score"] = score
+                scored.append(rec)
+
+            scored.sort(key=lambda r: r["_sparse_score"], reverse=True)
+            return scored[:limit]
+        except Exception as exc:
+            logger.warning("Sparse search failed (returning empty): %s", exc)
+            return []
+
     def search(
         self,
         embedding: List[float],
@@ -321,6 +388,7 @@ class VectorStore:
         query_text: str = "",
         hybrid: bool = True,
         hybrid_alpha: float = 0.5,
+        query_sparse: Optional[dict] = None,
     ) -> List[Dict[str, Any]]:
         """
         Search for similar chunks by embedding.
@@ -332,8 +400,10 @@ class VectorStore:
             vault_id: Optional vault ID to filter results. If provided, only returns
                       chunks from the specified vault.
             query_text: Raw query text for BM25 FTS search (used in hybrid search).
-            hybrid: If True, combine dense vector search with BM25 FTS using RRF.
+            hybrid: If True, combine dense vector search with BM25 FTS (or sparse) using RRF.
             hybrid_alpha: Weight for RRF fusion (not directly used in pure RRF).
+            query_sparse: Optional sparse query vector (dict of token_id→weight). When provided
+                and hybrid=True, replaces BM25 FTS with learned sparse dot-product retrieval.
 
         Returns:
             List of matching records with similarity scores. Each record includes:
@@ -408,6 +478,7 @@ class VectorStore:
                         vault_id=vault_id,
                         query_text=query_text,
                         hybrid=hybrid,
+                        query_sparse=query_sparse,
                     )
                     all_scale_results.extend(scale_results)
                 
@@ -461,24 +532,34 @@ class VectorStore:
         dense_results = query.limit(fetch_k).to_list()
         
         # If hybrid disabled, return dense results only
-        if not hybrid or not query_text:
+        if not hybrid or (not query_text and not query_sparse):
             return dense_results
-        
-        # If hybrid enabled, run FTS search
-        try:
-            fts_query = self.table.search(query_text)  # LanceDB FTS
-            if vault_id:
-                fts_query = fts_query.where(f"vault_id = '{vault_id}'")
-            if filter_expr:
-                # FTS doesn't support complex filter_expr, apply basic vault filter only
-                fts_query = fts_query.where(filter_expr)
-            fts_results = fts_query.limit(fetch_k).to_list()
-        except Exception as e:
-            logger.warning(f"FTS search failed (falling back to dense-only): {e}")
-            fts_results = []
+
+        # If hybrid enabled, use sparse retrieval when query_sparse is provided,
+        # otherwise fall back to BM25 FTS
+        if query_sparse:
+            sparse_results = self._sparse_search(
+                query_sparse,
+                fetch_k,
+                vault_id=vault_id,
+                filter_expr=filter_expr,
+            )
+            second_results = sparse_results
+        else:
+            try:
+                fts_query = self.table.search(query_text)  # LanceDB FTS
+                if vault_id:
+                    fts_query = fts_query.where(f"vault_id = '{vault_id}'")
+                if filter_expr:
+                    # FTS doesn't support complex filter_expr, apply basic vault filter only
+                    fts_query = fts_query.where(filter_expr)
+                second_results = fts_query.limit(fetch_k).to_list()
+            except Exception as e:
+                logger.warning(f"FTS search failed (falling back to dense-only): {e}")
+                second_results = []
 
         # RRF Fusion using shared utility
-        return rrf_fuse([dense_results, fts_results], k=60, limit=limit)
+        return rrf_fuse([dense_results, second_results], k=60, limit=limit)
     
     def delete_by_file(self, file_id: str) -> int:
         """

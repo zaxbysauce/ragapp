@@ -72,6 +72,7 @@ class FakeVectorStore:
         query_text: str = "",
         hybrid: bool = False,
         hybrid_alpha: float = 0.5,
+        query_sparse=None,
     ):
         return self._results[:limit]
 

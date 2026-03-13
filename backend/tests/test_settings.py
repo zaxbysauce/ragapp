@@ -93,12 +93,37 @@ setup_test_db()
 from app.main import app
 from app.config import settings
 
+SETTINGS_FIELDS_UNDER_TEST = (
+    "reranker_url",
+    "reranker_model",
+    "reranking_enabled",
+    "reranker_top_n",
+    "initial_retrieval_top_k",
+    "hybrid_search_enabled",
+    "hybrid_alpha",
+    "embedding_batch_size",
+    "query_transformation_enabled",
+    "retrieval_evaluation_enabled",
+    "context_distillation_enabled",
+    "context_distillation_dedup_threshold",
+    "context_distillation_synthesis_enabled",
+    "hyde_enabled",
+    "tri_vector_search_enabled",
+    "flag_embedding_url",
+    "sparse_search_max_candidates",
+    "retrieval_recency_weight",
+)
+
 
 class TestSettingsResponseFields(unittest.TestCase):
-    """Tests for SettingsResponse including reranking and hybrid search fields."""
+    """Tests for SettingsResponse including advanced retrieval fields."""
     
     def setUp(self):
         self.client = TestClient(app)
+        self._settings_snapshot = {
+            field: getattr(settings, field)
+            for field in SETTINGS_FIELDS_UNDER_TEST
+        }
         # Override get_db to use a pool that allows cross-thread usage
         from app.models.database import get_pool
         from app.api.deps import get_db
@@ -116,6 +141,8 @@ class TestSettingsResponseFields(unittest.TestCase):
         self._get_db = get_db
     
     def tearDown(self):
+        for field, value in self._settings_snapshot.items():
+            setattr(settings, field, value)
         # Restore get_db dependency
         app.dependency_overrides.pop(self._get_db, None)
     
@@ -181,12 +208,28 @@ class TestSettingsResponseFields(unittest.TestCase):
         self.assertIn("hybrid_search_enabled", data)
         self.assertIn("hybrid_alpha", data)
 
+        # Advanced retrieval feature fields
+        self.assertIn("query_transformation_enabled", data)
+        self.assertIn("retrieval_evaluation_enabled", data)
+        self.assertIn("context_distillation_enabled", data)
+        self.assertIn("context_distillation_dedup_threshold", data)
+        self.assertIn("context_distillation_synthesis_enabled", data)
+        self.assertIn("hyde_enabled", data)
+        self.assertIn("tri_vector_search_enabled", data)
+        self.assertIn("flag_embedding_url", data)
+        self.assertIn("sparse_search_max_candidates", data)
+        self.assertIn("retrieval_recency_weight", data)
+
 
 class TestSettingsUpdateValidation(unittest.TestCase):
     """Tests for SettingsUpdate validation of new fields."""
     
     def setUp(self):
         self.client = TestClient(app)
+        self._settings_snapshot = {
+            field: getattr(settings, field)
+            for field in SETTINGS_FIELDS_UNDER_TEST
+        }
         # Override get_db to use a pool that allows cross-thread usage
         from app.models.database import get_pool
         from app.api.deps import get_db
@@ -204,6 +247,8 @@ class TestSettingsUpdateValidation(unittest.TestCase):
         self._get_db = get_db
     
     def tearDown(self):
+        for field, value in self._settings_snapshot.items():
+            setattr(settings, field, value)
         # Restore get_db dependency
         app.dependency_overrides.pop(self._get_db, None)
     
@@ -351,12 +396,56 @@ class TestSettingsUpdateValidation(unittest.TestCase):
         self.assertEqual(data["hybrid_alpha"], 0.7)
         self.assertEqual(data["embedding_batch_size"], 512)
 
+    def test_post_settings_valid_advanced_retrieval_config(self):
+        """Test POST /api/settings with advanced retrieval feature fields."""
+        payload = {
+            "query_transformation_enabled": True,
+            "retrieval_evaluation_enabled": True,
+            "context_distillation_enabled": True,
+            "context_distillation_dedup_threshold": 0.88,
+            "context_distillation_synthesis_enabled": True,
+            "hyde_enabled": True,
+            "tri_vector_search_enabled": True,
+            "flag_embedding_url": "http://embedding-server:18080",
+            "sparse_search_max_candidates": 250,
+            "retrieval_recency_weight": 0.25,
+        }
+
+        response = self.client.post("/api/settings", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["query_transformation_enabled"])
+        self.assertTrue(data["retrieval_evaluation_enabled"])
+        self.assertTrue(data["context_distillation_enabled"])
+        self.assertEqual(data["context_distillation_dedup_threshold"], 0.88)
+        self.assertTrue(data["context_distillation_synthesis_enabled"])
+        self.assertTrue(data["hyde_enabled"])
+        self.assertTrue(data["tri_vector_search_enabled"])
+        self.assertEqual(data["flag_embedding_url"], "http://embedding-server:18080")
+        self.assertEqual(data["sparse_search_max_candidates"], 250)
+        self.assertEqual(data["retrieval_recency_weight"], 0.25)
+
+    def test_post_settings_invalid_retrieval_recency_weight(self):
+        """Test POST /api/settings rejects out-of-range retrieval_recency_weight."""
+        response = self.client.post("/api/settings", json={"retrieval_recency_weight": 1.5})
+        self.assertEqual(response.status_code, 422)
+
+    def test_post_settings_invalid_sparse_search_max_candidates(self):
+        """Test POST /api/settings rejects too-small sparse_search_max_candidates."""
+        response = self.client.post("/api/settings", json={"sparse_search_max_candidates": 5})
+        self.assertEqual(response.status_code, 422)
+
 
 class TestConnectionEndpoint(unittest.TestCase):
     """Tests for the /api/settings/connection endpoint."""
     
     def setUp(self):
         self.client = TestClient(app)
+        self._settings_snapshot = {
+            field: getattr(settings, field)
+            for field in SETTINGS_FIELDS_UNDER_TEST
+        }
         # Override get_db to use a pool that allows cross-thread usage
         from app.models.database import get_pool
         from app.api.deps import get_db
@@ -374,6 +463,8 @@ class TestConnectionEndpoint(unittest.TestCase):
         self._get_db = get_db
     
     def tearDown(self):
+        for field, value in self._settings_snapshot.items():
+            setattr(settings, field, value)
         # Restore get_db dependency
         app.dependency_overrides.pop(self._get_db, None)
     
@@ -482,6 +573,33 @@ class TestConnectionEndpoint(unittest.TestCase):
             self.assertIn("model", data["reranker"])
         finally:
             settings.reranker_url = original_reranker_url
+
+    @patch("app.api.routes.settings.httpx.AsyncClient")
+    def test_connection_endpoint_with_flag_embedding(self, mock_async_client):
+        """Test GET /api/settings/connection includes FlagEmbedding when enabled."""
+        mock_client_instance = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_client_instance.get = AsyncMock(return_value=mock_response)
+        mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client_instance)
+
+        original_tri_vector = settings.tri_vector_search_enabled
+        original_flag_url = settings.flag_embedding_url
+        settings.tri_vector_search_enabled = True
+        settings.flag_embedding_url = "http://embedding-server:18080"
+
+        try:
+            response = self.client.get("/api/settings/connection")
+
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertIn("flag_embedding", data)
+            self.assertEqual(data["flag_embedding"]["url"], "http://embedding-server:18080")
+            self.assertEqual(data["flag_embedding"]["status"], 200)
+            self.assertTrue(data["flag_embedding"]["ok"])
+        finally:
+            settings.tri_vector_search_enabled = original_tri_vector
+            settings.flag_embedding_url = original_flag_url
 
 
 if __name__ == "__main__":

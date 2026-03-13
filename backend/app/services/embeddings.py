@@ -381,6 +381,38 @@ class EmbeddingService:
             logger.error(f"Tri-vector embedding failed: {e}")
             raise EmbeddingError(f"Failed to generate tri-vector embeddings: {e}")
 
+    async def embed_query_sparse(self, text: str) -> dict:
+        """
+        Generate a sparse vector for a single query text using FlagEmbedding /embed endpoint.
+
+        Args:
+            text: Query text to embed.
+
+        Returns:
+            dict mapping token IDs (str) to float weights.
+
+        Raises:
+            EmbeddingError: If the server call fails or returns no sparse vector.
+        """
+        text_to_embed = (self.embedding_query_prefix + text) if self.embedding_query_prefix else text
+        try:
+            embed_url = urljoin(self.embeddings_url, "/embed")
+            response = await self._client.post(
+                embed_url,
+                json={"input": [text_to_embed]},
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            results = response.json()
+            sparse = results[0].get("sparse") if results else None
+            if not sparse:
+                raise EmbeddingError("FlagEmbedding /embed returned no sparse vector")
+            return sparse
+        except EmbeddingError:
+            raise
+        except Exception as e:
+            raise EmbeddingError(f"Failed to generate sparse query vector: {e}") from e
+
     async def _embed_batch_api(self, texts: List[str]) -> List[List[float]]:
         """
         Send a batch of texts to the embedding API in a single request.

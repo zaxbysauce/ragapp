@@ -112,6 +112,26 @@ class Settings(BaseSettings):
     flag_embedding_url: str = "http://embedding-server:18080"
     """URL of the FlagEmbedding server for BGE-M3 tri-vector embeddings."""
 
+    # ── Context distillation configuration ──────────────────────────────────────
+    context_distillation_enabled: bool = False
+    """Enable pre-generation context distillation (deduplication + optional LLM synthesis)."""
+    context_distillation_dedup_threshold: float = 0.92
+    """Cosine similarity threshold for sentence-level deduplication (0.0-1.0). Higher = stricter."""
+    context_distillation_synthesis_enabled: bool = False
+    """Enable LLM synthesis pass for NO_MATCH/AMBIGUOUS retrieval results."""
+
+    # ── HyDE (Hypothetical Document Embeddings) configuration ───────────────────
+    hyde_enabled: bool = False
+    """Enable HyDE: generate a hypothetical answer passage and embed it as additional query vector."""
+
+    # ── Sparse search configuration ──────────────────────────────────────────────
+    sparse_search_max_candidates: int = 1000
+    """Maximum candidate records to scan during learned sparse dot-product search."""
+
+    # ── Retrieval recency configuration ──────────────────────────────────────────
+    retrieval_recency_weight: float = 0.1
+    """Weight for recency score blending in RRF fusion (0.0 = disabled, 1.0 = fully recency-based)."""
+
     # Document processing configuration (legacy - DEPRECATED)
     chunk_size: int | None = None
     """[DEPRECATED] Token-based chunk size. Use chunk_size_chars instead."""
@@ -290,6 +310,33 @@ class Settings(BaseSettings):
         if self.embedding_batch_min_sub_size > self.embedding_batch_size:
             raise ValueError(
                 "embedding_batch_min_sub_size must be <= embedding_batch_size"
+            )
+        return self
+
+    @field_validator("context_distillation_dedup_threshold", mode="after")
+    @classmethod
+    def validate_dedup_threshold(cls, v: float) -> float:
+        """Validate context distillation dedup threshold is in range 0.0-1.0."""
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(
+                f"context_distillation_dedup_threshold must be between 0.0 and 1.0, got {v}"
+            )
+        return v
+
+    @field_validator("sparse_search_max_candidates", mode="after")
+    @classmethod
+    def validate_sparse_candidates(cls, v: int) -> int:
+        """Validate sparse_search_max_candidates is >= 10."""
+        if v < 10:
+            raise ValueError(f"sparse_search_max_candidates must be >= 10, got {v}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_hyde_requires_query_transformation(self) -> "Settings":
+        """Warn if HyDE is enabled without query transformation."""
+        if self.hyde_enabled and not self.query_transformation_enabled:
+            logger.warning(
+                "hyde_enabled=True has no effect when query_transformation_enabled=False"
             )
         return self
 
