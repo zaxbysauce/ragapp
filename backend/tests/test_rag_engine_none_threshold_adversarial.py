@@ -13,40 +13,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from test_optional_dependency_stubs import install_optional_dependency_stubs
 
-try:
-    import lancedb
-except ImportError:
-    import types
-    sys.modules["lancedb"] = types.ModuleType("lancedb")
-
-try:
-    import pyarrow
-except ImportError:
-    import types
-    sys.modules["pyarrow"] = types.ModuleType("pyarrow")
-
-try:
-    from unstructured.partition.auto import partition
-except ImportError:
-    import types
-    _unstructured = types.ModuleType("unstructured")
-    _unstructured.partition = types.ModuleType("unstructured.partition")
-    _unstructured.partition.auto = types.ModuleType("unstructured.partition.auto")
-    _unstructured.partition.auto.partition = lambda *args, **kwargs: []
-    _unstructured.chunking = types.ModuleType("unstructured.chunking")
-    _unstructured.chunking.title = types.ModuleType("unstructured.chunking.title")
-    _unstructured.chunking.title.chunk_by_title = lambda *args, **kwargs: []
-    _unstructured.documents = types.ModuleType("unstructured.documents")
-    _unstructured.documents.elements = types.ModuleType("unstructured.documents.elements")
-    _unstructured.documents.elements.Element = type("Element", (), {})
-    sys.modules["unstructured"] = _unstructured
-    sys.modules["unstructured.partition"] = _unstructured.partition
-    sys.modules["unstructured.partition.auto"] = _unstructured.partition.auto
-    sys.modules["unstructured.chunking"] = _unstructured.chunking
-    sys.modules["unstructured.chunking.title"] = _unstructured.chunking.title
-    sys.modules["unstructured.documents"] = _unstructured.documents
-    sys.modules["unstructured.documents.elements"] = _unstructured.documents.elements
+install_optional_dependency_stubs()
 
 from app.services.rag_engine import RAGEngine, RAGSource
 
