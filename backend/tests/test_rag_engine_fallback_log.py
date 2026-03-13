@@ -1,13 +1,16 @@
 """Tests for RAGEngine fallback warning log fix - handles None thresholds."""
 
-import pytest
 import logging
-from unittest.mock import MagicMock, patch, call
-from typing import List, Dict, Any
-
-# Import the module under test
+import os
 import sys
-sys.path.insert(0, 'C:/opencode/RAGAPPv2/backend')
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from test_optional_dependency_stubs import install_optional_dependency_stubs
+
+install_optional_dependency_stubs()
 
 from app.services.rag_engine import RAGEngine, RAGSource
 

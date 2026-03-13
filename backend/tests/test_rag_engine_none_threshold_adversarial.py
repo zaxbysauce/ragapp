@@ -9,9 +9,13 @@ import pytest
 import logging
 from unittest.mock import MagicMock, patch
 from io import StringIO
+import os
 import sys
 
-sys.path.insert(0, 'backend')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from test_optional_dependency_stubs import install_optional_dependency_stubs
+
+install_optional_dependency_stubs()
 
 from app.services.rag_engine import RAGEngine, RAGSource
 
