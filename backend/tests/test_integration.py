@@ -137,7 +137,9 @@ class FakeVectorStore:
         self.stored_chunks: List[Dict] = []
         self.deleted_file_ids: List[str] = []
     
-    def search(self, embedding: List[float], limit: int = 10, filter_expr=None, vault_id=None) -> List[Dict]:
+    def search(self, embedding: List[float], limit: int = 10, filter_expr=None, vault_id=None,
+               query_text: str = "", hybrid: bool = False, hybrid_alpha: float = 0.5,
+               query_sparse=None) -> List[Dict]:
         return self.search_results[:limit]
     
     def add_chunks(self, records: List[Dict]):

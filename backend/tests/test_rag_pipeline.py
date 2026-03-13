@@ -81,7 +81,8 @@ class FakeVectorStore:
         vault_id: Optional[str] = None,
         query_text: Optional[str] = None,
         hybrid: bool = False,
-        hybrid_alpha: float = 0.5
+        hybrid_alpha: float = 0.5,
+        query_sparse: Optional[dict] = None,
     ) -> List[Dict[str, Any]]:
         # Simulate hybrid search by returning combined results
         if hybrid and query_text:
