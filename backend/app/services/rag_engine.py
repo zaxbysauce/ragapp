@@ -157,7 +157,7 @@ class RAGEngine:
 
         # Generate sparse query vector for learned sparse retrieval (original query only)
         query_sparse: Optional[dict] = None
-        if settings.tri_vector_search_enabled and self.embedding_service.supports_tri_vector:
+        if settings.tri_vector_search_enabled and getattr(self.embedding_service, "supports_tri_vector", False):
             try:
                 query_sparse = await self.embedding_service.embed_query_sparse(user_input)
                 logger.debug("Sparse query vector: %d tokens", len(query_sparse))

@@ -175,6 +175,146 @@ export function RetrievalSettings({
           </div>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Advanced Retrieval Features</CardTitle>
+          <CardDescription>Configure query expansion, distillation, sparse retrieval, and recency bias</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {[
+            {
+              field: "query_transformation_enabled" as const,
+              label: "Enable Query Transformation",
+              help: "Generate broader step-back query variants before retrieval",
+            },
+            {
+              field: "retrieval_evaluation_enabled" as const,
+              label: "Enable Retrieval Evaluation",
+              help: "Classify retrieved context quality before prompt assembly",
+            },
+            {
+              field: "context_distillation_enabled" as const,
+              label: "Enable Context Distillation",
+              help: "Deduplicate overlapping retrieved sentences before generation",
+            },
+            {
+              field: "context_distillation_synthesis_enabled" as const,
+              label: "Enable Distillation Synthesis",
+              help: "Allow an LLM synthesis pass when retrieval quality is weak",
+            },
+            {
+              field: "hyde_enabled" as const,
+              label: "Enable HyDE",
+              help: "Generate a hypothetical answer passage as an extra query variant",
+            },
+            {
+              field: "tri_vector_search_enabled" as const,
+              label: "Enable Tri-Vector Sparse Retrieval",
+              help: "Use FlagEmbedding sparse vectors alongside dense retrieval",
+            },
+          ].map(({ field, label, help }) => (
+            <div key={field} className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id={field}
+                  checked={formData[field] || false}
+                  onChange={(e) => onChange(field, e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                <label htmlFor={field} className="text-sm font-medium">
+                  {label}
+                </label>
+              </div>
+              <p className="text-xs text-muted-foreground">{help}</p>
+            </div>
+          ))}
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">FlagEmbedding URL</label>
+            <Input
+              type="text"
+              value={formData.flag_embedding_url || ""}
+              onChange={(e) => onChange("flag_embedding_url", e.target.value)}
+              placeholder="http://embedding-server:18080"
+              className={errors.flag_embedding_url ? "border-destructive" : ""}
+            />
+            {errors.flag_embedding_url && (
+              <p className="text-xs text-destructive">{errors.flag_embedding_url}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Endpoint used for BGE-M3 sparse query generation when tri-vector search is enabled
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Context Distillation Threshold</label>
+            <Input
+              type="number"
+              min={0}
+              max={1}
+              step={0.01}
+              value={formData.context_distillation_dedup_threshold || 0.92}
+              onChange={(e) => onChange("context_distillation_dedup_threshold", e.target.value)}
+              className={errors.context_distillation_dedup_threshold ? "border-destructive" : ""}
+            />
+            {errors.context_distillation_dedup_threshold && (
+              <p className="text-xs text-destructive">{errors.context_distillation_dedup_threshold}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Sentence cosine-similarity threshold for deduplication (0-1)
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Sparse Search Max Candidates</label>
+            <Input
+              type="number"
+              min={10}
+              value={formData.sparse_search_max_candidates || 1000}
+              onChange={(e) => onChange("sparse_search_max_candidates", e.target.value)}
+              className={errors.sparse_search_max_candidates ? "border-destructive" : ""}
+            />
+            {errors.sparse_search_max_candidates && (
+              <p className="text-xs text-destructive">{errors.sparse_search_max_candidates}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Limit candidate rows scanned during sparse dot-product retrieval
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Retrieval Recency Weight</label>
+            <div className="flex items-center gap-4">
+              <Input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={formData.retrieval_recency_weight || 0.1}
+                onChange={(e) => onChange("retrieval_recency_weight", e.target.value)}
+                className={`w-24 ${errors.retrieval_recency_weight ? "border-destructive" : ""}`}
+              />
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={formData.retrieval_recency_weight || 0.1}
+                onChange={(e) => onChange("retrieval_recency_weight", e.target.value)}
+                className="flex-1"
+              />
+            </div>
+            {errors.retrieval_recency_weight && (
+              <p className="text-xs text-destructive">{errors.retrieval_recency_weight}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Blend normalized recency into fused ranking to favor newer material
+            </p>
+          </div>
+        </CardContent>
+      </Card>
     </>
   );
 }

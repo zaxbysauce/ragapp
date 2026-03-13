@@ -21,6 +21,16 @@ export interface SettingsFormData {
   reranker_top_n?: number;
   hybrid_search_enabled?: boolean;
   hybrid_alpha?: number;
+  query_transformation_enabled?: boolean;
+  retrieval_evaluation_enabled?: boolean;
+  context_distillation_enabled?: boolean;
+  context_distillation_dedup_threshold?: number;
+  context_distillation_synthesis_enabled?: boolean;
+  hyde_enabled?: boolean;
+  tri_vector_search_enabled?: boolean;
+  flag_embedding_url?: string;
+  sparse_search_max_candidates?: number;
+  retrieval_recency_weight?: number;
 }
 
 export interface SettingsErrors {
@@ -39,6 +49,10 @@ export interface SettingsErrors {
   initial_retrieval_top_k?: string;
   reranker_top_n?: string;
   hybrid_alpha?: string;
+  context_distillation_dedup_threshold?: string;
+  sparse_search_max_candidates?: string;
+  retrieval_recency_weight?: string;
+  flag_embedding_url?: string;
 }
 
 export interface SettingsState {
@@ -100,6 +114,16 @@ const defaultFormData: SettingsFormData = {
   reranker_top_n: 5,
   hybrid_search_enabled: false,
   hybrid_alpha: 0.5,
+  query_transformation_enabled: false,
+  retrieval_evaluation_enabled: false,
+  context_distillation_enabled: false,
+  context_distillation_dedup_threshold: 0.92,
+  context_distillation_synthesis_enabled: false,
+  hyde_enabled: false,
+  tri_vector_search_enabled: false,
+  flag_embedding_url: "http://embedding-server:18080",
+  sparse_search_max_candidates: 1000,
+  retrieval_recency_weight: 0.1,
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -173,6 +197,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         reranker_top_n: settings.reranker_top_n ?? 5,
         hybrid_search_enabled: settings.hybrid_search_enabled ?? false,
         hybrid_alpha: settings.hybrid_alpha ?? 0.5,
+        query_transformation_enabled: settings.query_transformation_enabled ?? false,
+        retrieval_evaluation_enabled: settings.retrieval_evaluation_enabled ?? false,
+        context_distillation_enabled: settings.context_distillation_enabled ?? false,
+        context_distillation_dedup_threshold: settings.context_distillation_dedup_threshold ?? 0.92,
+        context_distillation_synthesis_enabled: settings.context_distillation_synthesis_enabled ?? false,
+        hyde_enabled: settings.hyde_enabled ?? false,
+        tri_vector_search_enabled: settings.tri_vector_search_enabled ?? false,
+        flag_embedding_url: settings.flag_embedding_url ?? "http://embedding-server:18080",
+        sparse_search_max_candidates: settings.sparse_search_max_candidates ?? 1000,
+        retrieval_recency_weight: settings.retrieval_recency_weight ?? 0.1,
       },
       loading: false,
       error: null,
@@ -231,6 +265,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (formData.hybrid_alpha !== undefined && (formData.hybrid_alpha < 0 || formData.hybrid_alpha > 1)) {
       newErrors.hybrid_alpha = "Hybrid alpha must be between 0 and 1";
     }
+    if (
+      formData.context_distillation_dedup_threshold !== undefined &&
+      (formData.context_distillation_dedup_threshold < 0 || formData.context_distillation_dedup_threshold > 1)
+    ) {
+      newErrors.context_distillation_dedup_threshold = "Distillation threshold must be between 0 and 1";
+    }
+    if (
+      formData.sparse_search_max_candidates !== undefined &&
+      formData.sparse_search_max_candidates < 10
+    ) {
+      newErrors.sparse_search_max_candidates = "Sparse search candidates must be at least 10";
+    }
+    if (
+      formData.retrieval_recency_weight !== undefined &&
+      (formData.retrieval_recency_weight < 0 || formData.retrieval_recency_weight > 1)
+    ) {
+      newErrors.retrieval_recency_weight = "Recency weight must be between 0 and 1";
+    }
 
     set({ errors: newErrors });
     return Object.keys(newErrors).length === 0;
@@ -251,13 +303,23 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       formData.embedding_doc_prefix !== (settings.embedding_doc_prefix ?? "Passage: ") ||
       formData.embedding_query_prefix !== (settings.embedding_query_prefix ?? "Query: ") ||
       formData.embedding_batch_size !== (settings.embedding_batch_size ?? 512) ||
-       formData.reranking_enabled !== (settings.reranking_enabled ?? false) ||
-       formData.reranker_url !== (settings.reranker_url ?? "") ||
-       formData.reranker_model !== (settings.reranker_model ?? "") ||
-       formData.initial_retrieval_top_k !== (settings.initial_retrieval_top_k ?? 20) ||
-       formData.reranker_top_n !== (settings.reranker_top_n ?? 5) ||
-       formData.hybrid_search_enabled !== (settings.hybrid_search_enabled ?? false) ||
-      formData.hybrid_alpha !== (settings.hybrid_alpha ?? 0.5)
+      formData.reranking_enabled !== (settings.reranking_enabled ?? false) ||
+      formData.reranker_url !== (settings.reranker_url ?? "") ||
+      formData.reranker_model !== (settings.reranker_model ?? "") ||
+      formData.initial_retrieval_top_k !== (settings.initial_retrieval_top_k ?? 20) ||
+      formData.reranker_top_n !== (settings.reranker_top_n ?? 5) ||
+      formData.hybrid_search_enabled !== (settings.hybrid_search_enabled ?? false) ||
+      formData.hybrid_alpha !== (settings.hybrid_alpha ?? 0.5) ||
+      formData.query_transformation_enabled !== (settings.query_transformation_enabled ?? false) ||
+      formData.retrieval_evaluation_enabled !== (settings.retrieval_evaluation_enabled ?? false) ||
+      formData.context_distillation_enabled !== (settings.context_distillation_enabled ?? false) ||
+      formData.context_distillation_dedup_threshold !== (settings.context_distillation_dedup_threshold ?? 0.92) ||
+      formData.context_distillation_synthesis_enabled !== (settings.context_distillation_synthesis_enabled ?? false) ||
+      formData.hyde_enabled !== (settings.hyde_enabled ?? false) ||
+      formData.tri_vector_search_enabled !== (settings.tri_vector_search_enabled ?? false) ||
+      formData.flag_embedding_url !== (settings.flag_embedding_url ?? "http://embedding-server:18080") ||
+      formData.sparse_search_max_candidates !== (settings.sparse_search_max_candidates ?? 1000) ||
+      formData.retrieval_recency_weight !== (settings.retrieval_recency_weight ?? 0.1)
     );
   },
 
