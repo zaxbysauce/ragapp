@@ -584,6 +584,8 @@ class DocumentProcessor:
                         chunk_metadata['chunk_count'] = chunk.metadata.get('total_chunks', len(chunks))
                         # Ensure chunk_scale is included in metadata
                         chunk_metadata['chunk_scale'] = chunk_scale
+                        # Record ingestion timestamp for recency scoring
+                        chunk_metadata['processed_at'] = datetime.now(UTC).isoformat()
                         
                         record = {
                             "id": chunk_uid,
