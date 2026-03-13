@@ -85,6 +85,8 @@ export interface ConnectionCheck {
 export interface ConnectionTestResult {
   embeddings: ConnectionCheck;
   chat: ConnectionCheck;
+  reranker?: ConnectionCheck & { model?: string; status: number | string | null };
+  flag_embedding?: ConnectionCheck;
 }
 
 export interface SettingsResponse {
@@ -131,6 +133,16 @@ export interface SettingsResponse {
   reranker_top_n?: number;
   hybrid_search_enabled?: boolean;
   hybrid_alpha?: number;
+  query_transformation_enabled?: boolean;
+  retrieval_evaluation_enabled?: boolean;
+  context_distillation_enabled?: boolean;
+  context_distillation_dedup_threshold?: number;
+  context_distillation_synthesis_enabled?: boolean;
+  hyde_enabled?: boolean;
+  tri_vector_search_enabled?: boolean;
+  flag_embedding_url?: string;
+  sparse_search_max_candidates?: number;
+  retrieval_recency_weight?: number;
 
   // Limits
   max_file_size_mb: number;
@@ -160,6 +172,16 @@ export interface UpdateSettingsRequest {
   reranker_top_n?: number;
   hybrid_search_enabled?: boolean;
   hybrid_alpha?: number;
+  query_transformation_enabled?: boolean;
+  retrieval_evaluation_enabled?: boolean;
+  context_distillation_enabled?: boolean;
+  context_distillation_dedup_threshold?: number;
+  context_distillation_synthesis_enabled?: boolean;
+  hyde_enabled?: boolean;
+  tri_vector_search_enabled?: boolean;
+  flag_embedding_url?: string;
+  sparse_search_max_candidates?: number;
+  retrieval_recency_weight?: number;
 }
 
 export interface SearchMemoriesRequest {

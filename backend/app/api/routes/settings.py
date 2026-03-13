@@ -41,6 +41,18 @@ class SettingsUpdate(BaseModel):
     hybrid_search_enabled: Optional[bool] = None
     hybrid_alpha: Optional[float] = None
 
+    # Advanced retrieval feature config
+    query_transformation_enabled: Optional[bool] = None
+    retrieval_evaluation_enabled: Optional[bool] = None
+    context_distillation_enabled: Optional[bool] = None
+    context_distillation_dedup_threshold: Optional[float] = None
+    context_distillation_synthesis_enabled: Optional[bool] = None
+    hyde_enabled: Optional[bool] = None
+    tri_vector_search_enabled: Optional[bool] = None
+    flag_embedding_url: Optional[str] = None
+    sparse_search_max_candidates: Optional[int] = None
+    retrieval_recency_weight: Optional[float] = None
+
     # Feature flags (still supported)
     auto_scan_enabled: Optional[bool] = None
     auto_scan_interval_minutes: Optional[int] = None
@@ -152,6 +164,27 @@ class SettingsUpdate(BaseModel):
             raise ValueError("hybrid_alpha must be between 0 and 1")
         return v
 
+    @field_validator("context_distillation_dedup_threshold")
+    @classmethod
+    def validate_context_distillation_dedup_threshold(cls, v):
+        if v is not None and (v < 0 or v > 1):
+            raise ValueError("context_distillation_dedup_threshold must be between 0 and 1")
+        return v
+
+    @field_validator("retrieval_recency_weight")
+    @classmethod
+    def validate_retrieval_recency_weight(cls, v):
+        if v is not None and (v < 0 or v > 1):
+            raise ValueError("retrieval_recency_weight must be between 0 and 1")
+        return v
+
+    @field_validator("sparse_search_max_candidates")
+    @classmethod
+    def validate_sparse_search_max_candidates(cls, v):
+        if v is not None and v < 10:
+            raise ValueError("sparse_search_max_candidates must be at least 10")
+        return v
+
     @model_validator(mode="after")
     def validate_chunk_overlap_less_than_size(self):
         chunk_overlap = self.chunk_overlap
@@ -185,6 +218,16 @@ ALLOWED_FIELDS = [
     "initial_retrieval_top_k",
     "hybrid_search_enabled",
     "hybrid_alpha",
+    "query_transformation_enabled",
+    "retrieval_evaluation_enabled",
+    "context_distillation_enabled",
+    "context_distillation_dedup_threshold",
+    "context_distillation_synthesis_enabled",
+    "hyde_enabled",
+    "tri_vector_search_enabled",
+    "flag_embedding_url",
+    "sparse_search_max_candidates",
+    "retrieval_recency_weight",
 ]
 
 
@@ -254,6 +297,18 @@ class SettingsResponse(BaseModel):
     hybrid_search_enabled: bool = True
     hybrid_alpha: float = 0.5
 
+    # Advanced retrieval feature config
+    query_transformation_enabled: bool = False
+    retrieval_evaluation_enabled: bool = False
+    context_distillation_enabled: bool = False
+    context_distillation_dedup_threshold: float = 0.92
+    context_distillation_synthesis_enabled: bool = False
+    hyde_enabled: bool = False
+    tri_vector_search_enabled: bool = False
+    flag_embedding_url: str = ""
+    sparse_search_max_candidates: int = 1000
+    retrieval_recency_weight: float = 0.1
+
     # Limits (safe to expose)
     max_file_size_mb: int
     allowed_extensions: list[str]
@@ -313,6 +368,16 @@ def _apply_settings_update(update: SettingsUpdate) -> SettingsResponse:
         "initial_retrieval_top_k": settings.initial_retrieval_top_k,
         "hybrid_search_enabled": settings.hybrid_search_enabled,
         "hybrid_alpha": settings.hybrid_alpha,
+        "query_transformation_enabled": settings.query_transformation_enabled,
+        "retrieval_evaluation_enabled": settings.retrieval_evaluation_enabled,
+        "context_distillation_enabled": settings.context_distillation_enabled,
+        "context_distillation_dedup_threshold": settings.context_distillation_dedup_threshold,
+        "context_distillation_synthesis_enabled": settings.context_distillation_synthesis_enabled,
+        "hyde_enabled": settings.hyde_enabled,
+        "tri_vector_search_enabled": settings.tri_vector_search_enabled,
+        "flag_embedding_url": settings.flag_embedding_url,
+        "sparse_search_max_candidates": settings.sparse_search_max_candidates,
+        "retrieval_recency_weight": settings.retrieval_recency_weight,
     }
     return SettingsResponse.model_validate(settings_dict)
 
@@ -355,6 +420,16 @@ def get_settings():
         "initial_retrieval_top_k": settings.initial_retrieval_top_k,
         "hybrid_search_enabled": settings.hybrid_search_enabled,
         "hybrid_alpha": settings.hybrid_alpha,
+        "query_transformation_enabled": settings.query_transformation_enabled,
+        "retrieval_evaluation_enabled": settings.retrieval_evaluation_enabled,
+        "context_distillation_enabled": settings.context_distillation_enabled,
+        "context_distillation_dedup_threshold": settings.context_distillation_dedup_threshold,
+        "context_distillation_synthesis_enabled": settings.context_distillation_synthesis_enabled,
+        "hyde_enabled": settings.hyde_enabled,
+        "tri_vector_search_enabled": settings.tri_vector_search_enabled,
+        "flag_embedding_url": settings.flag_embedding_url,
+        "sparse_search_max_candidates": settings.sparse_search_max_candidates,
+        "retrieval_recency_weight": settings.retrieval_recency_weight,
     }
     return SettingsResponse.model_validate(settings_dict)
 
@@ -401,6 +476,8 @@ async def test_connection():
     }
     if settings.reranker_url:
         targets["reranker"] = settings.reranker_url
+    if settings.tri_vector_search_enabled and settings.flag_embedding_url:
+        targets["flag_embedding"] = settings.flag_embedding_url
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         results = {}
@@ -420,4 +497,3 @@ async def test_connection():
                 "model": settings.reranker_model,
             }
     return results
-

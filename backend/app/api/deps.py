@@ -63,9 +63,9 @@ def get_memory_store(request: Request) -> MemoryStore:
     return request.app.state.memory_store
 
 
-def get_reranking_service(request: Request):
-    """Return the RerankingService from app state."""
-    return request.app.state.reranking_service
+def get_reranking_service(request: Request) -> RerankingService | None:
+    """Return the RerankingService from app state when initialized."""
+    return getattr(request.app.state, "reranking_service", None)
 
 
 def get_rag_engine(

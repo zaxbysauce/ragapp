@@ -21,6 +21,22 @@ import type { SettingsFormData } from "@/stores/useSettingsStore";
 
 // Internal component that renders the settings form
 function SettingsPageContent() {
+  const numericFields = new Set<keyof SettingsFormData>([
+    "chunk_size_chars",
+    "chunk_overlap_chars",
+    "retrieval_top_k",
+    "auto_scan_interval_minutes",
+    "max_distance_threshold",
+    "retrieval_window",
+    "embedding_batch_size",
+    "initial_retrieval_top_k",
+    "reranker_top_n",
+    "hybrid_alpha",
+    "context_distillation_dedup_threshold",
+    "sparse_search_max_candidates",
+    "retrieval_recency_weight",
+  ]);
+
   const {
     settings,
     formData,
@@ -81,13 +97,14 @@ function SettingsPageContent() {
   const handleInputChange = (field: keyof SettingsFormData, value: string | boolean) => {
     if (typeof value === "boolean") {
       updateFormField(field, value);
-    } else if (typeof value === "string" && value === "") {
-      // Handle empty string for optional text fields
-      updateFormField(field as any, value);
+    } else if (!numericFields.has(field)) {
+      updateFormField(field, value as SettingsFormData[typeof field]);
+    } else if (value === "") {
+      updateFormField(field, value as SettingsFormData[typeof field]);
     } else {
       const numValue = parseFloat(value);
       if (!isNaN(numValue)) {
-        updateFormField(field, numValue);
+        updateFormField(field, numValue as SettingsFormData[typeof field]);
       }
     }
   };
@@ -121,6 +138,16 @@ function SettingsPageContent() {
         reranker_top_n: formData.reranker_top_n,
         hybrid_search_enabled: formData.hybrid_search_enabled,
         hybrid_alpha: formData.hybrid_alpha,
+        query_transformation_enabled: formData.query_transformation_enabled,
+        retrieval_evaluation_enabled: formData.retrieval_evaluation_enabled,
+        context_distillation_enabled: formData.context_distillation_enabled,
+        context_distillation_dedup_threshold: formData.context_distillation_dedup_threshold,
+        context_distillation_synthesis_enabled: formData.context_distillation_synthesis_enabled,
+        hyde_enabled: formData.hyde_enabled,
+        tri_vector_search_enabled: formData.tri_vector_search_enabled,
+        flag_embedding_url: formData.flag_embedding_url,
+        sparse_search_max_candidates: formData.sparse_search_max_candidates,
+        retrieval_recency_weight: formData.retrieval_recency_weight,
       });
       setSettings(updated);
       toast.success("Settings saved successfully");
