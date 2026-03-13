@@ -21,9 +21,12 @@ export function CodeViewer({ source }: CodeViewerProps) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const language = source.filename?.includes(".")
-    ? source.filename.split(".").pop() || "text"
-    : "text";
+  const filename = source.filename ?? "";
+  const lastDotIndex = filename.lastIndexOf(".");
+  const language =
+    lastDotIndex > 0 && lastDotIndex < filename.length - 1
+      ? filename.slice(lastDotIndex + 1)
+      : "text";
 
   return (
     <div className="h-full flex flex-col">
