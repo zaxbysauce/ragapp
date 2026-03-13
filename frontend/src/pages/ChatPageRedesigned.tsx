@@ -1,17 +1,18 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ChatMessages } from "@/components/chat/ChatMessages";
 import { CanvasPanel } from "@/components/canvas/CanvasPanel";
+import { ConversationSidebar } from "@/components/chat/ConversationSidebar";
 import { useChatStoreRedesign } from "@/stores/useChatStoreRedesign";
 import { useChatHistory } from "@/hooks/useChatHistory";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { useKeyboardShortcuts } from "@/components/shared/KeyboardShortcuts";
 import { KeyboardShortcutsDialog } from "@/components/shared/KeyboardShortcuts";
-import { cn } from "@/lib/utils";
 
 export default function ChatPageRedesigned() {
   const { canvas, setCanvasView, toggleCanvasCollapse, setCanvasWidth } = useChatStoreRedesign();
   const { activeVaultId } = useVaultStore();
   const { refreshHistory } = useChatHistory(activeVaultId);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // Keyboard shortcuts
   const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcuts();
@@ -22,21 +23,24 @@ export default function ChatPageRedesigned() {
   }, [refreshHistory]);
 
   return (
-    <div className="flex h-screen w-full">
-      {/* Main Chat Area */}
-      <div
-        className={cn(
-          "flex-1 transition-all duration-300",
-          !canvas.isCollapsed && "max-w-[calc(100%-300px)]"
-        )}
-      >
+    <div className="flex h-screen w-full overflow-hidden">
+      {/* Left: Conversation History Sidebar */}
+      <ConversationSidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
+
+      {/* Center: Main Chat Area */}
+      <div className="flex-1 min-w-0">
         <ChatMessages
           toggleCanvasCollapse={toggleCanvasCollapse}
           canvasCollapsed={canvas.isCollapsed}
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen((v) => !v)}
         />
       </div>
 
-      {/* Resizable Canvas */}
+      {/* Right: Resizable Canvas */}
       <CanvasPanel
         canvas={canvas}
         onToggleCollapse={toggleCanvasCollapse}

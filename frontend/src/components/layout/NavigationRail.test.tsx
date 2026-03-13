@@ -20,7 +20,7 @@ Object.defineProperty(window, "location", {
 
 describe("NavigationRail", () => {
   describe("Navigation Items", () => {
-    it("renders all navigation items including chatNew", () => {
+    it("renders all navigation items including Modern Chat", () => {
       render(
         <NavigationRail
           activeItem="chat"
@@ -31,14 +31,14 @@ describe("NavigationRail", () => {
 
       // Check for all expected nav items
       expect(screen.getByLabelText("Chat")).toBeInTheDocument();
-      expect(screen.getByLabelText("Chat (New)")).toBeInTheDocument();
+      expect(screen.getByLabelText("Modern Chat")).toBeInTheDocument();
       expect(screen.getByLabelText("Documents")).toBeInTheDocument();
       expect(screen.getByLabelText("Memory")).toBeInTheDocument();
       expect(screen.getByLabelText("Vaults")).toBeInTheDocument();
       expect(screen.getByLabelText("Settings")).toBeInTheDocument();
     });
 
-    it("renders chatNew with NEW badge", () => {
+    it("renders Modern Chat without the legacy NEW badge", () => {
       render(
         <NavigationRail
           activeItem="chat"
@@ -47,13 +47,10 @@ describe("NavigationRail", () => {
         />
       );
 
-      // Check for NEW badge on chatNew item
-      const newBadge = screen.getByText("NEW");
-      expect(newBadge).toBeInTheDocument();
-      expect(newBadge).toHaveClass("bg-gradient-to-r", "from-purple-500", "to-pink-500");
+      expect(screen.queryByText("NEW")).not.toBeInTheDocument();
     });
 
-    it("renders chatNew with gradient styling", () => {
+    it("renders Modern Chat with gradient styling", () => {
       render(
         <NavigationRail
           activeItem="chat"
@@ -62,12 +59,12 @@ describe("NavigationRail", () => {
         />
       );
 
-      const chatNewButton = screen.getByLabelText("Chat (New)");
+      const chatNewButton = screen.getByLabelText("Modern Chat");
       expect(chatNewButton).toHaveClass("bg-gradient-to-br", "from-purple-500/10", "to-pink-500/10");
       expect(chatNewButton).toHaveClass("border", "border-purple-500/30");
     });
 
-    it("renders chatNew icon with gradient background", () => {
+    it("renders Modern Chat icon with gradient background", () => {
       render(
         <NavigationRail
           activeItem="chat"
@@ -76,12 +73,12 @@ describe("NavigationRail", () => {
         />
       );
 
-      const chatNewIconContainer = screen.getByLabelText("Chat (New)").querySelector("div");
+      const chatNewIconContainer = screen.getByLabelText("Modern Chat").querySelector("div");
       expect(chatNewIconContainer).toHaveClass("bg-gradient-to-br", "from-purple-500", "to-pink-500");
       expect(chatNewIconContainer).toHaveClass("text-white");
     });
 
-    it("renders chatNew label with gradient text", () => {
+    it("renders Modern Chat label with gradient text", () => {
       render(
         <NavigationRail
           activeItem="chat"
@@ -91,28 +88,15 @@ describe("NavigationRail", () => {
       );
 
       // Get the visible label by querying the button and filtering out sr-only
-      const chatNewButton = screen.getByLabelText("Chat (New)");
+      const chatNewButton = screen.getByLabelText("Modern Chat");
       const allLabels = chatNewButton.querySelectorAll("span");
       // The visible label is the one without sr-only class
       const visibleLabels = Array.from(allLabels).filter((span) => !span.classList.contains("sr-only"));
-      const chatNewLabel = visibleLabels.find((span) => span.textContent === "Chat (New)");
+      const chatNewLabel = visibleLabels.find((span) => span.textContent === "Modern Chat");
       
       expect(chatNewLabel).toBeInTheDocument();
       expect(chatNewLabel).toHaveClass("bg-gradient-to-r", "from-purple-500", "to-pink-500");
       expect(chatNewLabel).toHaveClass("bg-clip-text", "text-transparent");
-    });
-
-    it("chatNew icon has pulse animation", () => {
-      render(
-        <NavigationRail
-          activeItem="chat"
-          onItemSelect={vi.fn()}
-          healthStatus={mockHealthStatus}
-        />
-      );
-
-      const chatNewIcon = screen.getByLabelText("Chat (New)").querySelector("svg");
-      expect(chatNewIcon).toHaveClass("animate-pulse");
     });
   });
 
@@ -140,7 +124,7 @@ describe("NavigationRail", () => {
       );
 
       // chatNew should NOT have the right-side active indicator
-      const chatNewButton = screen.getByLabelText("Chat (New)");
+      const chatNewButton = screen.getByLabelText("Modern Chat");
       const activeIndicator = chatNewButton.querySelector("span.w-1.h-4");
       expect(activeIndicator).not.toBeInTheDocument();
     });
@@ -164,7 +148,7 @@ describe("NavigationRail", () => {
       expect(handleSelect).toHaveBeenCalledWith("documents");
     });
 
-    it("navigates to /chat/redesign for chatNew item", () => {
+    it("navigates to /chat/redesign for Modern Chat", () => {
       render(
         <NavigationRail
           activeItem="chat"
@@ -173,7 +157,7 @@ describe("NavigationRail", () => {
         />
       );
 
-      const chatNewButton = screen.getByLabelText("Chat (New)");
+      const chatNewButton = screen.getByLabelText("Modern Chat");
       fireEvent.click(chatNewButton);
 
       expect(window.location.href).toBe("/chat/redesign");

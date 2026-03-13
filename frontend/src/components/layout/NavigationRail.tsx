@@ -7,7 +7,7 @@ export type { NavItemId, NavigationProps };
 
 const navItems: NavItem[] = [
   { id: "chat", label: "Chat", icon: MessageSquare },
-  { id: "chatNew", label: "Chat (New)", icon: Sparkles },
+  { id: "chatNew", label: "Modern Chat", icon: Sparkles },
   { id: "documents", label: "Documents", icon: FileText },
   { id: "memory", label: "Memory", icon: Brain },
   { id: "vaults", label: "Vaults", icon: Database },
@@ -74,19 +74,14 @@ export function NavigationRail({ activeItem, onItemSelect, healthStatus }: Navig
                   isNewChat && "bg-gradient-to-br from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/25"
                 )}
               >
-                <Icon className={cn("w-5 h-5", isNewChat && "animate-pulse")} />
+                <Icon className="w-5 h-5" />
 
                 {/* Active Indicator */}
                 {isActive && !isNewChat && (
                   <span className="absolute -right-1 top-1/2 -translate-y-1/2 w-1 h-4 bg-primary rounded-full" />
                 )}
 
-                {/* New Badge */}
-                {isNewChat && (
-                  <span className="absolute -top-1 -right-1 px-1.5 py-0.5 text-[8px] font-bold bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-full shadow-md">
-                    NEW
-                  </span>
-                )}
+
               </div>
 
               {/* Label */}
