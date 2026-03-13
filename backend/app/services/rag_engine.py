@@ -360,9 +360,10 @@ class RAGEngine:
             max_dist = max(distances)
             mean_dist = sum(distances) / len(distances)
             
+            threshold_str = f"{self.max_distance_threshold:.3f}" if self.max_distance_threshold is not None else "None"
             logger.info(
-                "Vector search: initial=%d, filtered=%d, min=%.3f, max=%.3f, mean=%.3f, threshold=%.3f",
-                initial_count, filtered_count, min_dist, max_dist, mean_dist, self.max_distance_threshold
+                "Vector search: initial=%d, filtered=%d, min=%.3f, max=%.3f, mean=%.3f, threshold=%s",
+                initial_count, filtered_count, min_dist, max_dist, mean_dist, threshold_str
             )
         
         # Apply window expansion if enabled
@@ -582,8 +583,11 @@ class RAGEngine:
 
     def _build_system_prompt(self) -> str:
         return (
-            "You are KnowledgeVault, a highly accurate assistant that references sources when "
-            "answering questions. Cite the relevant documents or memories by name."
+            "You are KnowledgeVault, a highly accurate assistant. "
+            "Answer questions using ONLY the context documents provided. "
+            "If the context does not contain sufficient information to answer, "
+            "say so clearly — do not guess or use outside knowledge. "
+            "When you cite sources, reference them by name using [Source: <name>]."
         )
 
     def _build_messages(
@@ -601,7 +605,7 @@ class RAGEngine:
             {"role": "system", "content": self._build_system_prompt()},
         ]
         for entry in chat_history:
-            messages.append(entry)
+            messages.append({"role": entry["role"], "content": entry["content"]})
 
         context = "\n\n".join(filter(None, context_sections))
         
@@ -621,7 +625,11 @@ class RAGEngine:
         if context:
             user_content_parts.append(f"Context:\n{context}")
         else:
-            user_content_parts.append("No relevant documents found for this query.")
+            user_content_parts.append(
+                "No relevant context documents were found for this query. "
+                "Please let the user know you cannot find relevant information "
+                "in the knowledge base and avoid speculating."
+            )
         user_content = "\n\n".join(user_content_parts) + "\n\n"
 
         memory_text = "\n".join(memory_context)
@@ -634,7 +642,7 @@ class RAGEngine:
 
     def _format_chunk(self, chunk: RAGSource) -> str:
         source_title = chunk.metadata.get("source_file") or chunk.metadata.get("section_title") or "document"
-        return f"Source {source_title} (score: {chunk.score:.2f}):\n{chunk.text}"
+        return f"Source {source_title}:\n{chunk.text}"
 
     def _source_metadata(self, chunk: RAGSource) -> Dict[str, Any]:
         filename = (

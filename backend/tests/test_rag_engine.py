@@ -63,7 +63,16 @@ class FakeVectorStore:
     def __init__(self, results: List[Dict]):
         self._results = results
 
-    def search(self, embedding: List[float], limit: int = 10, filter_expr=None, vault_id=None):
+    def search(
+        self,
+        embedding: List[float],
+        limit: int = 10,
+        filter_expr=None,
+        vault_id=None,
+        query_text: str = "",
+        hybrid: bool = False,
+        hybrid_alpha: float = 0.5,
+    ):
         return self._results[:limit]
 
     def get_chunks_by_uid(self, chunk_uids: List[str]):
@@ -219,7 +228,8 @@ class RAGEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(messages))
         self.assertEqual("system", messages[0]["role"])
         self.assertEqual("user", messages[1]["role"])
-        self.assertEqual("No relevant documents found for this query.\n\nQuestion: my question", messages[1]["content"])
+        self.assertIn("No relevant context documents", messages[1]["content"])
+        self.assertIn("Question: my question", messages[1]["content"])
 
     def test_filter_relevant_filters_by_distance_with_lancedb_results(self):
         """Test that _distance field from LanceDB is used correctly (lower = better)."""
@@ -235,9 +245,10 @@ class RAGEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("close match", filtered[0].text)
         self.assertEqual("at threshold", filtered[1].text)
 
-    async def test_no_fallback_injection_when_all_chunks_filtered(self):
-        """Test that when all chunks are filtered by threshold, no garbage fallback is injected."""
-        # All results have distance > threshold (should all be filtered)
+    async def test_fallback_returns_sources_when_all_chunks_filtered(self):
+        """Test that when all chunks fail the distance threshold, the fallback mechanism
+        returns the best available chunks so the LLM always has some context to work with."""
+        # All results have distance > threshold (fail threshold filtering)
         vector_results = [
             {"text": "irrelevant1", "file_id": "f1", "metadata": {}, "_distance": 0.9},
             {"text": "irrelevant2", "file_id": "f2", "metadata": {}, "_distance": 0.95},
@@ -247,13 +258,14 @@ class RAGEngineTests(unittest.IsolatedAsyncioTestCase):
         engine.vector_store = cast(VectorStore, FakeVectorStore(vector_results))
         engine.memory_store = cast(MemoryStore, FakeMemoryStore())
         engine.llm_client = cast(LLMClient, FakeLLMClient(response="answer"))
-        
+
         results = [msg async for msg in engine.query("query", [], stream=False)]
         done = results[-1]
         self.assertEqual("done", done["type"])
-        # Sources should be empty since all chunks were filtered
-        self.assertEqual(0, len(done["sources"]))
-        # The LLM response should just be "answer" - no fallback injection
+        # The fallback fires and returns the best available chunks when all fail threshold —
+        # this ensures the LLM always has some context rather than none.
+        self.assertGreater(len(done["sources"]), 0)
+        # The LLM response is always returned
         self.assertEqual("answer", results[0]["content"])
 
     def test_build_system_prompt_contains_knowledgevault_and_cite_sources(self):

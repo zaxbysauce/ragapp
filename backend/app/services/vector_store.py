@@ -14,8 +14,6 @@ from app.utils.fusion import rrf_fuse
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-
 
 class VectorStoreError(Exception):
     """Custom exception for vector store errors."""

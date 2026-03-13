@@ -725,5 +725,162 @@ class TestRAGEnginePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(fallback_messages), 0)
 
 
+class TestFormatChunkWithoutScore(unittest.TestCase):
+    """Verify _format_chunk no longer exposes the raw distance as 'score'."""
+
+    def _make_engine(self):
+        return RAGEngine(
+            embedding_service=FakeEmbeddingService(),
+            vector_store=FakeVectorStore(),
+            memory_store=FakeMemoryStore(),
+            llm_client=FakeLLMClient(),
+        )
+
+    def test_format_chunk_does_not_include_score_label(self):
+        """Cosine distance should not appear as a score label in the formatted chunk."""
+        from app.services.rag_engine import RAGSource
+        engine = self._make_engine()
+        chunk = RAGSource(text="some text", file_id="f1", score=0.05, metadata={"source_file": "guide.pdf"})
+        formatted = engine._format_chunk(chunk)
+        self.assertNotIn("score:", formatted.lower())
+        self.assertNotIn("0.05", formatted)
+
+    def test_format_chunk_includes_source_name_and_text(self):
+        """Source name and text must still be present after removing score."""
+        from app.services.rag_engine import RAGSource
+        engine = self._make_engine()
+        chunk = RAGSource(text="body text here", file_id="f1", score=0.1, metadata={"source_file": "manual.pdf"})
+        formatted = engine._format_chunk(chunk)
+        self.assertIn("manual.pdf", formatted)
+        self.assertIn("body text here", formatted)
+
+
+class TestBuildMessagesHistorySanitization(unittest.TestCase):
+    """Verify _build_messages strips extra fields from chat history entries."""
+
+    def _make_engine(self):
+        return RAGEngine(
+            embedding_service=FakeEmbeddingService(),
+            vector_store=FakeVectorStore(),
+            memory_store=FakeMemoryStore(),
+            llm_client=FakeLLMClient(),
+        )
+
+    def test_history_extra_fields_are_stripped(self):
+        """Extra fields like 'sources', 'metadata', 'created_at' must be removed."""
+        engine = self._make_engine()
+        history = [
+            {"role": "user", "content": "hello", "sources": [{"id": 1}], "created_at": "2024-01-01"},
+            {"role": "assistant", "content": "hi there", "metadata": {"key": "val"}},
+        ]
+        messages = engine._build_messages("follow-up", history, [], [])
+        # messages[0] is system, messages[1] and [2] are history, messages[3] is the user question
+        history_msgs = messages[1:3]
+        for msg in history_msgs:
+            self.assertEqual(set(msg.keys()), {"role", "content"})
+
+    def test_clean_history_passes_through(self):
+        """History entries with only role+content should pass through unchanged."""
+        engine = self._make_engine()
+        history = [
+            {"role": "user", "content": "what is Python?"},
+            {"role": "assistant", "content": "Python is a programming language."},
+        ]
+        messages = engine._build_messages("tell me more", history, [], [])
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertEqual(messages[1]["content"], "what is Python?")
+        self.assertEqual(messages[2]["role"], "assistant")
+        self.assertEqual(messages[2]["content"], "Python is a programming language.")
+
+    def test_empty_history_gives_two_messages(self):
+        """Empty history should produce only system + user messages."""
+        engine = self._make_engine()
+        messages = engine._build_messages("a question", [], [], [])
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[1]["role"], "user")
+
+
+class TestNoneThresholdInfoLog(unittest.TestCase):
+    """Verify that _filter_relevant does not crash when max_distance_threshold is None."""
+
+    def test_filter_relevant_with_none_threshold_does_not_raise(self):
+        """Setting max_distance_threshold=None must not cause TypeError in the info log."""
+        engine = RAGEngine(
+            embedding_service=FakeEmbeddingService(),
+            vector_store=FakeVectorStore(),
+            memory_store=FakeMemoryStore(),
+            llm_client=FakeLLMClient(),
+        )
+        engine.max_distance_threshold = None
+        engine.retrieval_window = 0  # Disable window expansion for simplicity
+        results = [
+            {"text": "chunk a", "file_id": "f1", "metadata": {}, "_distance": 0.3},
+            {"text": "chunk b", "file_id": "f2", "metadata": {}, "_distance": 0.7},
+        ]
+        # Should complete without raising TypeError
+        filtered = engine._filter_relevant(results)
+        self.assertIsInstance(filtered, list)
+
+
+class TestExpandedSystemPrompt(unittest.TestCase):
+    """Verify the system prompt provides strong guidance for RAG-grounded answers."""
+
+    def setUp(self):
+        self.engine = RAGEngine(
+            embedding_service=FakeEmbeddingService(),
+            vector_store=FakeVectorStore(),
+            memory_store=FakeMemoryStore(),
+            llm_client=FakeLLMClient(),
+        )
+        self.prompt = self.engine._build_system_prompt()
+
+    def test_system_prompt_uses_only_context_instruction(self):
+        """Prompt must instruct the LLM to answer ONLY from provided context."""
+        self.assertIn("only", self.prompt.lower())
+
+    def test_system_prompt_guides_insufficient_context(self):
+        """Prompt must tell the LLM to acknowledge when context is insufficient."""
+        lower = self.prompt.lower()
+        self.assertTrue(
+            "do not guess" in lower or "say so" in lower or "cannot" in lower,
+            "Prompt should instruct LLM to acknowledge insufficient context"
+        )
+
+    def test_system_prompt_specifies_citation_format(self):
+        """Prompt must define the citation format [Source: <name>]."""
+        self.assertIn("[Source:", self.prompt)
+
+
+class TestImprovedNoContextMessage(unittest.TestCase):
+    """Verify the no-context user message guides the LLM appropriately."""
+
+    def _make_engine(self):
+        return RAGEngine(
+            embedding_service=FakeEmbeddingService(),
+            vector_store=FakeVectorStore(),
+            memory_store=FakeMemoryStore(),
+            llm_client=FakeLLMClient(),
+        )
+
+    def test_no_context_message_guides_llm(self):
+        """No-context message should acknowledge lack of relevant info in the knowledge base."""
+        engine = self._make_engine()
+        messages = engine._build_messages("some question", [], [], [])
+        user_content = messages[1]["content"]
+        lower = user_content.lower()
+        self.assertTrue(
+            "knowledge base" in lower or "cannot find" in lower or "not found" in lower,
+            "No-context message should reference the knowledge base or inability to find info"
+        )
+
+    def test_old_no_context_string_not_present(self):
+        """The old vague message string should be replaced."""
+        engine = self._make_engine()
+        messages = engine._build_messages("some question", [], [], [])
+        user_content = messages[1]["content"]
+        self.assertNotIn("No relevant documents found for this query.", user_content)
+
+
 if __name__ == "__main__":
     unittest.main()
