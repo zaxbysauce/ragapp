@@ -3,8 +3,10 @@
 import asyncio
 import json
 import logging
+import sqlite3
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional
+from datetime import datetime
+from typing import Any, AsyncIterator, Dict, List, Optional, TYPE_CHECKING
 
 from app.config import settings
 from app.services.embeddings import EmbeddingService, EmbeddingError
@@ -14,6 +16,9 @@ from app.services.vector_store import VectorStore
 from app.services.query_transformer import QueryTransformer
 from app.services.retrieval_evaluator import RetrievalEvaluator
 from app.utils.fusion import rrf_fuse
+
+if TYPE_CHECKING:
+    from app.services.context_distiller import ContextDistiller
 
 
 logger = logging.getLogger(__name__)
@@ -94,6 +99,9 @@ class RAGEngine:
         # Retrieval evaluator instance (lazy-loaded)
         self._retrieval_evaluator: Optional[RetrievalEvaluator] = None
 
+        # Context distiller instance (lazy-loaded)
+        self._context_distiller: Optional["ContextDistiller"] = None
+
     async def query(
         self,
         user_input: str,
@@ -147,6 +155,16 @@ class RAGEngine:
                 return
             raise RAGEngineError(error_msg)
 
+        # Generate sparse query vector for learned sparse retrieval (original query only)
+        query_sparse: Optional[dict] = None
+        if settings.tri_vector_search_enabled and self.embedding_service.supports_tri_vector:
+            try:
+                query_sparse = await self.embedding_service.embed_query_sparse(user_input)
+                logger.debug("Sparse query vector: %d tokens", len(query_sparse))
+            except EmbeddingError as e:
+                logger.warning("Sparse query vector generation failed, falling back to BM25: %s", e)
+                query_sparse = None
+
         fallback_reason: Optional[str] = None
         vector_results: List[Dict[str, Any]]
         relevance_hint: Optional[str] = None
@@ -159,6 +177,9 @@ class RAGEngine:
             getattr(self.vector_store, 'is_connected', lambda: 'unknown')()
         )
         
+        # Initialize eval_result here so it's always defined regardless of maintenance mode
+        eval_result = "CONFIDENT"
+
         if self.maintenance_mode:
             fallback_reason = "RAG index is under maintenance"
             vector_results = []
@@ -171,20 +192,50 @@ class RAGEngine:
                 # Search with all query embeddings and fuse results
                 all_results: List[List[Dict[str, Any]]] = []
                 for embedding in query_embeddings:
+                    is_original = embedding is query_embeddings[0]
                     results = await asyncio.to_thread(
                         self.vector_store.search,
                         embedding,
                         int(top_k_value),
                         vault_id=str(vault_id) if vault_id is not None else None,
-                        query_text=user_input if embedding is query_embeddings[0] else "",
-                        hybrid=self.hybrid_search_enabled and embedding is query_embeddings[0],
+                        query_text=user_input if is_original else "",
+                        hybrid=self.hybrid_search_enabled and is_original,
                         hybrid_alpha=self.hybrid_alpha,
+                        query_sparse=query_sparse if is_original else None,
                     )
                     all_results.append(results)
 
-                # Fuse results from all query variants using RRF
+                # Compute recency scores for tiebreaking in multi-query fusion
+                recency_scores: Optional[Dict[str, float]] = None
+                if settings.retrieval_recency_weight > 0.0 and len(all_results) > 1:
+                    dates: Dict[str, float] = {}
+                    for result_list in all_results:
+                        for record in result_list:
+                            uid = record.get("id", "")
+                            if not uid:
+                                continue
+                            metadata = self._normalize_metadata(record.get("metadata", {}))
+                            proc_at = metadata.get("processed_at") or record.get("processed_at")
+                            if proc_at:
+                                try:
+                                    dates[uid] = datetime.fromisoformat(str(proc_at)).timestamp()
+                                except (ValueError, TypeError):
+                                    pass
+                    if len(dates) > 1:
+                        min_ts = min(dates.values())
+                        max_ts = max(dates.values())
+                        span = max_ts - min_ts or 1.0
+                        recency_scores = {uid: (ts - min_ts) / span for uid, ts in dates.items()}
+
+                # Fuse results from all query variants using RRF (with optional recency)
                 if len(all_results) > 1:
-                    vector_results = rrf_fuse(all_results, k=60, limit=fetch_k)
+                    vector_results = rrf_fuse(
+                        all_results,
+                        k=60,
+                        limit=fetch_k,
+                        recency_scores=recency_scores,
+                        recency_weight=settings.retrieval_recency_weight,
+                    )
                     logger.info("Fused results from %d query variants: %d results", len(all_results), len(vector_results))
                 else:
                     vector_results = all_results[0] if all_results else []
@@ -231,6 +282,25 @@ class RAGEngine:
                 vector_results = []
 
         relevant_chunks = self._filter_relevant(vector_results)
+
+        # Context distillation (post-filter, pre-prompt-build)
+        if settings.context_distillation_enabled and relevant_chunks:
+            pre_count = len(relevant_chunks)
+            relevant_chunks = await self._distill_context(relevant_chunks, user_input, eval_result)
+            logger.info(
+                "Context distillation: %d chunks → %d chunks after dedup",
+                pre_count, len(relevant_chunks)
+            )
+
+        # Supersession check: warn if retrieved files have newer versions
+        if relevant_chunks:
+            supersession_warning = await self._check_supersession(relevant_chunks)
+            if supersession_warning:
+                if relevance_hint:
+                    relevance_hint = supersession_warning + "\n" + relevance_hint
+                else:
+                    relevance_hint = supersession_warning
+
         if fallback_reason:
             logger.warning("Vector search fallback triggered: %s", fallback_reason)
             yield {
@@ -280,6 +350,56 @@ class RAGEngine:
             "memories_used": [mem.content for mem in memories],
             "retrieval_debug": retrieval_debug,
         }
+
+    async def _distill_context(
+        self,
+        sources: List[RAGSource],
+        query: str,
+        eval_result: str,
+    ) -> List[RAGSource]:
+        """Run context distillation (sentence dedup + optional LLM synthesis)."""
+        from app.services.context_distiller import ContextDistiller
+        if self._context_distiller is None:
+            self._context_distiller = ContextDistiller(
+                self.embedding_service,
+                self.llm_client if settings.context_distillation_synthesis_enabled else None,
+            )
+        return await self._context_distiller.distill(query, sources, eval_result)
+
+    async def _check_supersession(self, sources: List[RAGSource]) -> Optional[str]:
+        """Query SQLite to check if any retrieved files have been superseded by newer versions."""
+        file_ids = list({src.file_id for src in sources if src.file_id})
+        if not file_ids:
+            return None
+        try:
+            placeholders = ",".join("?" * len(file_ids))
+            sql = (
+                f"SELECT file_name FROM files "
+                f"WHERE supersedes_file_id IN ({placeholders}) AND status='indexed'"
+            )
+
+            def _query() -> list:
+                conn = sqlite3.connect(settings.sqlite_path)
+                try:
+                    rows = conn.execute(sql, file_ids).fetchall()
+                    return rows
+                finally:
+                    conn.close()
+
+            rows = await asyncio.to_thread(_query)
+            if rows:
+                newer_names = [r[0] for r in rows]
+                logger.warning(
+                    "Supersession warning: retrieved file_ids %s have been superseded by %s",
+                    file_ids, newer_names
+                )
+                return (
+                    "\u26a0\ufe0f Note: One or more retrieved documents may have been superseded by a "
+                    "newer version in the knowledge base. Verify currency of information where critical."
+                )
+        except Exception as exc:
+            logger.warning("Supersession check failed (suppressed): %s", exc)
+        return None
 
     def _normalize_metadata(self, metadata: Any) -> Dict[str, Any]:
         """Ensure metadata is a dict, parsing JSON string if needed."""

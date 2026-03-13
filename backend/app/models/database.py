@@ -205,6 +205,7 @@ def run_migrations(sqlite_path: str) -> None:
     init_db(sqlite_path)
     migrate_add_vaults(sqlite_path)
     migrate_add_email_columns(sqlite_path)
+    migrate_add_versioning_fields(sqlite_path)
 
 
 def migrate_add_vaults(sqlite_path: str) -> None:
@@ -296,6 +297,43 @@ def migrate_add_email_columns(sqlite_path: str) -> None:
         # Add email_sender column (nullable)
         if not _column_exists("files", "email_sender"):
             conn.execute("ALTER TABLE files ADD COLUMN email_sender TEXT")
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def migrate_add_versioning_fields(sqlite_path: str) -> None:
+    """
+    Migration: Add document versioning columns to the files table.
+
+    Adds document_date, supersedes_file_id, and ingestion_version columns.
+    This migration is idempotent — safe to run multiple times.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+    """
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        def _column_exists(table: str, column: str) -> bool:
+            cursor = conn.execute(f"PRAGMA table_info({table})")
+            return any(row[1] == column for row in cursor.fetchall())
+
+        if not _column_exists("files", "document_date"):
+            conn.execute("ALTER TABLE files ADD COLUMN document_date TEXT")
+
+        if not _column_exists("files", "supersedes_file_id"):
+            conn.execute("ALTER TABLE files ADD COLUMN supersedes_file_id INTEGER")
+
+        if not _column_exists("files", "ingestion_version"):
+            conn.execute(
+                "ALTER TABLE files ADD COLUMN ingestion_version INTEGER DEFAULT 1"
+            )
+            conn.execute(
+                "UPDATE files SET ingestion_version = 1 WHERE ingestion_version IS NULL"
+            )
 
         conn.commit()
     finally:

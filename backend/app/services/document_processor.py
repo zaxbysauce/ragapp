@@ -240,13 +240,14 @@ class DocumentProcessor:
                     )
                 file_id = int(existing_id)
 
-                # Update existing record
+                # Update existing record (increment ingestion_version on re-ingest)
                 conn.execute(
                     """UPDATE files
                        SET file_hash = ?, file_size = ?, file_type = ?, vault_id = ?,
                            source = ?, email_subject = ?, email_sender = ?,
                            status = 'pending', error_message = NULL,
-                           modified_at = ?, processed_at = NULL
+                           modified_at = ?, processed_at = NULL,
+                           ingestion_version = COALESCE(ingestion_version, 1) + 1
                        WHERE id = ?""",
                     (file_hash, file_size, file_type, vault_id, source, email_subject, email_sender, now, file_id)
                 )
