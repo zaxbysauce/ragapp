@@ -148,7 +148,7 @@ function ConversationItem({
       ) : (
         <>
           <span className="flex-1 truncate">{session.title || "Untitled"}</span>
-          <span className="shrink-0 text-xs text-muted-foreground/60 hidden group-hover:hidden">
+          <span className="shrink-0 text-xs text-muted-foreground/60 group-hover:hidden">
             {formatRelativeTime(session.updated_at)}
           </span>
           {(showActions || isActive) && (

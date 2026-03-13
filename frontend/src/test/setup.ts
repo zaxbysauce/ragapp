@@ -20,3 +20,10 @@ Object.defineProperty(window, 'confirm', {
   value: vi.fn(() => true),
   writable: true,
 });
+
+Object.defineProperty(navigator, 'clipboard', {
+  value: {
+    writeText: vi.fn(() => Promise.resolve()),
+  },
+  writable: true,
+});

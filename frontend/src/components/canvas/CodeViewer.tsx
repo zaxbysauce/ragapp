@@ -8,27 +8,6 @@ interface CodeViewerProps {
   source: Source;
 }
 
-// Simple HTML escape function to prevent XSS
-const escapeHtml = (text: string | undefined): string => {
-  if (!text) return "";
-  return text.replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#x27;";
-      default:
-        return char;
-    }
-  });
-};
-
 export function CodeViewer({ source }: CodeViewerProps) {
   const [copied, setCopied] = useState(false);
 
@@ -42,7 +21,12 @@ export function CodeViewer({ source }: CodeViewerProps) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const language = source.filename?.split('.').pop() || "text";
+  const filename = source.filename ?? "";
+  const lastDotIndex = filename.lastIndexOf(".");
+  const language =
+    lastDotIndex > 0 && lastDotIndex < filename.length - 1
+      ? filename.slice(lastDotIndex + 1)
+      : "text";
 
   return (
     <div className="h-full flex flex-col">
@@ -64,7 +48,7 @@ export function CodeViewer({ source }: CodeViewerProps) {
           "p-4 rounded-lg bg-muted/30 overflow-x-auto",
           "text-sm font-mono leading-relaxed"
         )}>
-          <code>{escapeHtml(source.snippet) || "No code available"}</code>
+          <code>{source.snippet || "No code available"}</code>
         </pre>
       </div>
     </div>
