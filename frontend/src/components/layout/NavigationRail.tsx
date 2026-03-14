@@ -1,5 +1,5 @@
 import { MessageSquare, FileText, Brain, Settings, Database, Sparkles } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import type { NavItem, NavItemId, NavigationProps } from "./navigationTypes";
 
@@ -37,6 +37,21 @@ function StatusIndicator({ isUp, label, loading }: { isUp: boolean; label: strin
 
 export function NavigationRail({ activeItem, onItemSelect, healthStatus }: NavigationRailProps) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+
+  const handleClick = (itemId: NavItemId) => {
+    if (itemId === "chatNew") {
+      navigate("/chat/redesign");
+      return;
+    }
+    // When on the redesign page, navigate() must be used directly — the
+    // onItemSelect prop chain routes through a different component tree.
+    if (pathname === "/chat/redesign") {
+      navigate(`/?page=${itemId}`);
+    } else {
+      onItemSelect(itemId);
+    }
+  };
 
   return (
     <nav className="w-20 min-h-screen bg-card/80 backdrop-blur-sm border-r border-border flex flex-col items-center py-6 gap-2" aria-label="Main navigation">
@@ -57,7 +72,7 @@ export function NavigationRail({ activeItem, onItemSelect, healthStatus }: Navig
           return (
             <button
               key={item.id}
-              onClick={isNewChat ? () => navigate("/chat/redesign") : () => onItemSelect(item.id)}
+              onClick={() => handleClick(item.id)}
               className={cn(
                 "group relative flex flex-col items-center gap-1 p-3 rounded-xl transition-all duration-200 ease-out",
                 "hover:bg-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
