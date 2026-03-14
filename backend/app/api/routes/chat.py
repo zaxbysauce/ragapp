@@ -93,7 +93,11 @@ def stream_chat_response(
         collected_content = []
         sources = []
         memories_used = []
-        
+
+        # SSE comment keeps the connection alive during model cold-start
+        # (proxies / browsers drop idle connections after ~60 s)
+        yield ": ping\n\n"
+
         try:
             async for chunk in rag_engine.query(message, history, stream=True, vault_id=vault_id):
                 chunk_type = chunk.get("type")

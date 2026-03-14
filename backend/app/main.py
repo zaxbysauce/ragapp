@@ -238,6 +238,14 @@ async def lifespan(app: FastAPI):
     app.state.file_watcher = FileWatcher(app.state.background_processor, pool=app.state.db_pool)
     await app.state.file_watcher.start()
     
+    # Warm up embedding model so the first user query doesn't cold-start Ollama
+    try:
+        logger.info("Warming up embedding service...")
+        await app.state.embedding_service.embed_single("warmup")
+        logger.info("Embedding service warmed up successfully")
+    except Exception as e:
+        logger.warning("Embedding warmup failed (will retry on first query): %s", e)
+
     # Start LLM keep-alive task to prevent LM Studio from unloading model
     keepalive_task = asyncio.create_task(_llm_keepalive_task(app.state.llm_client))
     

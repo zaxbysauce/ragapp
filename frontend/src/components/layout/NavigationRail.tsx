@@ -44,10 +44,11 @@ export function NavigationRail({ activeItem, onItemSelect, healthStatus }: Navig
       navigate("/chat/redesign");
       return;
     }
-    // When on the redesign page, navigate() must be used directly — the
-    // onItemSelect prop chain routes through a different component tree.
+    // When on the redesign page, use a hard navigation to guarantee leaving
+    // the route — React Router's navigate() is unreliable here because the
+    // redesign page lives in a separate route subtree.
     if (pathname === "/chat/redesign") {
-      navigate(`/?page=${itemId}`);
+      window.location.href = itemId === "chat" ? "/" : `/?page=${itemId}`;
     } else {
       onItemSelect(itemId);
     }
