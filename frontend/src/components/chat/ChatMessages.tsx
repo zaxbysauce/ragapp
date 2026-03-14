@@ -1,5 +1,4 @@
 import { useRef, useEffect } from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "./MessageBubble";
 import { ChatInput } from "./ChatInput";
 import { useChatStore } from "@/stores/useChatStore";
@@ -112,15 +111,18 @@ export function ChatMessages({
     }, 50);
   };
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom whenever messages update (new message or streaming chunk)
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    const id = requestAnimationFrame(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    });
+    return () => cancelAnimationFrame(id);
   }, [messages]);
 
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="flex flex-col h-full bg-background">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
         <div className="flex items-center gap-2">
@@ -169,7 +171,7 @@ export function ChatMessages({
       </header>
 
       {/* Messages */}
-      <ScrollArea ref={scrollRef} className="flex-1">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto w-full">
           {messages.length === 0 ? (
             /* Welcome / Empty State */
@@ -228,7 +230,7 @@ export function ChatMessages({
             ))
           )}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Input */}
       <ChatInput onSend={handleSend} onStop={handleStop} isStreaming={isStreaming} />

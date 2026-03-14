@@ -23,7 +23,7 @@ export default function ChatPageRedesigned() {
   }, [refreshHistory]);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden">
+    <div className="flex h-full w-full overflow-hidden">
       {/* Left: Conversation History Sidebar */}
       <ConversationSidebar
         isOpen={isSidebarOpen}
