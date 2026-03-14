@@ -396,6 +396,15 @@ async def _do_upload(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename cannot be empty")
 
+    # Validate vault exists before doing anything with the file
+    conn = db_pool.get_connection()
+    try:
+        vault_row = conn.execute("SELECT id FROM vaults WHERE id = ?", (vault_id,)).fetchone()
+        if not vault_row:
+            raise HTTPException(status_code=404, detail=f"Vault {vault_id} not found")
+    finally:
+        db_pool.release_connection(conn)
+
     # Ensure uploads directory exists
     provider = UploadPathProvider()
     upload_dir = provider.get_upload_dir(vault_id or settings.orphan_vault_id)
