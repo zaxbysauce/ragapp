@@ -211,6 +211,12 @@ class EmailIngestionService:
                 uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
                 try:
                     await self._process_email(imap_client, uid_str)
+                    # Mark as SEEN so it isn't re-processed on the next poll
+                    try:
+                        await imap_client.store(uid_str, '+FLAGS', r'\Seen')
+                        logger.debug(f"Marked email UID {uid_str} as SEEN")
+                    except Exception as mark_err:
+                        logger.warning(f"Failed to mark email UID {uid_str} as SEEN: {mark_err}")
                 except Exception as e:
                     logger.error(f"Error processing email UID {uid_str}: {e}", exc_info=True)
                     # Continue to next email even if one fails
@@ -269,10 +275,8 @@ class EmailIngestionService:
                         timeout=30
                     )
 
-                # Authenticate (never log password)
-                result = await imap_client.wait_hello_from_server()
-                if result != 'OK':
-                    raise Exception(f"IMAP server greeting failed: {result}")
+                # Wait for server greeting (returns None, not a status code)
+                await imap_client.wait_hello_from_server()
 
                 result, _ = await imap_client.login(
                     self.settings.imap_username,

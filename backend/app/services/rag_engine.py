@@ -707,7 +707,11 @@ class RAGEngine:
             "Answer questions using ONLY the context documents provided. "
             "If the context does not contain sufficient information to answer, "
             "say so clearly — do not guess or use outside knowledge. "
-            "When you cite sources, reference them by name using [Source: <name>]."
+            "When you cite sources, reference them by name using [Source: <name>]. "
+            "Always respond in clear, well-formatted markdown — use headings, bullet points, "
+            "numbered lists, bold, and code blocks where appropriate. "
+            "Never output raw JSON, XML, or any structured data format unless the user "
+            "explicitly requests it."
         )
 
     def _build_messages(
