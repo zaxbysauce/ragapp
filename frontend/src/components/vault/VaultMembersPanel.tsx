@@ -274,7 +274,7 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
                     {isAdmin ? (
                       <Select
                         value={member.permission}
-                        onValueChange={(value) => handleUpdatePermission(member, value)}
+                        onValueChange={(value: string) => handleUpdatePermission(member, value)}
                       >
                         <SelectTrigger className="w-28">
                           <SelectValue />

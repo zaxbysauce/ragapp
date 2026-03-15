@@ -93,7 +93,6 @@ function ChatSurface() {
 
 /** Admin Surface - User and system administration */
 function AdminSurface() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const rawPage = searchParams.get("page") as PageId | null;
   const initialPage: PageId = rawPage && rawPage in pages ? rawPage : "admin";
@@ -129,26 +128,6 @@ function RedesignShell() {
       noPadding
     >
       <ChatPageRedesigned />
-    </PageShell>
-  );
-}
-
-/** Shell for the new three-zone chat experience */
-function ChatShellWrapper() {
-  const health = useHealthCheck({ pollInterval: 30000 });
-
-  return (
-    <PageShell
-      activeItem="chat"
-      onItemSelect={(id) => {
-        if (id !== "chat") {
-          window.location.href = `/?page=${id}`;
-        }
-      }}
-      healthStatus={health}
-      noPadding
-    >
-      <ChatShell />
     </PageShell>
   );
 }
@@ -244,7 +223,7 @@ function App() {
                   onItemSelect={(id) => {
                     window.location.href = `/?page=${id}`;
                   }}
-                  healthStatus={{ backend: true, embeddings: true, chat: true, loading: false }}
+                  healthStatus={{ backend: true, embeddings: true, chat: true, loading: false, lastChecked: null }}
                 >
                   <ProfilePage />
                 </PageShell>

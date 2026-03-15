@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -70,7 +70,6 @@ export default function AdminUsersPage() {
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [selectedRole, setSelectedRole] = useState<string>('member');
-  const [isActive, setIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 

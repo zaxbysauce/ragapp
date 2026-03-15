@@ -21,21 +21,6 @@ import { EmptyState } from "@/components/shared/EmptyState";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
-// File status labels and colors for consistent UI rendering
-const FILE_STATUS_LABELS: Record<string, string> = {
-  indexed: "Indexed",
-  processing: "Processing",
-  pending: "Pending",
-  error: "Error",
-};
-
-const FILE_STATUS_COLORS: Record<string, string> = {
-  indexed: "bg-green-500",
-  processing: "bg-blue-500",
-  pending: "bg-yellow-500",
-  error: "bg-red-500",
-};
-
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [stats, setStats] = useState<DocumentStatsResponse | null>(null);

@@ -14,7 +14,6 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import type { Source } from "@/lib/api";
 
@@ -232,7 +231,7 @@ function OutputCard({
   );
 }
 
-export function WorkspaceTab({ sources }: WorkspaceTabProps) {
+export function WorkspaceTab({ sources: _sources }: WorkspaceTabProps) {
   const [selectedOutput, setSelectedOutput] = useState<StructuredOutput | null>(null);
   const [viewMode, setViewMode] = useState<OutputFormat>("table");
   const outputs = generateMockOutputs();

@@ -6,15 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { User, Mail, Shield, Calendar, LogOut, Loader2, Key, Save, Pencil } from 'lucide-react';
+import { User, Mail, Shield, LogOut, Loader2, Key, Save, Pencil } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 
 const roleLabels: Record<string, string> = {
@@ -40,8 +32,8 @@ export default function ProfilePage() {
   
   // Form states
   const [fullName, setFullName] = useState(user?.full_name || '');
-  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [, setCurrentPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
   const handleUpdateProfile = async () => {

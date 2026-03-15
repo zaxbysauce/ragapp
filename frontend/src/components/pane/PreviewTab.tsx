@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileText, X, Highlighter, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
+import { FileText, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -94,7 +94,7 @@ export function PreviewTab({
     const parts: React.ReactNode[] = [];
     let lastIndex = 0;
 
-    matches.forEach((matchIndex, i) => {
+    matches.forEach((_matchIndex, i) => {
       const matchStart = content
         .toLowerCase()
         .indexOf(searchQuery.toLowerCase(), lastIndex);

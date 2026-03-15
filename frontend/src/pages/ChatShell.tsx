@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
 import { PanelRightOpen, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
@@ -21,9 +20,7 @@ import {
   getChatSession,
   updateChatSession,
   deleteChatSession,
-  createChatSession,
   type ChatSession,
-  type Source,
 } from "@/lib/api";
 import { toast } from "sonner";
 

@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { ChatSession } from "@/lib/api";
-import { useChatShellStore, type SessionGroup } from "@/stores/chatShellStore";
+import { type SessionGroup } from "@/stores/chatShellStore";
 
 interface SessionRailProps {
   sessions: ChatSession[];
