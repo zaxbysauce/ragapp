@@ -357,8 +357,7 @@ async def create_session(
     }
 
 
-@router.post("/chat/sessions/{session_id}/messages")
-async def _auto_name_session(session_id: int, first_message: str, conn: sqlite3.Connection) -> str:
+async def _auto_name_session(first_message: str) -> str:
     """
     Generate a concise, meaningful title for a chat session based on the first message.
 
@@ -454,7 +453,7 @@ async def add_message(
 
     # Auto-title if first message and session has no title
     if is_first_message and session_row[1] is None:
-        auto_title = await _auto_name_session(session_id, request.content, conn)
+        auto_title = await _auto_name_session(request.content)
         update_title_query = "UPDATE chat_sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         await asyncio.to_thread(conn.execute, update_title_query, (auto_title, session_id))
 
