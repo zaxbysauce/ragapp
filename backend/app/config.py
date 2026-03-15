@@ -176,6 +176,10 @@ class Settings(BaseSettings):
     # Admin security
     admin_secret_token: str = "admin-secret-token"
 
+    # User system
+    users_enabled: bool = True
+    """Enable user authentication system. When False, uses admin token only."""
+
     # JWT configuration
     jwt_secret_key: str = "change-me-to-a-random-64-char-string"
     jwt_algorithm: str = "HS256"
