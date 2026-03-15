@@ -28,8 +28,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { type Source } from "@/lib/api";
+import { type Source, updateChatSession } from "@/lib/api";
 import { useChatStore } from "@/stores/useChatStore";
+import { toast } from "sonner";
 import { MessageContent } from "@/components/shared/MessageContent";
 import { MessageActions } from "@/components/shared/MessageActions";
 import { KeyboardShortcutsDialog, useKeyboardShortcuts } from "@/components/shared/KeyboardShortcuts";
@@ -123,9 +124,56 @@ export default function ChatPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleSaveTitle = () => {
-    // TODO: Save title to backend when API is available
-    setIsEditingTitle(false);
+  const { activeChatId } = useChatStore();
+
+  const handleSaveTitle = async () => {
+    if (!activeChatId || !chatTitle.trim()) {
+      setIsEditingTitle(false);
+      return;
+    }
+
+    try {
+      const sessionId = parseInt(activeChatId, 10);
+      if (isNaN(sessionId)) {
+        throw new Error("Invalid session ID");
+      }
+      await updateChatSession(sessionId, chatTitle.trim());
+      toast.success("Chat title saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save chat title");
+    } finally {
+      setIsEditingTitle(false);
+    }
+  };
+
+  // Get relevance label based on score and score type
+  const getRelevanceLabel = (score: number, scoreType?: string): string => {
+    switch (scoreType) {
+      case "distance":
+        // Lower distance = better match
+        if (score < 0.2) return "Very High";
+        if (score < 0.4) return "High";
+        if (score < 0.6) return "Medium";
+        return "Low";
+      case "rerank":
+        // Rerank scores typically 0-1, higher is better
+        if (score > 0.8) return "Very High";
+        if (score > 0.6) return "High";
+        if (score > 0.4) return "Medium";
+        return "Low";
+      case "rrf":
+        // RRF scores, higher is better
+        if (score > 0.7) return "Very High";
+        if (score > 0.5) return "High";
+        if (score > 0.3) return "Medium";
+        return "Low";
+      default:
+        // Default: treat as normalized score 0-1
+        if (score > 0.8) return "Very High";
+        if (score > 0.6) return "High";
+        if (score > 0.4) return "Medium";
+        return "Low";
+    }
   };
 
   return (
@@ -384,8 +432,9 @@ export default function ChatPage() {
               {hasSources ? (
                 <ScrollArea className="h-[400px] pr-4">
                   <div className="space-y-3" role="list" aria-label="Document sources">
-                      {latestAssistantMessage!.sources!.map((source: Source) => {
+                    {latestAssistantMessage!.sources!.map((source: Source, index: number) => {
                       const isExpanded = expandedSources.has(source.id);
+                      const rank = index + 1;
                       return (
                         <Card key={source.id} className="border-border/50">
                           <div
@@ -396,15 +445,18 @@ export default function ChatPage() {
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
+                                <span className="text-xs font-semibold text-muted-foreground w-6">
+                                  #{rank}
+                                </span>
                                 <FileText className="w-4 h-4 text-muted-foreground" />
-                                <span className="text-sm font-medium truncate max-w-[180px]">
+                                <span className="text-sm font-medium truncate max-w-[160px]">
                                   {source.filename}
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
                                 {source.score && (
                                   <Badge variant="secondary" className="text-xs">
-                                    {(source.score * 100).toFixed(0)}%
+                                    {getRelevanceLabel(source.score, source.score_type)}
                                   </Badge>
                                 )}
                                 {isExpanded ? (
@@ -456,8 +508,9 @@ export default function ChatPage() {
                   </AccordionTrigger>
                   <AccordionContent className="px-4 pb-4">
                     <div className="space-y-3" role="list" aria-label="Document sources">
-                      {latestAssistantMessage!.sources!.map((source: Source) => {
+                      {latestAssistantMessage!.sources!.map((source: Source, index: number) => {
                         const isExpanded = expandedSources.has(source.id);
+                        const rank = index + 1;
                         return (
                           <Card key={source.id} className="border-border/50">
                             <div
@@ -468,15 +521,18 @@ export default function ChatPage() {
                             >
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
+                                  <span className="text-xs font-semibold text-muted-foreground w-6">
+                                    #{rank}
+                                  </span>
                                   <FileText className="w-4 h-4 text-muted-foreground" />
-                                  <span className="text-sm font-medium truncate max-w-[200px]">
+                                  <span className="text-sm font-medium truncate max-w-[180px]">
                                     {source.filename}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   {source.score && (
                                     <Badge variant="secondary" className="text-xs">
-                                      {(source.score * 100).toFixed(0)}%
+                                      {getRelevanceLabel(source.score, source.score_type)}
                                     </Badge>
                                   )}
                                   {isExpanded ? (

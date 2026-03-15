@@ -257,6 +257,7 @@ export interface Source {
   filename: string;
   snippet?: string;
   score?: number;
+  score_type?: "distance" | "rerank" | "rrf";
 }
 
 export interface ChatStreamCallbacks {
