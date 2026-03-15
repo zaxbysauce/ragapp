@@ -13,6 +13,7 @@ from app.services.auth_service import (
     hash_password,
     verify_password,
 )
+from app.limiter import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 security = HTTPBearer()
@@ -22,6 +23,7 @@ REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
 REFRESH_TOKEN_MAX_AGE_DAYS = 30
 
 
+@limiter.limit("5/hour")
 @router.post("/register")
 async def register(
     username: str,
@@ -32,7 +34,7 @@ async def register(
     """
     Register a new user. First user becomes superadmin.
 
-    Rate limiting: Apply 5 requests per minute per IP.
+    Rate limiting: Apply 5 requests per hour per IP.
     """
     # Validate input
     if not username or len(username) < 3:
@@ -77,6 +79,7 @@ async def register(
     }
 
 
+@limiter.limit("10/minute")
 @router.post("/login")
 async def login(
     response: Response,
@@ -163,6 +166,7 @@ async def login(
     }
 
 
+@limiter.limit("30/minute")
 @router.post("/refresh")
 async def refresh(
     response: Response,
