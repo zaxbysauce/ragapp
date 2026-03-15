@@ -66,3 +66,4 @@ test_analysis.txt
 
 # Swarm local files
 .swarm/
+backend/.coverage
