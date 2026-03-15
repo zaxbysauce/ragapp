@@ -23,9 +23,10 @@ REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
 REFRESH_TOKEN_MAX_AGE_DAYS = 30
 
 
-@limiter.limit("5/hour")
 @router.post("/register")
+@limiter.limit("5/hour")
 async def register(
+    request: Request,
     username: str,
     password: str,
     full_name: str = "",
@@ -79,13 +80,13 @@ async def register(
     }
 
 
-@limiter.limit("10/minute")
 @router.post("/login")
+@limiter.limit("10/minute")
 async def login(
+    request: Request,
     response: Response,
     username: str,
     password: str,
-    request: Request,
     db=Depends(get_db),
 ):
     """
@@ -166,9 +167,10 @@ async def login(
     }
 
 
-@limiter.limit("30/minute")
 @router.post("/refresh")
+@limiter.limit("30/minute")
 async def refresh(
+    request: Request,
     response: Response,
     refresh_token: Optional[str] = Cookie(None, alias=REFRESH_TOKEN_COOKIE_NAME),
     db=Depends(get_db),
