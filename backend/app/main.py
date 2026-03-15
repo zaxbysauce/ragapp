@@ -24,6 +24,7 @@ from app.api.routes.memories import router as memories_router
 from app.api.routes.organizations import router as organizations_router
 from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
+from app.api.routes.auth import router as auth_router
 from app.api.routes.vault_members import router as vault_members_router
 from app.api.routes.vaults import router as vaults_router
 from app.config import settings
@@ -309,6 +310,7 @@ app.include_router(search_router, prefix="/api")
 app.include_router(memories_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
 app.include_router(vaults_router, prefix="/api")
 app.include_router(vault_members_router, prefix="/api")
 app.include_router(organizations_router, prefix="/api")
