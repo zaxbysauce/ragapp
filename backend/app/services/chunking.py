@@ -3,11 +3,16 @@ Semantic chunking service using unstructured.chunking.title.chunk_by_title.
 Preserves tables and code blocks while creating semantically meaningful chunks.
 """
 
+import logging
+import math
 from dataclasses import dataclass, field
-from typing import List, Any, Optional
+from enum import Enum
+from typing import List, Any, Optional, Callable
 
 from unstructured.chunking.title import chunk_by_title
 from unstructured.documents.elements import Element
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -281,3 +286,271 @@ class SemanticChunker:
                     element.metadata.section = section_title
         
         return self.chunk_elements(elements)
+
+
+class ThresholdType(Enum):
+    """Types of threshold strategies for embedding semantic chunking."""
+    PERCENTILE = "percentile"
+    STDDEV = "stddev"
+    GRADIENT = "gradient"
+
+
+class EmbeddingSemanticChunker:
+    """
+    Semantic chunker using embedding-based cosine similarity breakpoints.
+    
+    Divides text into chunks at semantic boundaries determined by embedding
+    similarity drops. Falls back to title-based chunking on embedding errors.
+    
+    Uses configurable threshold types: percentile, stddev, or gradient-based.
+    """
+    
+    def __init__(
+        self,
+        embedding_service: Any,
+        threshold_type: ThresholdType = ThresholdType.PERCENTILE,
+        threshold_value: float = 0.5,
+        min_chunk_size: int = 100,
+        max_chunk_size: int = 2000,
+        window_size: int = 1,
+    ):
+        """
+        Initialize the embedding semantic chunker.
+        
+        Args:
+            embedding_service: Service with embed_single(text) -> List[float] method
+            threshold_type: Strategy for determining breakpoints (percentile/stddev/gradient)
+            threshold_value: Threshold value (percentile 0-100, stddev multiplier, or gradient threshold)
+            min_chunk_size: Minimum characters per chunk
+            max_chunk_size: Maximum characters per chunk
+            window_size: Number of sentences to combine for embedding context
+        """
+        self.embedding_service = embedding_service
+        self.threshold_type = threshold_type
+        self.threshold_value = threshold_value
+        self.min_chunk_size = min_chunk_size
+        self.max_chunk_size = max_chunk_size
+        self.window_size = window_size
+    
+    def _split_into_sentences(self, text: str) -> List[str]:
+        """Split text into sentences using simple heuristic."""
+        import re
+        # Simple sentence splitting on period, exclamation, question mark
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        return [s.strip() for s in sentences if s.strip()]
+    
+    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        norm1 = math.sqrt(sum(a * a for a in vec1))
+        norm2 = math.sqrt(sum(b * b for b in vec2))
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        return dot_product / (norm1 * norm2)
+    
+    def _calculate_breakpoints(self, similarities: List[float]) -> List[int]:
+        """
+        Calculate chunk breakpoints based on similarity drops.
+        
+        Args:
+            similarities: List of cosine similarities between adjacent sentence windows
+            
+        Returns:
+            List of indices where chunks should break
+        """
+        if not similarities:
+            return []
+        
+        breakpoints = []
+        
+        if self.threshold_type == ThresholdType.PERCENTILE:
+            # Break where similarity drops below the Nth percentile
+            sorted_sims = sorted(similarities)
+            percentile_idx = int(len(sorted_sims) * self.threshold_value / 100)
+            threshold = sorted_sims[max(0, min(percentile_idx, len(sorted_sims) - 1))]
+            
+            for i, sim in enumerate(similarities):
+                if sim < threshold:
+                    breakpoints.append(i + 1)  # Break after sentence i
+                    
+        elif self.threshold_type == ThresholdType.STDDEV:
+            # Break where similarity is more than N stddevs below mean
+            mean = sum(similarities) / len(similarities)
+            variance = sum((s - mean) ** 2 for s in similarities) / len(similarities)
+            stddev = math.sqrt(variance)
+            threshold = mean - (self.threshold_value * stddev)
+            
+            for i, sim in enumerate(similarities):
+                if sim < threshold:
+                    breakpoints.append(i + 1)
+                    
+        elif self.threshold_type == ThresholdType.GRADIENT:
+            # Break where similarity gradient (drop) exceeds threshold
+            for i in range(1, len(similarities)):
+                gradient = similarities[i - 1] - similarities[i]
+                if gradient > self.threshold_value:
+                    breakpoints.append(i + 1)
+        
+        return breakpoints
+    
+    async def chunk_text(self, text: str, section_title: Optional[str] = None) -> List[ProcessedChunk]:
+        """
+        Chunk text using embedding-based semantic breakpoints.
+        
+        Args:
+            text: Text content to chunk
+            section_title: Optional section title for metadata
+            
+        Returns:
+            List of ProcessedChunk objects
+        """
+        sentences = self._split_into_sentences(text)
+        if not sentences:
+            return []
+        
+        # Handle single sentence
+        if len(sentences) == 1:
+            metadata = {"section_title": section_title, "element_type": "Text"}
+            return [ProcessedChunk(text=text, metadata=metadata, chunk_index=0)]
+        
+        try:
+            # Create windows for embedding (sliding window of sentences)
+            windows = []
+            for i in range(len(sentences)):
+                end_idx = min(i + self.window_size, len(sentences))
+                window_text = " ".join(sentences[i:end_idx])
+                windows.append(window_text)
+            
+            # Get embeddings for all windows
+            embeddings = []
+            for window in windows:
+                try:
+                    embedding = await self.embedding_service.embed_single(window)
+                    embeddings.append(embedding)
+                except Exception as e:
+                    logger.warning("Failed to embed window, using zero vector: %s", e)
+                    # Use zero vector as placeholder - will create low similarity
+                    if embeddings:
+                        embeddings.append([0.0] * len(embeddings[0]))
+                    else:
+                        # Cannot determine embedding dimension, fall back
+                        raise
+            
+            # Calculate similarities between adjacent windows
+            similarities = []
+            for i in range(len(embeddings) - 1):
+                sim = self._cosine_similarity(embeddings[i], embeddings[i + 1])
+                similarities.append(sim)
+            
+            # Determine breakpoints
+            breakpoints = self._calculate_breakpoints(similarities)
+            
+            # Build chunks from breakpoints
+            chunks = []
+            start_idx = 0
+            
+            # Always add final boundary
+            all_breakpoints = sorted(set(breakpoints + [len(sentences)]))
+            
+            for bp in all_breakpoints:
+                chunk_sentences = sentences[start_idx:bp]
+                chunk_text = " ".join(chunk_sentences)
+                
+                # Merge small chunks with previous if possible
+                if chunks and len(chunk_text) < self.min_chunk_size:
+                    # Extend previous chunk
+                    prev_chunk = chunks[-1]
+                    merged_text = prev_chunk.text + " " + chunk_text
+                    if len(merged_text) <= self.max_chunk_size:
+                        prev_chunk.text = merged_text
+                        start_idx = bp
+                        continue
+                
+                # Split large chunks
+                while len(chunk_text) > self.max_chunk_size:
+                    # Find a good split point (prefer sentence boundary)
+                    split_at = self.max_chunk_size
+                    for i in range(self.max_chunk_size - 1, self.min_chunk_size, -1):
+                        if chunk_text[i] in '.!?' and chunk_text[i + 1] == ' ':
+                            split_at = i + 1
+                            break
+                    
+                    first_part = chunk_text[:split_at].strip()
+                    metadata = {
+                        "section_title": section_title,
+                        "element_type": "Text",
+                    }
+                    chunks.append(ProcessedChunk(
+                        text=first_part,
+                        metadata=metadata,
+                        chunk_index=len(chunks)
+                    ))
+                    chunk_text = chunk_text[split_at:].strip()
+                
+                if chunk_text:
+                    metadata = {
+                        "section_title": section_title,
+                        "element_type": "Text",
+                    }
+                    chunks.append(ProcessedChunk(
+                        text=chunk_text,
+                        metadata=metadata,
+                        chunk_index=len(chunks)
+                    ))
+                
+                start_idx = bp
+            
+            # Update total_chunks in metadata
+            for chunk in chunks:
+                chunk.metadata["total_chunks"] = len(chunks)
+            
+            return chunks
+            
+        except Exception as e:
+            logger.warning("Embedding-based chunking failed: %s. Falling back to title-based chunking.", e)
+            return await self._fallback_chunk_text(text, section_title)
+    
+    async def _fallback_chunk_text(self, text: str, section_title: Optional[str] = None) -> List[ProcessedChunk]:
+        """
+        Fallback to title-based chunking when embedding chunking fails.
+        
+        Args:
+            text: Text content to chunk
+            section_title: Optional section title for metadata
+            
+        Returns:
+            List of ProcessedChunk objects
+        """
+        # Use the existing SemanticChunker as fallback
+        fallback_chunker = SemanticChunker(
+            chunk_size_chars=self.max_chunk_size,
+            chunk_overlap_chars=max(100, self.max_chunk_size // 10),
+        )
+        return fallback_chunker.chunk_text(text, section_title)
+    
+    async def chunk_elements(self, elements: List[Element]) -> List[ProcessedChunk]:
+        """
+        Chunk document elements using embedding-based semantic chunking.
+        
+        Falls back to title-based chunking if embedding service is unavailable.
+        
+        Args:
+            elements: List of unstructured document elements
+            
+        Returns:
+            List of ProcessedChunk objects
+        """
+        if not elements:
+            return []
+        
+        try:
+            # Try to use embedding-based chunking on combined text
+            combined_text = "\n\n".join(str(el) for el in elements)
+            return await self.chunk_text(combined_text)
+        except Exception as e:
+            logger.warning("Embedding chunking failed for elements: %s. Using title-based fallback.", e)
+            fallback_chunker = SemanticChunker(
+                chunk_size_chars=self.max_chunk_size,
+                chunk_overlap_chars=max(100, self.max_chunk_size // 10),
+            )
+            return fallback_chunker.chunk_elements(elements)

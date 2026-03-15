@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_db, get_rag_engine
+from app.api.deps import get_db, get_rag_engine, require_vault_permission, get_current_active_user
 from app.security import require_auth
 from app.services.rag_engine import RAGEngine, RAGEngineError
 
@@ -180,7 +180,7 @@ async def non_stream_chat_response(
 async def chat(
     request: ChatRequest,
     rag_engine: RAGEngine = Depends(get_rag_engine),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("read")),
 ):
     """
     Chat endpoint for RAG-based conversational interface.
@@ -206,7 +206,7 @@ async def chat(
 async def chat_stream(
     request: ChatStreamRequest,
     rag_engine: RAGEngine = Depends(get_rag_engine),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("read")),
 ):
     """Streaming chat endpoint that accepts a sequence of chat messages."""
     if not request.messages:
@@ -228,7 +228,7 @@ async def chat_stream(
 async def list_sessions(
     vault_id: Optional[int] = Query(None),
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("read")),
 ):
     """
     List all chat sessions, optionally filtered by vault_id.
@@ -278,7 +278,7 @@ async def list_sessions(
 async def get_session(
     session_id: int,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("read")),
 ):
     """
     Get a specific chat session with all its messages.
@@ -331,7 +331,7 @@ async def get_session(
 async def create_session(
     request: CreateSessionRequest,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("read")),
 ):
     """
     Create a new chat session.
@@ -358,17 +358,84 @@ async def create_session(
 
 
 @router.post("/chat/sessions/{session_id}/messages")
+async def _auto_name_session(session_id: int, first_message: str, conn: sqlite3.Connection) -> str:
+    """
+    Generate a concise, meaningful title for a chat session based on the first message.
+
+    Uses a simple heuristic approach to extract key topics:
+    - For questions: Extract the subject being asked about
+    - For commands: Use the action verb + object
+    - For general text: Extract noun phrases
+
+    Returns a title limited to 50 characters.
+    """
+    import re
+
+    # Clean and normalize the message
+    text = first_message.strip()
+
+    # Remove common prefixes
+    prefixes = [
+        r'^please\s+',
+        r'^can\s+you\s+',
+        r'^could\s+you\s+',
+        r'^what\s+(is|are)\s+',
+        r'^how\s+(do|does|can|to)\s+',
+        r'^tell\s+me\s+about\s+',
+        r'^explain\s+',
+        r'^summarize\s+',
+        r'^compare\s+',
+        r'^analyze\s+',
+    ]
+
+    cleaned = text.lower()
+    for prefix in prefixes:
+        cleaned = re.sub(prefix, '', cleaned, flags=re.IGNORECASE)
+
+    # Extract key phrases
+    # Look for quoted text first (often contains the main topic)
+    quoted = re.findall(r'["\']([^"\']+)["\']', text)
+    if quoted:
+        candidate = quoted[0]
+    else:
+        # Extract the first meaningful phrase (up to first punctuation or 10 words)
+        words = cleaned.split()
+        if len(words) <= 3:
+            candidate = ' '.join(words)
+        else:
+            # Take first 4-6 words that form a coherent phrase
+            candidate = ' '.join(words[:5])
+
+    # Capitalize first letter
+    candidate = candidate.strip().capitalize()
+
+    # Remove trailing punctuation
+    candidate = re.sub(r'[.,;:!?]+$', '', candidate)
+
+    # Limit length and add ellipsis if needed
+    if len(candidate) > 47:
+        candidate = candidate[:47].rsplit(' ', 1)[0] + "..."
+    elif len(candidate) < 10 and len(text) > 10:
+        # If too short, use more context
+        candidate = text[:47].strip()
+        if len(candidate) > 47:
+            candidate = candidate[:47].rsplit(' ', 1)[0] + "..."
+
+    return candidate if candidate else "New Chat"
+
+
+@router.post("/chat/sessions/{session_id}/messages")
 async def add_message(
     session_id: int,
     request: AddMessageRequest,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("read")),
 ):
     """
     Add a message to a chat session.
 
     If this is the first message and the session has no title,
-    auto-titles the session from the first 50 characters of the content.
+    auto-titles the session using intelligent topic extraction.
     Updates the session's updated_at timestamp.
     """
     # Verify session exists
@@ -387,7 +454,7 @@ async def add_message(
 
     # Auto-title if first message and session has no title
     if is_first_message and session_row[1] is None:
-        auto_title = request.content[:50] + "..." if len(request.content) > 50 else request.content
+        auto_title = await _auto_name_session(session_id, request.content, conn)
         update_title_query = "UPDATE chat_sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         await asyncio.to_thread(conn.execute, update_title_query, (auto_title, session_id))
 
@@ -434,7 +501,7 @@ async def update_session(
     session_id: int,
     request: UpdateSessionRequest,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("write")),
 ):
     """
     Update a chat session's title.
@@ -472,7 +539,7 @@ async def update_session(
 async def delete_session(
     session_id: int,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("write")),
 ):
     """
     Delete a chat session.

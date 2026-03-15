@@ -12,7 +12,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.api.deps import get_db, get_vector_store
+from app.api.deps import get_db, get_vector_store, require_vault_permission, get_current_active_user
 from app.security import require_auth
 from app.services.vector_store import VectorStore
 
@@ -116,7 +116,10 @@ async def _fetch_all_vaults(conn: sqlite3.Connection) -> List[VaultResponse]:
 
 
 @router.get("/vaults", response_model=VaultListResponse)
-async def list_vaults(conn: sqlite3.Connection = Depends(get_db)):
+async def list_vaults(
+    conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(get_current_active_user),
+):
     """
     List all vaults with document/memory/session counts.
 
@@ -128,7 +131,11 @@ async def list_vaults(conn: sqlite3.Connection = Depends(get_db)):
 
 
 @router.get("/vaults/{vault_id}", response_model=VaultResponse)
-async def get_vault(vault_id: int, conn: sqlite3.Connection = Depends(get_db)):
+async def get_vault(
+    vault_id: int,
+    conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(require_vault_permission("read")),
+):
     """
     Get a single vault with counts.
 
@@ -145,7 +152,7 @@ async def get_vault(vault_id: int, conn: sqlite3.Connection = Depends(get_db)):
 async def create_vault(
     request: VaultCreateRequest,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(get_current_active_user),
 ):
     """
     Create a new vault.
@@ -175,7 +182,7 @@ async def update_vault(
     vault_id: int,
     request: VaultUpdateRequest,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("write")),
 ):
     """
     Update vault name/description.
@@ -266,7 +273,7 @@ async def delete_vault(
     vault_id: int,
     conn: sqlite3.Connection = Depends(get_db),
     vector_store: VectorStore = Depends(get_vector_store),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("admin")),
 ):
     """
     Delete vault with cascade cleanup.

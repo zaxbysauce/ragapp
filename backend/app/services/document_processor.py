@@ -21,7 +21,7 @@ from ..config import settings
 from ..models.database import SQLiteConnectionPool, get_pool
 from ..utils.file_utils import compute_file_hash
 from ..utils.retry import with_retry
-from .chunking import SemanticChunker, ProcessedChunk
+from .chunking import SemanticChunker, EmbeddingSemanticChunker, ProcessedChunk
 from .contextual_chunking import ContextualChunker
 from .embeddings import EmbeddingService
 from .llm_client import LLMClient
@@ -365,6 +365,38 @@ class DocumentProcessor:
 
         return processed_chunks
 
+    async def _chunk_with_embedding(
+        self,
+        text: str,
+        max_chunk_size: int,
+        overlap_ratio: float
+    ) -> List[ProcessedChunk]:
+        """Chunk text using embedding-based semantic chunking."""
+        if self.embedding_service is None:
+            raise ValueError("Embedding service not available")
+
+        chunker = EmbeddingSemanticChunker(
+            embedding_service=self.embedding_service,
+            max_chunk_size=max_chunk_size,
+            min_chunk_size=min(100, max_chunk_size // 4),
+        )
+        # chunk_text is async, await it directly
+        return await chunker.chunk_text(text)
+
+    async def _chunk_with_title(
+        self,
+        elements: List[Any],
+        chunk_size: int,
+        overlap_ratio: float
+    ) -> List[ProcessedChunk]:
+        """Chunk elements using title-based semantic chunking."""
+        chunk_overlap = int(chunk_size * overlap_ratio)
+        chunker = SemanticChunker(
+            chunk_size_chars=chunk_size,
+            chunk_overlap_chars=chunk_overlap
+        )
+        return await asyncio.to_thread(chunker.chunk_elements, elements)
+
     async def _process_document_file(
         self,
         file_path: str,
@@ -384,6 +416,9 @@ class DocumentProcessor:
         # Join all element texts for use as context in contextual chunking
         document_text = "\n".join([str(e) for e in elements])
 
+        # Check if embedding-based semantic chunking is enabled
+        use_embedding_chunking = settings.semantic_chunking_strategy == "embedding"
+
         # Check if multi-scale indexing is enabled
         if settings.multi_scale_indexing_enabled:
             # Parse chunk sizes from settings
@@ -392,15 +427,19 @@ class DocumentProcessor:
 
             all_chunks = []
             for scale in scales:
-                # Create chunker for this scale
-                chunk_overlap = int(scale * settings.multi_scale_overlap_ratio)
-                scale_chunker = SemanticChunker(
-                    chunk_size_chars=scale,
-                    chunk_overlap_chars=chunk_overlap
-                )
-
-                # Chunk elements with this scale's chunker
-                scale_chunks = await asyncio.to_thread(scale_chunker.chunk_elements, elements)
+                if use_embedding_chunking and self.embedding_service is not None:
+                    # Use embedding-based semantic chunking
+                    try:
+                        scale_chunks = await self._chunk_with_embedding(
+                            document_text, scale, settings.multi_scale_overlap_ratio
+                        )
+                        logger.info("Embedding semantic chunking: scale=%d, chunks=%d", scale, len(scale_chunks))
+                    except Exception as e:
+                        logger.warning("Embedding chunking failed for scale %d, falling back to title-based: %s", scale, e)
+                        scale_chunks = await self._chunk_with_title(elements, scale, settings.multi_scale_overlap_ratio)
+                else:
+                    # Use title-based semantic chunking
+                    scale_chunks = await self._chunk_with_title(elements, scale, settings.multi_scale_overlap_ratio)
 
                 # Add chunk_scale metadata to each chunk
                 for idx, chunk in enumerate(scale_chunks):
@@ -421,8 +460,21 @@ class DocumentProcessor:
 
             return all_chunks, document_text
         else:
-            # Existing single-scale behavior
-            chunks = await asyncio.to_thread(self.chunker.chunk_elements, elements)
+            # Single-scale behavior
+            if use_embedding_chunking and self.embedding_service is not None:
+                # Use embedding-based semantic chunking
+                try:
+                    chunk_size = settings.chunk_size_chars or 2000
+                    chunks = await self._chunk_with_embedding(
+                        document_text, chunk_size, 0.1
+                    )
+                    logger.info("Embedding semantic chunking: chunks=%d", len(chunks))
+                except Exception as e:
+                    logger.warning("Embedding chunking failed, falling back to title-based: %s", e)
+                    chunks = await asyncio.to_thread(self.chunker.chunk_elements, elements)
+            else:
+                # Use title-based semantic chunking (default)
+                chunks = await asyncio.to_thread(self.chunker.chunk_elements, elements)
             return chunks, document_text
 
     async def process_file(

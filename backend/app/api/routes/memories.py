@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.memory_store import MemoryStore, MemoryRecord, MemoryStoreError
-from app.api.deps import get_memory_store, get_db
+from app.api.deps import get_memory_store, get_db, get_current_active_user
 from app.security import require_auth
 
 
@@ -164,6 +164,7 @@ async def _perform_memory_search(memory_store: MemoryStore, query: str, limit: i
 async def list_memories(
     vault_id: Optional[int] = Query(None, description="Filter by vault ID"),
     conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(get_current_active_user),
 ):
     """
     List all memories.
@@ -249,7 +250,7 @@ async def update_memory(
     memory_id: int,
     request: MemoryUpdateRequest,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(get_current_active_user),
 ):
     """
     Update an existing memory.
@@ -357,7 +358,7 @@ async def update_memory(
 async def delete_memory(
     memory_id: int,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(get_current_active_user),
 ):
     """
     Delete a memory.
@@ -386,6 +387,7 @@ async def search_memories(
     limit: int = Query(5, ge=1, le=100, description="Maximum number of results"),
     vault_id: Optional[int] = Query(None, description="Filter by vault ID"),
     memory_store: MemoryStore = Depends(get_memory_store),
+    user: dict = Depends(get_current_active_user),
 ):
     """
     Search memories using full-text search.
@@ -401,6 +403,7 @@ async def search_memories(
 async def search_memories_post(
     request: MemorySearchRequest,
     memory_store: MemoryStore = Depends(get_memory_store),
+    user: dict = Depends(get_current_active_user),
 ):
     # Handle empty or whitespace-only queries gracefully
     if not request.query or not request.query.strip():

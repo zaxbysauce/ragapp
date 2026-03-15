@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
 from app.config import settings
-from app.api.deps import get_csrf_manager, get_db
-from app.security import CSRFManager, issue_csrf_token, require_auth
+from app.api.deps import get_csrf_manager, get_db, get_current_active_user
+from app.security import CSRFManager, issue_csrf_token
 
 router = APIRouter()
 
@@ -383,7 +383,9 @@ def _apply_settings_update(update: SettingsUpdate) -> SettingsResponse:
 
 
 @router.get("/settings", response_model=SettingsResponse)
-def get_settings():
+def get_settings(
+    user: dict = Depends(get_current_active_user),
+):
     """Return current public settings dict (including embedding_batch_size)."""
     settings_dict = {
         "port": settings.port,
@@ -438,7 +440,7 @@ def get_settings():
 def post_settings(
     update: SettingsUpdate,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(get_current_active_user),
 ):
     """Apply settings update and persist to database."""
     result = _apply_settings_update(update)
@@ -450,7 +452,7 @@ def post_settings(
 def put_settings(
     update: SettingsUpdate,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(get_current_active_user),
 ):
     """Apply settings update and persist to database."""
     result = _apply_settings_update(update)
@@ -468,7 +470,9 @@ def get_csrf_token(
 
 
 @router.get("/settings/connection")
-async def test_connection():
+async def test_connection(
+    user: dict = Depends(get_current_active_user),
+):
     """Test connectivity to Ollama endpoints and reranker."""
     targets = {
         "embeddings": settings.ollama_embedding_url,
