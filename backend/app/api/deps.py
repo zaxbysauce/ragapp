@@ -1,5 +1,6 @@
 """FastAPI dependency functions."""
 
+import secrets
 import sqlite3
 from contextlib import contextmanager
 
@@ -128,8 +129,8 @@ async def get_current_active_user(
     """
     FastAPI dependency to get the current authenticated user.
     
-    Extracts and validates JWT token from Authorization header,
-    then fetches user details from database.
+    When users_enabled=False: Validates against admin_secret_token
+    When users_enabled=True: Validates JWT token and fetches user from database
     
     Args:
         authorization: Bearer token from Authorization header
@@ -153,6 +154,29 @@ async def get_current_active_user(
         raise HTTPException(status_code=401, detail="Token missing")
     
     token = parts[1].strip()
+    
+    # When users are disabled, fall back to admin token authentication
+    if not settings.users_enabled:
+        # Default token that must be changed before auth works
+        DEFAULT_TOKEN = "admin-secret-token"
+        
+        # SECURITY: Reject default token to prevent auth bypass
+        if secrets.compare_digest(token, DEFAULT_TOKEN):
+            raise HTTPException(status_code=403, detail="Invalid credentials - change default admin token")
+        
+        if not secrets.compare_digest(token, settings.admin_secret_token):
+            raise HTTPException(status_code=403, detail="Invalid credentials")
+        
+        # Return a pseudo-superadmin user for admin token auth
+        return {
+            "id": 0,
+            "username": "admin",
+            "full_name": "Admin",
+            "role": "superadmin",
+            "is_active": True,
+        }
+    
+    # User authentication enabled - validate JWT token
     payload = decode_access_token(token)
     
     if not payload:
