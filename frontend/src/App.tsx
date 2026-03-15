@@ -3,6 +3,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { RoleGuard } from "@/components/RoleGuard";
 import { PageShell } from "@/components/layout/PageShell";
+import { useAuthStore } from "@/stores/authStore";
 import ChatShell from "@/pages/ChatShell";
 import ChatPage from "@/pages/ChatPage";
 import ChatPageRedesigned from "@/pages/ChatPageRedesigned";
@@ -16,7 +17,7 @@ import AdminUsersPage from "@/pages/AdminUsersPage";
 import OrgsPage from "@/pages/OrgsPage";
 import ProfilePage from "@/pages/ProfilePage";
 import { useHealthCheck } from "@/hooks/useHealthCheck";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 type PageId = "chat" | "documents" | "memory" | "vaults" | "settings" | "admin" | "orgs" | "profile";
 
@@ -133,6 +134,11 @@ function RedesignShell() {
 }
 
 function App() {
+  // Initialize auth store on app load
+  useEffect(() => {
+    useAuthStore.getState().checkAuth();
+  }, []);
+
   return (
     <BrowserRouter>
       <AuthProvider>

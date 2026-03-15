@@ -110,11 +110,14 @@ export const useAuthStore = create<AuthState>()(
       checkAuth: async () => {
         const { accessToken } = get();
 
+        // Set loading state
+        set({ isLoading: true });
+
         // If no access token, try to refresh
         if (!accessToken) {
           const refreshed = await get().refreshToken();
           if (!refreshed) {
-            set({ isAuthenticated: false });
+            set({ isAuthenticated: false, isLoading: false });
             return;
           }
         }
@@ -128,7 +131,7 @@ export const useAuthStore = create<AuthState>()(
 
           if (response.ok) {
             const user = await response.json();
-            set({ user, isAuthenticated: true });
+            set({ user, isAuthenticated: true, isLoading: false });
           } else if (response.status === 401) {
             // Token expired, try refresh
             const refreshed = await get().refreshToken();
@@ -139,17 +142,17 @@ export const useAuthStore = create<AuthState>()(
               });
               if (retryResponse.ok) {
                 const user = await retryResponse.json();
-                set({ user, isAuthenticated: true });
+                set({ user, isAuthenticated: true, isLoading: false });
               } else {
-                set({ user: null, accessToken: null, isAuthenticated: false });
+                set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
               }
             }
           } else {
-            set({ user: null, accessToken: null, isAuthenticated: false });
+            set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
           }
         } catch (error) {
           console.error('Auth check failed:', error);
-          set({ user: null, accessToken: null, isAuthenticated: false });
+          set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
         }
       },
     }),
