@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional, TYPE_CHECKING
@@ -16,6 +15,11 @@ from app.services.vector_store import VectorStore
 from app.services.query_transformer import QueryTransformer
 from app.services.retrieval_evaluator import RetrievalEvaluator
 from app.utils.fusion import rrf_fuse
+
+# Deferred import to avoid circular dependency
+def _get_pool():
+    from app.models.database import get_pool
+    return get_pool(str(settings.sqlite_path))
 
 if TYPE_CHECKING:
     from app.services.context_distiller import ContextDistiller
@@ -157,13 +161,15 @@ class RAGEngine:
 
         # Generate sparse query vector for learned sparse retrieval (original query only)
         query_sparse: Optional[dict] = None
+        effective_alpha = self.hybrid_alpha
         if settings.tri_vector_search_enabled and getattr(self.embedding_service, "supports_tri_vector", False):
             try:
                 query_sparse = await self.embedding_service.embed_query_sparse(user_input)
                 logger.debug("Sparse query vector: %d tokens", len(query_sparse))
             except EmbeddingError as e:
-                logger.warning("Sparse query vector generation failed, falling back to BM25: %s", e)
+                logger.warning("Sparse query vector generation failed, using alpha=1.0 (dense only): %s", e)
                 query_sparse = None
+                effective_alpha = 1.0  # Use dense-only search on sparse failure
 
         fallback_reason: Optional[str] = None
         vector_results: List[Dict[str, Any]]
@@ -197,10 +203,10 @@ class RAGEngine:
                         self.vector_store.search,
                         embedding,
                         int(top_k_value),
-                        vault_id=str(vault_id) if vault_id is not None else None,
+                        vault_id=vault_id,
                         query_text=user_input if is_original else "",
                         hybrid=self.hybrid_search_enabled and is_original,
-                        hybrid_alpha=self.hybrid_alpha,
+                        hybrid_alpha=effective_alpha,
                         query_sparse=query_sparse if is_original else None,
                     )
                     all_results.append(results)
@@ -260,6 +266,24 @@ class RAGEngine:
                     except Exception as e:
                         logger.warning(f"Reranking failed, using original results: {e}")
 
+                # Pack context by token budget (convert to RAGSource first for packing)
+                if vector_results:
+                    temp_sources = [
+                        RAGSource(
+                            text=r.get("text", ""),
+                            file_id=str(r.get("file_id", "")),
+                            score=r.get("_distance", 0.0),
+                            metadata=r.get("metadata", {}),
+                        )
+                        for r in vector_results
+                    ]
+                    packed_sources = self._pack_context_by_token_budget(
+                        temp_sources, settings.context_max_tokens
+                    )
+                    # Filter vector_results to match packed sources
+                    packed_texts = {s.text for s in packed_sources}
+                    vector_results = [r for r in vector_results if r.get("text") in packed_texts]
+
                 # Final limit to retrieval_top_k
                 vector_results = vector_results[:self.retrieval_top_k]
 
@@ -314,7 +338,7 @@ class RAGEngine:
             memories = await asyncio.to_thread(
                 self.memory_store.search_memories,
                 user_input,
-                settings.max_context_chunks,
+                self.retrieval_top_k,
                 vault_id=vault_id,
             )
         except Exception as exc:
@@ -379,12 +403,10 @@ class RAGEngine:
             )
 
             def _query() -> list:
-                conn = sqlite3.connect(settings.sqlite_path)
-                try:
+                pool = _get_pool()
+                with pool.connection() as conn:
                     rows = conn.execute(sql, file_ids).fetchall()
                     return rows
-                finally:
-                    conn.close()
 
             rows = await asyncio.to_thread(_query)
             if rows:
@@ -493,49 +515,41 @@ class RAGEngine:
         # DEBUG: Log filtering results summary
         filtered_count = len(sources)
         if input_count > 0 and filtered_count == 0:
-            # Use safe threshold value for logging
-            safe_threshold = self.max_distance_threshold
-            if safe_threshold is None:
-                safe_threshold = self.relevance_threshold
-            # Log with %s if still None, otherwise format as float
-            if safe_threshold is None:
-                logger.warning(
-                    "Threshold filtering removed all %d results (max_distance_threshold=%s). "
-                    "Applying fallback: returning top %d results without threshold filtering.",
-                    input_count,
-                    safe_threshold,
-                    min(self.retrieval_top_k, len(results))
-                )
-            else:
-                logger.warning(
-                    "Threshold filtering removed all %d results (max_distance_threshold=%.3f). "
-                    "Applying fallback: returning top %d results without threshold filtering.",
-                    input_count,
-                    safe_threshold,
-                    min(self.retrieval_top_k, len(results))
-                )
-            # Fallback: return first min(retrieval_top_k, len(results)) results without threshold filtering
-            fallback_limit = min(self.retrieval_top_k, len(results))
-            sources = []
-            for record in results[:fallback_limit]:
-                distance = record.get("_distance")
-                if distance is None:
-                    score = record.get("score")
-                    if score is None:
-                        score = 1.0
-                    distance = score
-                sources.append(
-                    RAGSource(
-                        text=record.get("text", ""),
-                        file_id=record.get("file_id", ""),
-                        score=distance,
-                        metadata=self._normalize_metadata(record.get("metadata")),
-                    )
-                )
+            # All chunks exceeded threshold - return empty list (NO_MATCH)
+            logger.warning(
+                "All %d chunks exceeded max_distance_threshold - returning NO_MATCH",
+                input_count
+            )
+            return []
         logger.debug("Filtering complete: %d results returned", len(sources))
 
         return sources
     
+    def _normalize_uid_for_dedup(self, uid: str) -> str:
+        """
+        Normalize a chunk UID for deduplication by stripping scale suffix.
+        
+        Converts multi-scale UIDs like "file_id_512_0" to "file_id_0" format
+        for deduplication purposes. This ensures the same chunk at different
+        scales is treated as the same document.
+        
+        Args:
+            uid: Chunk UID in format "file_id_idx" or "file_id_scale_idx"
+            
+        Returns:
+            Normalized UID for deduplication
+        """
+        if "_" not in uid:
+            return uid
+        
+        parts = uid.rsplit("_", 2)
+        if len(parts) == 3:
+            # 3-part format: file_id_scale_index -> file_id_index
+            file_id, _scale, chunk_index = parts
+            return f"{file_id}_{chunk_index}"
+        # 2-part format: file_id_index (already normalized)
+        return uid
+
     def _expand_window(self, sources: List[RAGSource]) -> List[RAGSource]:
         """
         Expand search results by fetching adjacent chunks (N±window).
@@ -626,13 +640,17 @@ class RAGEngine:
                     uid = f"{source.file_id}_{chunk_scale}_{chunk_index}"
                 else:
                     uid = f"{source.file_id}_{chunk_index}"
-                if uid not in seen_uids:
+                # Use normalized UID for deduplication (strips scale suffix)
+                normalized_uid = self._normalize_uid_for_dedup(uid)
+                if normalized_uid not in seen_uids:
                     expanded_sources.append(source)
-                    seen_uids.add(uid)
+                    seen_uids.add(normalized_uid)
             
             # Then, add adjacent chunks that aren't already in the results
             for chunk_uid in chunk_uids_to_fetch:
-                if chunk_uid in seen_uids:
+                # Use normalized UID for deduplication (strips scale suffix)
+                normalized_uid = self._normalize_uid_for_dedup(chunk_uid)
+                if normalized_uid in seen_uids:
                     continue
                 
                 # Parse uid to get file_id, chunk_scale (optional), and chunk_index
@@ -679,7 +697,7 @@ class RAGEngine:
                         metadata=metadata,
                     )
                     expanded_sources.append(expanded_source)
-                    seen_uids.add(chunk_uid)
+                    seen_uids.add(normalized_uid)
             
             # Sort by (file_id, chunk_index)
             def sort_key(source: RAGSource) -> tuple:
@@ -701,7 +719,33 @@ class RAGEngine:
         # If no adjacent chunks fetched, return original sources
         return sources
 
+    def _pack_context_by_token_budget(self, chunks: List[RAGSource], max_tokens: int = 6000) -> List[RAGSource]:
+        """
+        Pack context chunks by token budget, respecting max token limit.
+
+        Args:
+            chunks: List of RAGSource chunks to pack
+            max_tokens: Maximum tokens allowed (default 6000)
+
+        Returns:
+            List of RAGSource chunks that fit within the token budget
+        """
+        packed, token_count = [], 0
+        for chunk in chunks:
+            chunk_tokens = len(chunk.text) // 4
+            if token_count + chunk_tokens > max_tokens and packed:
+                break
+            packed.append(chunk)
+            token_count += chunk_tokens
+        return packed
+
     def _build_system_prompt(self) -> str:
+        CITATION_INSTRUCTION = (
+            "You must cite sources inline using [Source: <name>] format. "
+            "Every substantive claim must be backed by a citation from the provided context. "
+            "If multiple sources support a claim, cite all of them. "
+            "If you cannot find a source for a claim, do not make that claim."
+        )
         return (
             "You are KnowledgeVault, a highly accurate assistant. "
             "Answer questions using ONLY the context documents provided. "
@@ -711,7 +755,8 @@ class RAGEngine:
             "Always respond in clear, well-formatted markdown — use headings, bullet points, "
             "numbered lists, bold, and code blocks where appropriate. "
             "Never output raw JSON, XML, or any structured data format unless the user "
-            "explicitly requests it."
+            "explicitly requests it. "
+            + CITATION_INSTRUCTION
         )
 
     def _build_messages(

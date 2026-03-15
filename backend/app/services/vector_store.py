@@ -14,6 +14,9 @@ from app.utils.fusion import rrf_fuse
 
 logger = logging.getLogger(__name__)
 
+# Minimum rows required before creating vector index (IVF-PQ partitioning threshold)
+VECTOR_INDEX_MIN_ROWS = 256
+
 
 class VectorStoreError(Exception):
     """Custom exception for vector store errors."""
@@ -92,6 +95,7 @@ class VectorStore:
         ])
         
         # Create or open table with error handling
+        table_just_created = False
         try:
             if "chunks" in self.db.table_names():
                 try:
@@ -103,32 +107,84 @@ class VectorStore:
                     except Exception:
                         pass
                     self.table = self.db.create_table("chunks", schema=schema, mode="overwrite")
+                    table_just_created = True
             else:
                 self.table = self.db.create_table("chunks", schema=schema)
+                table_just_created = True
         except Exception as e:
             raise VectorStoreConnectionError(f"Failed to initialize 'chunks' table: {e}") from e
         
-        # Create vector index with configured metric (only for new tables)
-        if "chunks" not in self.db.table_names():
-            try:
-                self.table.create_index(
-                    metric=settings.vector_metric,  # "cosine" or "l2"
-                    num_partitions=256,
-                    num_sub_vectors=96,
-                    replace=True,
-                )
-                logger.info(f"Vector index created with metric={settings.vector_metric}")
-            except Exception as e:
-                logger.warning(f"Vector index creation failed: {e}")
+        # Defer vector index creation until sufficient rows (Bug B fix)
+        if table_just_created:
+            logger.info("Table created; vector index deferred until ≥256 rows")
         
-        # Create full-text search index on 'text' column for hybrid search
+        # Create FTS index only if missing (Bug C fix)
+        fts_index_exists = False
         try:
-            self.table.create_fts_index("text", replace=True)
-            logger.info("Full-text search index created on 'text' column")
-        except Exception as e:
-            logger.warning(f"FTS index creation failed (hybrid search will be unavailable): {e}")
+            indices = self.table.list_indices()
+            fts_index_exists = any(idx.name == "fts_text" for idx in indices)
+        except Exception:
+            pass
+        
+        if not fts_index_exists:
+            try:
+                self.table.create_fts_index("text", replace=True)
+                logger.info("Full-text search index created on 'text' column")
+            except Exception as e:
+                logger.warning(f"FTS index creation failed (hybrid search will be unavailable): {e}")
+        else:
+            logger.debug("FTS index already exists, skipping creation")
         
         return self
+    
+    def _maybe_create_vector_index(self) -> None:
+        """
+        Conditionally create vector ANN index if conditions are met.
+        
+        Checks:
+        1. Skip if embedding_idx already exists (fast path)
+        2. Skip if row count < VECTOR_INDEX_MIN_ROWS (256)
+        3. Create index with num_partitions=256, num_sub_vectors=96
+        """
+        if self.table is None:
+            return
+        
+        # Fast path: check if index already exists
+        try:
+            indices = self.table.list_indices()
+            if any(idx.name == "embedding_idx" for idx in indices):
+                logger.debug("Vector index already exists, skipping creation")
+                return
+        except Exception as e:
+            logger.debug(f"Could not check existing indices: {e}")
+        
+        # Check row count
+        try:
+            row_count = self.table.count_rows()
+        except Exception as e:
+            logger.debug(f"Could not get row count: {e}")
+            return
+        
+        if row_count < VECTOR_INDEX_MIN_ROWS:
+            logger.debug(
+                f"Vector index deferred: {row_count} rows < {VECTOR_INDEX_MIN_ROWS} threshold"
+            )
+            return
+        
+        # Create the index
+        try:
+            self.table.create_index(
+                metric=settings.vector_metric,  # "cosine" or "l2"
+                num_partitions=256,
+                num_sub_vectors=96,
+                replace=True,
+            )
+            logger.info(
+                f"Vector index created with metric={settings.vector_metric} "
+                f"({row_count} rows)"
+            )
+        except Exception as e:
+            logger.warning(f"Vector index creation failed: {e}")
     
     def _get_expected_embedding_dim(self) -> Optional[int]:
         """Get the expected embedding dimension from the table schema."""
@@ -219,6 +275,9 @@ class VectorStore:
             processed_records.append(processed_record)
         
         self.table.add(processed_records)
+        
+        # Conditionally create vector index if threshold reached
+        self._maybe_create_vector_index()
     
     def _search_single_scale(
         self,
@@ -226,7 +285,7 @@ class VectorStore:
         scale: str,
         fetch_k: int,
         filter_expr: Optional[str] = None,
-        vault_id: Optional[str] = None,
+        vault_id: Optional[int] = None,
         query_text: str = "",
         hybrid: bool = True,
         query_sparse: Optional[dict] = None,
@@ -327,7 +386,7 @@ class VectorStore:
         self,
         query_sparse: dict,
         limit: int,
-        vault_id: Optional[str] = None,
+        vault_id: Optional[int] = None,
         filter_expr: Optional[str] = None,
         scale: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
@@ -384,7 +443,7 @@ class VectorStore:
         embedding: List[float],
         limit: int = 10,
         filter_expr: Optional[str] = None,
-        vault_id: Optional[str] = None,
+        vault_id: Optional[int] = None,
         query_text: str = "",
         hybrid: bool = True,
         hybrid_alpha: float = 0.5,
@@ -617,7 +676,7 @@ class VectorStore:
 
         return count_before
 
-    def delete_by_vault(self, vault_id: str) -> int:
+    def delete_by_vault(self, vault_id: int) -> int:
         """
         Delete all chunks for a given vault_id.
 

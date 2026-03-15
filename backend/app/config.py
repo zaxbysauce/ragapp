@@ -71,17 +71,17 @@ class Settings(BaseSettings):
     """TEI-compatible reranker endpoint URL. Empty = use sentence-transformers locally."""
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     """HuggingFace model ID for local reranking, or model name sent to TEI endpoint."""
-    reranking_enabled: bool = False
+    reranking_enabled: bool = True
     """Enable cross-encoder reranking after vector retrieval."""
-    reranker_top_n: int = 5
+    reranker_top_n: int = 7
     """Number of chunks to keep after reranking."""
-    initial_retrieval_top_k: int = 20
+    initial_retrieval_top_k: int = 25
     """Chunks fetched from vector store BEFORE reranking."""
 
     # ── Hybrid search configuration ─────────────────────────────────────────
     hybrid_search_enabled: bool = True
     """Combine BM25 keyword search with dense vector search using RRF fusion."""
-    hybrid_alpha: float = 0.5
+    hybrid_alpha: float = 0.6
     """Weight for dense vs sparse scores in RRF. 0.0 = pure BM25, 1.0 = pure dense."""
 
     # ── Contextual chunking configuration ─────────────────────────────────────
@@ -99,11 +99,11 @@ class Settings(BaseSettings):
     """Overlap ratio between adjacent chunks at each scale (0.0-1.0)."""
 
     # ── Query transformation configuration ────────────────────────────────────
-    query_transformation_enabled: bool = False
+    query_transformation_enabled: bool = True
     """Enable query transformation using step-back prompting for broader retrieval."""
 
     # ── Retrieval evaluation configuration ────────────────────────────────────
-    retrieval_evaluation_enabled: bool = False
+    retrieval_evaluation_enabled: bool = True
     """Enable CRAG-style retrieval evaluation (CONFIDENT/AMBIGUOUS/NO_MATCH classification)."""
 
     # ── Tri-vector embedding configuration (BGE-M3) ────────────────────────────
@@ -113,15 +113,23 @@ class Settings(BaseSettings):
     """URL of the FlagEmbedding server for BGE-M3 tri-vector embeddings."""
 
     # ── Context distillation configuration ──────────────────────────────────────
-    context_distillation_enabled: bool = False
+    context_distillation_enabled: bool = True
     """Enable pre-generation context distillation (deduplication + optional LLM synthesis)."""
     context_distillation_dedup_threshold: float = 0.92
     """Cosine similarity threshold for sentence-level deduplication (0.0-1.0). Higher = stricter."""
     context_distillation_synthesis_enabled: bool = False
     """Enable LLM synthesis pass for NO_MATCH/AMBIGUOUS retrieval results."""
 
+    # ── Context packing configuration ───────────────────────────────────────────
+    context_max_tokens: int = 6000
+    """Maximum tokens for context packing in RAG pipeline."""
+
+    # ── Semantic chunking configuration ─────────────────────────────────────────
+    semantic_chunking_strategy: str = "title"
+    """Semantic chunking strategy: 'title' (default) or 'embedding'."""
+
     # ── HyDE (Hypothetical Document Embeddings) configuration ───────────────────
-    hyde_enabled: bool = False
+    hyde_enabled: bool = True
     """Enable HyDE: generate a hypothetical answer passage and embed it as additional query vector."""
 
     # ── Sparse search configuration ──────────────────────────────────────────────
@@ -138,7 +146,11 @@ class Settings(BaseSettings):
     chunk_overlap: int | None = None
     """[DEPRECATED] Token-based chunk overlap. Use chunk_overlap_chars instead."""
     max_context_chunks: int = 10
-    """[DEPRECATED] Number of context chunks. Use retrieval_top_k instead."""
+    """[DEPRECATED] Number of context chunks. Use retrieval_top_k instead.
+
+    Note: Verified via grep - no other usages in core retrieval logic.
+    Only remaining references are in tests and API schema for backward compatibility.
+    """
 
     # RAG configuration (legacy - DEPRECATED)
     rag_relevance_threshold: float | None = None
@@ -163,6 +175,11 @@ class Settings(BaseSettings):
 
     # Admin security
     admin_secret_token: str = "admin-secret-token"
+
+    # JWT configuration
+    jwt_secret_key: str = "change-me-to-a-random-64-char-string"
+    jwt_algorithm: str = "HS256"
+
     audit_hmac_key_version: str = "v1"
 
     # Security settings
@@ -313,6 +330,13 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def warn_deprecated_max_context_chunks(self) -> "Settings":
+        """Warn if deprecated max_context_chunks is set to non-default value."""
+        if self.max_context_chunks != 10:
+            logger.warning("max_context_chunks is deprecated. Use retrieval_top_k.")
+        return self
+
     @field_validator("context_distillation_dedup_threshold", mode="after")
     @classmethod
     def validate_dedup_threshold(cls, v: float) -> float:
@@ -356,7 +380,38 @@ class Settings(BaseSettings):
         path = self.data_dir / "vaults"
         path.mkdir(parents=True, exist_ok=True)
         return path
-    
+
+    def vault_dir(self, vault_id: int) -> Path:
+        """
+        Canonical per-vault storage directory, keyed by integer ID.
+
+        PERFORMANCE CONTRACT: This function MUST NOT query the database.
+        vault_id is always available in memory at call sites (from the
+        already-loaded vault object or route path parameter). This design
+        eliminates the legacy _get_vault_name() DB round-trip that caused
+        a synchronous pool checkout on every file path resolution.
+
+        CROSS-PLATFORM: Uses pathlib.Path which handles platform differences
+        automatically (forward slashes on Unix, backslashes on Windows).
+        """
+        # Ensure cross-platform compatibility
+        # Path already handles platform differences automatically
+        path = self.data_dir / "vaults" / str(vault_id)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def vault_uploads_dir(self, vault_id: int) -> Path:
+        """Canonical per-vault uploads directory."""
+        path = self.vault_dir(vault_id) / "uploads"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def vault_documents_dir(self, vault_id: int) -> Path:
+        """Canonical per-vault documents directory."""
+        path = self.vault_dir(vault_id) / "documents"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     @property
     def orphan_vault_id(self) -> int:
         """Default vault ID for files not associated with a specific vault."""

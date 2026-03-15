@@ -13,7 +13,6 @@ from typing import Optional, Set
 from ..config import settings
 from ..models.database import SQLiteConnectionPool
 from .background_tasks import BackgroundProcessor
-from .upload_path import UploadPathProvider
 
 
 logger = logging.getLogger(__name__)
@@ -107,22 +106,18 @@ class FileWatcher:
         """
         enqueued_count = 0
         # Scan vault-specific upload directories + library
-        provider = UploadPathProvider()
         directories = [settings.library_dir]
-        
-        # Add each vault's upload directory
+
+        # Add each vault's upload directory using vault_id-based paths
         try:
             from app.models.database import get_pool
             pool = get_pool(str(settings.sqlite_path))
             conn = pool.get_connection()
             try:
-                vaults = conn.execute("SELECT id, name FROM vaults").fetchall()
+                vaults = conn.execute("SELECT id FROM vaults").fetchall()
                 for row in vaults:
                     vault_id = row[0]
-                    vault_name = row[1]
-                    # Sanitize vault name for filesystem
-                    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in vault_name)
-                    vault_upload_dir = settings.vaults_dir / safe_name / "uploads"
+                    vault_upload_dir = settings.vault_uploads_dir(vault_id)
                     directories.append(vault_upload_dir)
             finally:
                 pool.release_connection(conn)

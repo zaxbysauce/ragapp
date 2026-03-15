@@ -21,32 +21,12 @@ class UploadPathProvider:
     def get_upload_dir(self, vault_id: int) -> Path:
         """
         Returns the upload directory for a specific vault.
-        
+
         Creates the directory if it doesn't exist.
         """
-        vault_name = self._get_vault_name(vault_id)
-        # Sanitize vault name for filesystem (replace invalid chars)
-        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in vault_name)
-        vault_dir = settings.vaults_dir / safe_name / "uploads"
+        vault_dir = settings.vault_uploads_dir(vault_id)
         vault_dir.mkdir(parents=True, exist_ok=True)
         return vault_dir
-    
-    def _get_vault_name(self, vault_id: int) -> str:
-        """Lookup vault name from database."""
-        try:
-            from app.models.database import get_pool
-            pool = get_pool(str(settings.sqlite_path))
-            conn = pool.get_connection()
-            try:
-                row = conn.execute(
-                    "SELECT name FROM vaults WHERE id = ?",
-                    (vault_id,)
-                ).fetchone()
-                return row[0] if row else f"vault_{vault_id}"
-            finally:
-                pool.release_connection(conn)
-        except Exception:
-            return f"vault_{vault_id}"
     
     def resolve(self, filename: str, vault_id: int) -> Path:
         """Returns full path for an existing upload file."""
@@ -276,3 +256,101 @@ def _rename_vault_folder(old_name: str, new_name: str) -> bool:
     except (OSError, PermissionError, shutil.Error) as e:
         logger.error(f"Failed to rename vault folder: {e}")
         return False
+
+
+def migrate_vault_paths(sqlite_path: str, data_dir: Path) -> None:
+    """
+    One-time migration: rename vaults/{sanitized_name}/ → vaults/{id}/ directories.
+    Idempotent — safe to run on every startup.
+    Creates automatic backup before migration.
+
+    Algorithm:
+    1. Query vaults table for all (id, name) pairs
+    2. old_path = data_dir/vaults/{sanitize(name)}/
+    3. new_path = data_dir/vaults/{id}/
+    4. If old_path exists and new_path does not: os.rename(old_path, new_path)
+    5. If both exist: merge contents, log warning
+    6. If only new_path exists: already migrated, skip
+    
+    Backup:
+    - Creates backup directory at data_dir/vaults/.migration_backup/
+    - Copies all vault directories before migration
+    """
+    import os
+
+    from app.models.database import get_pool
+
+    vaults_dir = data_dir / "vaults"
+    backup_dir = data_dir / "vaults" / ".migration_backup"
+
+    # Create backup before migration
+    if vaults_dir.exists() and not backup_dir.exists():
+        logger.info("Creating vault path migration backup...")
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for item in vaults_dir.iterdir():
+            if item.is_dir() and item.name != ".migration_backup":
+                backup_path = backup_dir / item.name
+                shutil.copytree(item, backup_path, dirs_exist_ok=True)
+        logger.info(f"Backup created at {backup_dir}")
+
+    # Get vault mappings from database
+    conn = None
+    try:
+        pool = get_pool(sqlite_path)
+        conn = pool.get_connection()
+        try:
+            rows = conn.execute("SELECT id, name FROM vaults").fetchall()
+        finally:
+            pool.release_connection(conn)
+            conn = None
+    except Exception as e:
+        logger.warning(f"Could not query vaults for migration: {e}")
+        if conn is not None:
+            try:
+                pool.release_connection(conn)
+            except Exception:
+                pass
+        return
+
+    migrated_count = 0
+    for vault_id, vault_name in rows:
+        # Sanitize name the same way as old code
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in vault_name)
+        old_path = vaults_dir / safe_name
+        new_path = vaults_dir / str(vault_id)
+
+        if not old_path.exists():
+            # Already migrated or never existed
+            continue
+
+        if new_path.exists():
+            # Both exist - merge contents
+            logger.warning(f"Both paths exist for vault {vault_id} ({vault_name}). Merging contents.")
+            for item in old_path.iterdir():
+                dest = new_path / item.name
+                if dest.exists():
+                    logger.warning(f"Skipping {item} - already exists at destination")
+                else:
+                    shutil.move(str(item), str(dest))
+            # Remove empty old directory
+            try:
+                old_path.rmdir()
+            except OSError:
+                pass
+        else:
+            # Rename old to new
+            os.rename(old_path, new_path)
+            logger.info(f"Migrated vault {vault_id}: {safe_name} → {vault_id}")
+            migrated_count += 1
+
+    if migrated_count > 0:
+        logger.info(f"Vault path migration complete. Migrated {migrated_count} vaults.")
+
+    # Verify data integrity after migration
+    if migrated_count > 0:
+        logger.info(f"Verifying migration integrity...")
+        for vault_id, _ in rows:
+            new_path = vaults_dir / str(vault_id)
+            if new_path.exists():
+                file_count = len(list(new_path.rglob('*')))
+                logger.debug(f"Vault {vault_id}: {file_count} files")

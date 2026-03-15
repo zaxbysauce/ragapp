@@ -143,6 +143,9 @@ def require_scope(scope: str) -> Callable:
         authorization: str = Header(None),
         x_scopes: str = Header(""),
     ) -> dict[str, str]:
+        # Default token that must be changed before auth works
+        DEFAULT_TOKEN = "admin-secret-token"
+        
         if not authorization:
             raise HTTPException(status_code=401, detail="Authorization header missing")
         if not authorization.lower().startswith("bearer "):
@@ -154,6 +157,11 @@ def require_scope(scope: str) -> Callable:
         scopes = [s.strip().lower() for s in x_scopes.split(",") if s.strip()]
         if scope.lower() not in scopes:
             raise HTTPException(status_code=403, detail="Missing required scope")
+        
+        # SECURITY FIX: Reject default token to prevent auth bypass
+        if secrets.compare_digest(token, DEFAULT_TOKEN):
+            raise HTTPException(status_code=403, detail="Unauthorized token")
+        
         if not secrets.compare_digest(token, settings.admin_secret_token):
             raise HTTPException(status_code=403, detail="Unauthorized token")
         return {"user_id": token}
@@ -190,20 +198,29 @@ def issue_csrf_token(response: Response, csrf_manager: CSRFManager) -> str:
 def require_auth(
     authorization: str = Header(None),
 ) -> dict:
-    """Simple Bearer token auth. Skips if admin_secret_token is unconfigured."""
-    token_configured = settings.admin_secret_token not in ("", "admin-secret-token")
-    if not token_configured:
-        return {"authenticated": True}
+    """Simple Bearer token auth. Validates Bearer token against admin_secret_token.
+    
+    SECURITY: Rejects the default token 'admin-secret-token' to prevent
+    unauthorized access when admin hasn't configured a custom token.
+    """
+    # Default token that must be changed before auth works
+    DEFAULT_TOKEN = "admin-secret-token"
+    
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header required")
     if not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization scheme")
     parts = authorization.split(" ", 1)
     if len(parts) < 2 or not parts[1].strip():
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
+        raise HTTPException(status_code=401, detail="Token missing")
     token = parts[1].strip()
+    
+    # SECURITY FIX: Reject default token to prevent auth bypass
+    if secrets.compare_digest(token, DEFAULT_TOKEN):
+        raise HTTPException(status_code=403, detail="Invalid credentials")
+    
     if not secrets.compare_digest(token, settings.admin_secret_token):
-        raise HTTPException(status_code=403, detail="Invalid API key")
+        raise HTTPException(status_code=403, detail="Invalid credentials")
     return {"authenticated": True}
 
 

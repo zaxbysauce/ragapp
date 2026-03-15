@@ -18,10 +18,13 @@ from app.api.routes.admin import router as admin_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.documents import router as documents_router
 from app.api.routes.email import router as email_router
+from app.api.routes.eval import router as eval_router
 from app.api.routes.health import router as health_router
 from app.api.routes.memories import router as memories_router
+from app.api.routes.organizations import router as organizations_router
 from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
+from app.api.routes.vault_members import router as vault_members_router
 from app.api.routes.vaults import router as vaults_router
 from app.config import settings
 from app.models.database import run_migrations, get_pool
@@ -158,6 +161,14 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database and services
     run_migrations(str(settings.sqlite_path))
     _load_persisted_settings(str(settings.sqlite_path))
+
+    # Security warning for default admin token in single-user mode
+    if settings.admin_secret_token in ("", "admin-secret-token"):
+        if not settings.users_enabled:
+            logger.critical(
+                "SECURITY: ADMIN_SECRET_TOKEN is the default placeholder. "
+                "All API routes are effectively unauthenticated. Set a strong value in .env."
+            )
 
     # Migrate uploads to per-vault directories (run before accepting requests)
     try:
@@ -299,8 +310,11 @@ app.include_router(memories_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(vaults_router, prefix="/api")
+app.include_router(vault_members_router, prefix="/api")
+app.include_router(organizations_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(email_router, prefix="/api")
+app.include_router(eval_router, prefix="/api")
 
 # Register exception handler for validation errors (empty filename)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)

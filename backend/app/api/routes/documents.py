@@ -22,12 +22,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.config import settings, Settings
 from app.services.document_processor import DocumentProcessor, DocumentProcessingError, DuplicateFileError
 from app.services.vector_store import VectorStore
-from app.services.upload_path import UploadPathProvider
 from app.services.embeddings import EmbeddingService
 from app.services.secret_manager import SecretManager
 from app.models.database import SQLiteConnectionPool
-from app.api.deps import get_secret_manager, get_background_processor, get_vector_store, get_embedding_service, get_settings, get_db, get_db_pool
-from app.security import csrf_protect, require_scope, require_auth
+from app.api.deps import get_secret_manager, get_background_processor, get_vector_store, get_embedding_service, get_settings, get_db, get_db_pool, require_vault_permission, get_current_active_user
+from app.security import csrf_protect, require_scope
 from app.limiter import limiter
 from app.services.background_tasks import BackgroundProcessor
 
@@ -104,7 +103,7 @@ async def retry_document(
     file_id: int,
     request: Request,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_scope("documents:manage")),
+    user: dict = Depends(get_current_active_user),
     csrf_token: str = Depends(csrf_protect),
     secret_manager: SecretManager = Depends(get_secret_manager),
     background_processor: BackgroundProcessor = Depends(get_background_processor),
@@ -126,7 +125,7 @@ async def retry_document(
             file_id,
             "retry",
             "scheduled",
-            auth.get("user_id", "unknown"),
+            user.get("id", "unknown"),
             secret_manager,
             conn,
         )
@@ -141,7 +140,7 @@ async def retry_document(
             file_id,
             "retry",
             "error",
-            auth.get("user_id", "unknown"),
+            user.get("id", "unknown"),
             secret_manager,
             conn,
         )
@@ -248,6 +247,7 @@ def _row_to_document_response(row: sqlite3.Row) -> DocumentResponse:
 async def list_documents(
     vault_id: Optional[int] = Query(None, description="Filter by vault ID"),
     conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(get_current_active_user),
 ):
     """
     List all documents from the files table.
@@ -287,6 +287,7 @@ async def list_documents(
 async def get_document_stats(
     vault_id: Optional[int] = Query(None, description="Filter by vault ID"),
     conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(get_current_active_user),
 ):
     """
     Get counts of files and chunks.
@@ -349,7 +350,7 @@ async def upload_document_root(
     vector_store: VectorStore = Depends(get_vector_store),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     db_pool: SQLiteConnectionPool = Depends(get_db_pool),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("write")),
 ):
     """
     Upload endpoint at root /documents for frontend compatibility.
@@ -367,7 +368,7 @@ async def upload_document(
     vector_store: VectorStore = Depends(get_vector_store),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     db_pool: SQLiteConnectionPool = Depends(get_db_pool),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("write")),
 ):
     """
     Upload a file and process it with strict security controls.
@@ -406,8 +407,7 @@ async def _do_upload(
         db_pool.release_connection(conn)
 
     # Ensure uploads directory exists
-    provider = UploadPathProvider()
-    upload_dir = provider.get_upload_dir(vault_id or settings.orphan_vault_id)
+    upload_dir = settings.vault_uploads_dir(vault_id or settings.orphan_vault_id)
     upload_dir.mkdir(parents=True, exist_ok=True)
     
     # Sanitize filename
@@ -522,7 +522,7 @@ async def scan_directories(
     request: Request,
     background_processor: BackgroundProcessor = Depends(get_background_processor),
     db_pool: SQLiteConnectionPool = Depends(get_db_pool),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(get_current_active_user),
 ):
     """
     Trigger a scan of configured directories for new files.
@@ -568,7 +568,7 @@ async def delete_document(
     file_id: int,
     request: Request,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("write")),
     vector_store: VectorStore = Depends(get_vector_store),
 ):
     """
@@ -622,7 +622,7 @@ async def batch_delete_documents(
     request: Request,
     file_ids: List[str] = Body(..., embed=True, description="List of file IDs to delete"),
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("write")),
     vector_store: VectorStore = Depends(get_vector_store),
 ):
     """
@@ -677,7 +677,7 @@ async def delete_all_vault_documents(
     vault_id: int,
     request: Request,
     conn: sqlite3.Connection = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    user: dict = Depends(require_vault_permission("admin")),
     vector_store: VectorStore = Depends(get_vector_store),
 ):
     """
