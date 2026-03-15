@@ -172,8 +172,9 @@ class RAGEngine:
                 effective_alpha = 1.0  # Use dense-only search on sparse failure
 
         fallback_reason: Optional[str] = None
-        vector_results: List[Dict[str, Any]]
+        vector_results: List[Dict[str, Any]] = []
         relevance_hint: Optional[str] = None
+        reranking_applied = False
         
         # DEBUG: Log pre-vector-search state
         logger.debug(
@@ -263,6 +264,7 @@ class RAGEngine:
                             chunks=vector_results,
                             top_n=self.reranker_top_n,
                         )
+                        reranking_applied = True
                     except Exception as e:
                         logger.warning(f"Reranking failed, using original results: {e}")
 
@@ -368,11 +370,20 @@ class RAGEngine:
             "retrieval_top_k": self.retrieval_top_k,
         }
         
+        # Determine score_type based on retrieval method
+        if reranking_applied:
+            score_type = "rerank_score"
+        elif self.hybrid_search_enabled:
+            score_type = "hybrid_rrf"
+        else:
+            score_type = "dense_distance"
+        
         yield {
             "type": "done",
             "sources": [self._source_metadata(c) for c in relevant_chunks],
             "memories_used": [mem.content for mem in memories],
             "retrieval_debug": retrieval_debug,
+            "score_type": score_type,
         }
 
     async def _distill_context(
