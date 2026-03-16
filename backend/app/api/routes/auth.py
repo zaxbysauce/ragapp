@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Cookie, Depends, Field, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -26,14 +26,14 @@ REFRESH_TOKEN_MAX_AGE_DAYS = 30
 
 # Request models
 class RegisterRequest(BaseModel):
-    username: str
-    password: str
-    full_name: str = ""
+    username: str = Field(max_length=255)
+    password: str = Field(max_length=128)
+    full_name: str = Field(default="", max_length=255)
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(max_length=255)
+    password: str = Field(max_length=128)
 
 
 @router.post("/register")
