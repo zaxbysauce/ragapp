@@ -2,8 +2,9 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
 
 from app.api.deps import get_current_active_user, get_db
 from app.models.database import get_pool
@@ -23,13 +24,23 @@ REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
 REFRESH_TOKEN_MAX_AGE_DAYS = 30
 
 
+# Request models
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    full_name: str = ""
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 @router.post("/register")
 @limiter.limit("5/hour")
 async def register(
     request: Request,
-    username: str,
-    password: str,
-    full_name: str = "",
+    body: RegisterRequest,
     db=Depends(get_db),
 ):
     """
@@ -38,13 +49,13 @@ async def register(
     Rate limiting: Apply 5 requests per hour per IP.
     """
     # Validate input
-    if not username or len(username) < 3:
+    if not body.username or len(body.username) < 3:
         raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
-    if not password or len(password) < 8:
+    if not body.password or len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
     # Check if username already exists
-    cursor = db.execute("SELECT id FROM users WHERE username = ? COLLATE NOCASE", (username,))
+    cursor = db.execute("SELECT id FROM users WHERE username = ? COLLATE NOCASE", (body.username,))
     if cursor.fetchone():
         raise HTTPException(status_code=409, detail="Username already exists")
 
@@ -54,7 +65,7 @@ async def register(
     role = "superadmin" if user_count == 0 else "member"
 
     # Hash password and create user
-    hashed_pw = hash_password(password)
+    hashed_pw = hash_password(body.password)
 
     try:
         cursor = db.execute(
@@ -62,7 +73,7 @@ async def register(
             INSERT INTO users (username, hashed_password, full_name, role, is_active)
             VALUES (?, ?, ?, ?, 1)
             """,
-            (username, hashed_pw, full_name, role),
+            (body.username, hashed_pw, body.full_name, role),
         )
         db.commit()
         user_id = cursor.lastrowid
@@ -72,8 +83,8 @@ async def register(
 
     return {
         "id": user_id,
-        "username": username,
-        "full_name": full_name,
+        "username": body.username,
+        "full_name": body.full_name,
         "role": role,
         "is_active": True,
         "message": "User registered successfully",
@@ -85,8 +96,7 @@ async def register(
 async def login(
     request: Request,
     response: Response,
-    username: str,
-    password: str,
+    body: LoginRequest,
     db=Depends(get_db),
 ):
     """
@@ -97,7 +107,7 @@ async def login(
     # Fetch user by username
     cursor = db.execute(
         "SELECT id, username, hashed_password, full_name, role, is_active FROM users WHERE username = ? COLLATE NOCASE",
-        (username,),
+        (body.username,),
     )
     row = cursor.fetchone()
 
@@ -110,7 +120,7 @@ async def login(
         raise HTTPException(status_code=403, detail="User account is inactive")
 
     # Verify password
-    if not verify_password(password, hashed_pw):
+    if not verify_password(body.password, hashed_pw):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     # Create tokens
