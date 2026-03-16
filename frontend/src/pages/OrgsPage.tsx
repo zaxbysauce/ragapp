@@ -83,7 +83,7 @@ export default function OrgsPage() {
     try {
       const response = await fetch('/api/organizations', {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
       });
       
@@ -105,7 +105,7 @@ export default function OrgsPage() {
     try {
       const response = await fetch(`/api/organizations/${orgId}`, {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
       });
       
@@ -163,7 +163,7 @@ export default function OrgsPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
         body: JSON.stringify({
           name: name.trim(),
@@ -198,7 +198,7 @@ export default function OrgsPage() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
         body: JSON.stringify({
           name: name.trim(),
@@ -229,7 +229,7 @@ export default function OrgsPage() {
       const response = await fetch(`/api/organizations/${selectedOrg.id}`, {
         method: 'DELETE',
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
       });
 

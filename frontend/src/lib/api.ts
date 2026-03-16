@@ -1,4 +1,5 @@
 import axios from "axios";
+import { useAuthStore } from "@/stores/authStore";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
@@ -9,11 +10,13 @@ const apiClient = axios.create({
   },
 });
 
-// Attach API key from localStorage if configured
+// Attach JWT token from authStore
 apiClient.interceptors.request.use((config) => {
-  const apiKey = localStorage.getItem("kv_api_key");
-  if (apiKey) {
-    config.headers.Authorization = `Bearer ${apiKey}`;
+  // Use authStore to get the current access token
+  // Note: We can't use hooks in interceptors, so we access the store directly
+  const token = useAuthStore.getState().accessToken;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
@@ -29,11 +32,10 @@ apiClient.interceptors.response.use(
 
     // Handle 401 Unauthorized - clear auth and redirect
     if (error.response?.status === 401) {
-      localStorage.removeItem("kv_api_key");
-      // Dispatch custom event that AuthProvider can listen to
-      window.dispatchEvent(new CustomEvent("auth:unauthorized"));
+      // Clear JWT token from authStore
+      useAuthStore.getState().logout();
       // Also try to redirect using router if available
-      if (window.history && window.location.pathname !== "/login") {
+      if (window.history && window.location.pathname !== "/login" && window.location.pathname !== "/register") {
         window.location.href = "/login";
       }
     }
@@ -497,9 +499,10 @@ export function chatStream(
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
-      const apiKey = localStorage.getItem("kv_api_key");
-      if (apiKey) {
-        headers["Authorization"] = `Bearer ${apiKey}`;
+      // Use JWT token from authStore
+      const token = useAuthStore.getState().accessToken;
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
       }
 
       const response = await fetch(`${API_BASE_URL}/chat/stream`, {

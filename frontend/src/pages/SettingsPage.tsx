@@ -9,10 +9,10 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { getSettings, updateSettings, testConnections } from "@/lib/api";
 import type { ConnectionTestResult } from "@/lib/api";
 import { useSettingsStore } from "@/stores/useSettingsStore";
+import { useAuthStore } from "@/stores/authStore";
 import { ConnectionStatusBadges } from "@/components/shared/ConnectionStatusBadges";
 import type { HealthStatus } from "@/types/health";
 import { useHealthCheck } from "@/hooks/useHealthCheck";
-import { APIKeySettings } from "@/components/settings/APIKeySettings";
 import { ConnectionSettings } from "@/components/settings/ConnectionSettings";
 import { DocumentProcessingSettings } from "@/components/settings/DocumentProcessingSettings";
 import { RAGSettings } from "@/components/settings/RAGSettings";
@@ -54,25 +54,9 @@ function SettingsPageContent() {
     hasChanges,
   } = useSettingsStore();
 
-  const [apiKey, setApiKey] = useState(() => {
-    try {
-      return localStorage.getItem("kv_api_key") || "";
-    } catch {
-      return "";
-    }
-  });
-  const [apiKeySaved, setApiKeySaved] = useState(false);
-
-  const handleApiKeySave = () => {
-    try {
-      localStorage.setItem("kv_api_key", apiKey);
-      setApiKeySaved(true);
-      toast.success("API key saved");
-      setTimeout(() => setApiKeySaved(false), 2000);
-    } catch (err) {
-      toast.error("Failed to save API key");
-    }
-  };
+  // JWT token from authStore (for display purposes - read only)
+  const token = useAuthStore.getState().accessToken;
+  const hasToken = !!token;
 
   useEffect(() => {
     let mounted = true;
@@ -304,12 +288,23 @@ function SettingsPageContent() {
           </TabsContent>
 
           <TabsContent value="api-key">
-            <APIKeySettings
-              apiKey={apiKey}
-              onApiKeyChange={setApiKey}
-              onSave={handleApiKeySave}
-              isSaved={apiKeySaved}
-            />
+            <Card>
+              <CardHeader>
+                <CardTitle>Authentication Status</CardTitle>
+                <CardDescription>Your JWT token status</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {hasToken ? (
+                  <div className="flex items-center gap-2 text-green-600">
+                    <span className="font-medium">✓ Logged in</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-yellow-600">
+                    <span className="font-medium">Not logged in</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       )}

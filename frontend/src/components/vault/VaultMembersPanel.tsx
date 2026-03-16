@@ -82,7 +82,7 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
     try {
       const response = await fetch(`/api/vaults/${vaultId}/members`, {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
       });
       
@@ -128,7 +128,7 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
         body: JSON.stringify({
           member_user_id: userId,
@@ -157,7 +157,7 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
         body: JSON.stringify({ permission: newPerm }),
       });
@@ -182,7 +182,7 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
       const response = await fetch(`/api/vaults/${vaultId}/members/${selectedMember.user_id}`, {
         method: 'DELETE',
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
       });
 

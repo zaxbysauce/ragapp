@@ -81,10 +81,11 @@ export default function AdminUsersPage() {
   }, []);
 
   async function fetchUsers() {
+    const token = useAuthStore.getState().accessToken;
     try {
       const response = await fetch('/api/users', {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${token || ''}`,
         },
       });
       
@@ -142,7 +143,7 @@ export default function AdminUsersPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
         body: JSON.stringify({
           username: username.trim(),
@@ -163,7 +164,7 @@ export default function AdminUsersPage() {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+            Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
           },
           body: JSON.stringify({ role: selectedRole }),
         });
@@ -188,7 +189,7 @@ export default function AdminUsersPage() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
         body: JSON.stringify({ role: selectedRole }),
       });
@@ -216,7 +217,7 @@ export default function AdminUsersPage() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
         body: JSON.stringify({ is_active: !user.is_active }),
       });
@@ -241,7 +242,7 @@ export default function AdminUsersPage() {
       const response = await fetch(`/api/users/${selectedUser.id}`, {
         method: 'DELETE',
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('kv_api_key') || ''}`,
+          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
         },
       });
 
