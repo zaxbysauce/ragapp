@@ -74,6 +74,16 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
 
   const isAdmin = currentUser?.role === 'superadmin' || currentUser?.role === 'admin';
 
+  // Helper to create auth headers - only includes Authorization when token exists
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = useAuthStore.getState().accessToken;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
   useEffect(() => {
     fetchMembers();
   }, [vaultId]);
@@ -81,9 +91,7 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
   async function fetchMembers() {
     try {
       const response = await fetch(`/api/vaults/${vaultId}/members`, {
-        headers: {
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+        headers: getAuthHeaders(),
       });
       
       if (!response.ok) {
@@ -126,10 +134,7 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
     try {
       const response = await fetch(`/api/vaults/${vaultId}/members`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+headers: getAuthHeaders(),
         body: JSON.stringify({
           member_user_id: userId,
           permission: newPermission,
@@ -155,10 +160,7 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
     try {
       const response = await fetch(`/api/vaults/${vaultId}/members/${member.user_id}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+headers: getAuthHeaders(),
         body: JSON.stringify({ permission: newPerm }),
       });
 
@@ -181,9 +183,7 @@ export default function VaultMembersPanel({ vaultId, vaultName }: VaultMembersPa
     try {
       const response = await fetch(`/api/vaults/${vaultId}/members/${selectedMember.user_id}`, {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (!response.ok) {

@@ -75,6 +75,16 @@ export default function OrgsPage() {
   const isAdmin = currentUser?.role === 'superadmin' || currentUser?.role === 'admin';
   const isSuperAdmin = currentUser?.role === 'superadmin';
 
+  // Helper to create auth headers - only includes Authorization when token exists
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = useAuthStore.getState().accessToken;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
   useEffect(() => {
     fetchOrganizations();
   }, []);
@@ -82,9 +92,7 @@ export default function OrgsPage() {
   async function fetchOrganizations() {
     try {
       const response = await fetch('/api/organizations', {
-        headers: {
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+        headers: getAuthHeaders(),
       });
       
       if (!response.ok) {
@@ -104,9 +112,7 @@ export default function OrgsPage() {
     setLoadingMembers(true);
     try {
       const response = await fetch(`/api/organizations/${orgId}`, {
-        headers: {
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+        headers: getAuthHeaders(),
       });
       
       if (!response.ok) {
@@ -161,10 +167,7 @@ export default function OrgsPage() {
     try {
       const response = await fetch('/api/organizations', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+headers: getAuthHeaders(),
         body: JSON.stringify({
           name: name.trim(),
           description: description.trim(),
@@ -196,10 +199,7 @@ export default function OrgsPage() {
     try {
       const response = await fetch(`/api/organizations/${selectedOrg.id}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+headers: getAuthHeaders(),
         body: JSON.stringify({
           name: name.trim(),
           description: description.trim(),
@@ -228,9 +228,7 @@ export default function OrgsPage() {
     try {
       const response = await fetch(`/api/organizations/${selectedOrg.id}`, {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (!response.ok) {

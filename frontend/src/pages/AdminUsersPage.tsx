@@ -76,18 +76,23 @@ export default function AdminUsersPage() {
   const isSuperAdmin = currentUser?.role === 'superadmin';
   const isAdmin = currentUser?.role === 'admin' || isSuperAdmin;
 
+  // Helper to create auth headers - only includes Authorization when token exists
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = useAuthStore.getState().accessToken;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
   useEffect(() => {
     fetchUsers();
   }, []);
 
   async function fetchUsers() {
-    const token = useAuthStore.getState().accessToken;
     try {
-      const response = await fetch('/api/users', {
-        headers: {
-          Authorization: `Bearer ${token || ''}`,
-        },
-      });
+      const response = await fetch('/api/users', { headers: getAuthHeaders() });
       
       if (!response.ok) {
         throw new Error('Failed to fetch users');
@@ -141,10 +146,7 @@ export default function AdminUsersPage() {
     try {
       const response = await fetch('/api/auth/register', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           username: username.trim(),
           full_name: fullName.trim(),
@@ -162,10 +164,7 @@ export default function AdminUsersPage() {
         const newUser = await response.json();
         await fetch(`/api/users/${newUser.id}/role`, {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-          },
+          headers: getAuthHeaders(),
           body: JSON.stringify({ role: selectedRole }),
         });
       }
@@ -187,10 +186,7 @@ export default function AdminUsersPage() {
     try {
       const response = await fetch(`/api/users/${selectedUser.id}/role`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+headers: getAuthHeaders(),
         body: JSON.stringify({ role: selectedRole }),
       });
 
@@ -215,10 +211,7 @@ export default function AdminUsersPage() {
     try {
       const response = await fetch(`/api/users/${user.id}/active`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+headers: getAuthHeaders(),
         body: JSON.stringify({ is_active: !user.is_active }),
       });
 
@@ -241,9 +234,7 @@ export default function AdminUsersPage() {
     try {
       const response = await fetch(`/api/users/${selectedUser.id}`, {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${useAuthStore.getState().accessToken || ''}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (!response.ok) {

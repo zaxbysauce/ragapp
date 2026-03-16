@@ -39,13 +39,14 @@ export default function ProfilePage() {
   const handleUpdateProfile = async () => {
     setSaving(true);
     const token = useAuthStore.getState().accessToken;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     try {
       const response = await fetch('/api/auth/me', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token || ''}`,
-        },
+        headers,
         body: JSON.stringify({ full_name: fullName.trim() }),
       });
 
@@ -75,13 +76,14 @@ export default function ProfilePage() {
 
     setSaving(true);
     const token = useAuthStore.getState().accessToken;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     try {
       const response = await fetch('/api/auth/me', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token || ''}`,
-        },
+        headers,
         body: JSON.stringify({ password: newPassword }),
       });
 
