@@ -30,7 +30,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       accessToken: null,
       isAuthenticated: false,
-      isLoading: false,
+      isLoading: true, // Start with loading true to prevent flash of content
 
       setUser: (user) => set({ user, isAuthenticated: !!user }),
       setAccessToken: (accessToken) => set({ accessToken }),
@@ -146,6 +146,9 @@ export const useAuthStore = create<AuthState>()(
               } else {
                 set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
               }
+            } else {
+              // Refresh failed, not authenticated
+              set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
             }
           } else {
             set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
@@ -159,6 +162,14 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'auth-storage',
       partialize: (state) => ({ user: state.user }),
+      onRehydrateStorage: () => (state) => {
+        // After hydration, if there's no user, we're not authenticated
+        // Set isLoading to false so ProtectedRoute can redirect
+        if (!state?.user) {
+          useAuthStore.setState({ isLoading: false, isAuthenticated: false });
+        }
+        // If there is a user, checkAuth will validate the session
+      },
     }
   )
 );
