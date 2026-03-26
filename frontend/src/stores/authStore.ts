@@ -14,10 +14,12 @@ interface AuthState {
   accessToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  mustChangePassword: boolean;
 
   // Actions
   setUser: (user: User | null) => void;
   setAccessToken: (token: string | null) => void;
+  setMustChangePassword: (value: boolean) => void;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshToken: () => Promise<boolean>;
@@ -31,9 +33,11 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       isAuthenticated: false,
       isLoading: true, // Start with loading true to prevent flash of content
+      mustChangePassword: false,
 
       setUser: (user) => set({ user, isAuthenticated: !!user }),
       setAccessToken: (accessToken) => set({ accessToken }),
+      setMustChangePassword: (value: boolean) => set({ mustChangePassword: value }),
 
       login: async (username: string, password: string) => {
         set({ isLoading: true });
@@ -62,7 +66,7 @@ export const useAuthStore = create<AuthState>()(
           }
 
           const user = await userResponse.json();
-          set({ user, isAuthenticated: true });
+          set({ user, isAuthenticated: true, mustChangePassword: user.must_change_password ?? false });
         } finally {
           set({ isLoading: false });
         }
@@ -131,7 +135,7 @@ export const useAuthStore = create<AuthState>()(
 
           if (response.ok) {
             const user = await response.json();
-            set({ user, isAuthenticated: true, isLoading: false });
+            set({ user, isAuthenticated: true, isLoading: false, mustChangePassword: user.must_change_password ?? false });
           } else if (response.status === 401) {
             // Token expired, try refresh
             const refreshed = await get().refreshToken();
@@ -142,7 +146,7 @@ export const useAuthStore = create<AuthState>()(
               });
               if (retryResponse.ok) {
                 const user = await retryResponse.json();
-                set({ user, isAuthenticated: true, isLoading: false });
+                set({ user, isAuthenticated: true, isLoading: false, mustChangePassword: user.must_change_password ?? false });
               } else {
                 set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
               }

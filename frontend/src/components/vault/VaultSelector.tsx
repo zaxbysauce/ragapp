@@ -14,10 +14,16 @@ import { cn } from "@/lib/utils";
 
 interface VaultSelectorProps {
   className?: string;
+  onVaultChange?: (vaultId: number | null) => void;
 }
 
-export function VaultSelector({ className }: VaultSelectorProps) {
+export function VaultSelector({ className, onVaultChange }: VaultSelectorProps) {
   const { vaults, activeVaultId, setActiveVault, fetchVaults, getActiveVault } = useVaultStore();
+
+  const handleVaultSelect = (vaultId: number | null) => {
+    setActiveVault(vaultId);
+    onVaultChange?.(vaultId);
+  };
   const activeVault = getActiveVault();
 
   useEffect(() => {
@@ -39,7 +45,7 @@ export function VaultSelector({ className }: VaultSelectorProps) {
         <DropdownMenuLabel>Select Vault</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onClick={() => setActiveVault(null)}
+          onClick={() => handleVaultSelect(null)}
           className={cn(activeVaultId === null && "font-semibold bg-accent")}
         >
           <Globe className="mr-2 h-4 w-4" />
@@ -49,7 +55,7 @@ export function VaultSelector({ className }: VaultSelectorProps) {
         {vaults.map((vault) => (
           <DropdownMenuItem
             key={vault.id}
-            onClick={() => setActiveVault(vault.id)}
+            onClick={() => handleVaultSelect(vault.id)}
             className={cn(vault.id === activeVaultId && "font-semibold bg-accent")}
           >
             <Database className="mr-2 h-4 w-4" />

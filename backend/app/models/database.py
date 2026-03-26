@@ -332,11 +332,18 @@ def run_migrations(sqlite_path: str) -> None:
     migrate_add_user_org_tables(sqlite_path)
     migrate_add_vault_permission_columns(sqlite_path)
 
+    # Phase 1: Auth extensions (password policy, account lockout)
+    migrate_add_auth_extensions(sqlite_path)
+
+    # Phase 1: Chat session persistence - add user_id to chat_sessions
+    migrate_add_chat_sessions_user_id(sqlite_path)
+
     # Vault path migration: name-based → ID-based directories
     try:
         from app.services.upload_path import migrate_vault_paths
         from app.config import settings
         import asyncio
+
         migrate_vault_paths(sqlite_path, settings.data_dir)
     except Exception as e:
         logger.warning(f"Vault path migration failed (continuing): {e}")
@@ -345,19 +352,19 @@ def run_migrations(sqlite_path: str) -> None:
 def migrate_add_vaults(sqlite_path: str) -> None:
     """
     Migration: Add vaults table and vault_id columns to existing databases.
-    
+
     This migration is idempotent — safe to run multiple times.
     It creates the vaults table, inserts a default vault, adds vault_id
     columns to files/memories/chat_sessions if missing, and backfills
     existing rows with the default vault.
-    
+
     Args:
         sqlite_path: Path to the SQLite database file.
     """
     conn = sqlite3.connect(sqlite_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON;")
-        
+
         # 1. Create vaults table if not exists
         conn.execute("""
             CREATE TABLE IF NOT EXISTS vaults (
@@ -368,39 +375,51 @@ def migrate_add_vaults(sqlite_path: str) -> None:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # 2. Insert default vault
         conn.execute(
             "INSERT OR IGNORE INTO vaults (id, name, description) VALUES (1, 'Default', 'Default vault')"
         )
-        
+
         # 3. Add vault_id columns if missing (SQLite doesn't support IF NOT EXISTS for columns)
         # Check files table for vault_id column
         cursor = conn.execute("PRAGMA table_info(files)")
         has_files_vault_id = any(row[1] == "vault_id" for row in cursor.fetchall())
         if not has_files_vault_id:
-            conn.execute("ALTER TABLE files ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_vault_id ON files(vault_id)")
+            conn.execute(
+                "ALTER TABLE files ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_files_vault_id ON files(vault_id)"
+            )
 
         # Check memories table for vault_id column
         cursor = conn.execute("PRAGMA table_info(memories)")
         has_memories_vault_id = any(row[1] == "vault_id" for row in cursor.fetchall())
         if not has_memories_vault_id:
             conn.execute("ALTER TABLE memories ADD COLUMN vault_id INTEGER")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_vault_id ON memories(vault_id)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_vault_id ON memories(vault_id)"
+            )
 
         # Check chat_sessions table for vault_id column
         cursor = conn.execute("PRAGMA table_info(chat_sessions)")
-        has_chat_sessions_vault_id = any(row[1] == "vault_id" for row in cursor.fetchall())
+        has_chat_sessions_vault_id = any(
+            row[1] == "vault_id" for row in cursor.fetchall()
+        )
         if not has_chat_sessions_vault_id:
-            conn.execute("ALTER TABLE chat_sessions ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_vault_id ON chat_sessions(vault_id)")
-        
+            conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN vault_id INTEGER NOT NULL DEFAULT 1"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chat_sessions_vault_id ON chat_sessions(vault_id)"
+            )
+
         # 4. Backfill existing rows with default vault
         conn.execute("UPDATE files SET vault_id = 1 WHERE vault_id IS NULL")
         conn.execute("UPDATE chat_sessions SET vault_id = 1 WHERE vault_id IS NULL")
         # memories: NULL vault_id is intentional (global), no backfill needed
-        
+
         conn.commit()
     finally:
         conn.close()
@@ -424,7 +443,9 @@ def migrate_add_email_columns(sqlite_path: str) -> None:
         cursor = conn.execute("PRAGMA table_info(files)")
         has_source = any(row[1] == "source" for row in cursor.fetchall())
         if not has_source:
-            conn.execute("ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'")
+            conn.execute(
+                "ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'"
+            )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_source ON files(source)")
 
         # Add email_subject column (nullable)
@@ -500,12 +521,16 @@ def migrate_add_vault_permission_columns(sqlite_path: str) -> None:
         # Add owner_id column
         if "owner_id" not in columns:
             conn.execute("ALTER TABLE vaults ADD COLUMN owner_id INTEGER")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_vaults_owner_id ON vaults(owner_id)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_vaults_owner_id ON vaults(owner_id)"
+            )
 
         # Add org_id column
         if "org_id" not in columns:
             conn.execute("ALTER TABLE vaults ADD COLUMN org_id INTEGER")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_vaults_org_id ON vaults(org_id)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_vaults_org_id ON vaults(org_id)"
+            )
 
         # Add visibility column
         if "visibility" not in columns:
@@ -514,7 +539,9 @@ def migrate_add_vault_permission_columns(sqlite_path: str) -> None:
                 "CHECK (visibility IN ('private', 'org', 'public'))"
             )
             # Set default visibility for existing vaults
-            conn.execute("UPDATE vaults SET visibility = 'private' WHERE visibility IS NULL")
+            conn.execute(
+                "UPDATE vaults SET visibility = 'private' WHERE visibility IS NULL"
+            )
 
         conn.commit()
     finally:
@@ -535,6 +562,157 @@ def migrate_add_user_org_tables(sqlite_path: str) -> None:
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def migrate_add_auth_extensions(sqlite_path: str) -> None:
+    """
+    Migration: Add password policy and account lockout columns to users table.
+
+    Phase 1 auth migration - adds must_change_password, failed_attempts,
+    and locked_until columns to the users table. Also creates indexes for
+    session cleanup and lockout lookup. This migration is idempotent.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+    """
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+        # Get existing columns from users table
+        cursor = conn.execute("PRAGMA table_info(users)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Add must_change_password column if not exists
+        if "must_change_password" not in existing_columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0"
+            )
+
+        # Add failed_attempts column if not exists
+        if "failed_attempts" not in existing_columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0"
+            )
+
+        # Add locked_until column if not exists (nullable TIMESTAMP)
+        if "locked_until" not in existing_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN locked_until TIMESTAMP")
+
+        # Create index for session cleanup (expires_at on user_sessions)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at)"
+        )
+
+        # Create index for lockout lookup (locked_until on users)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_locked_until ON users(locked_until)"
+        )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def rollback_auth_extensions(sqlite_path: str) -> None:
+    """
+    Down-migration: Remove password policy and account lockout columns.
+
+    Reverses the changes made by migrate_add_auth_extensions by dropping
+    the added columns and indexes. Safe to run multiple times (idempotent).
+    Requires SQLite 3.35.0+ for DROP COLUMN support.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+    """
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+        # Drop indexes if they exist
+        conn.execute("DROP INDEX IF EXISTS idx_user_sessions_expires")
+        conn.execute("DROP INDEX IF EXISTS idx_users_locked_until")
+
+        # Get existing columns from users table
+        cursor = conn.execute("PRAGMA table_info(users)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Drop columns if they exist (SQLite 3.35.0+ supports DROP COLUMN)
+        if "locked_until" in existing_columns:
+            conn.execute("ALTER TABLE users DROP COLUMN locked_until")
+
+        if "failed_attempts" in existing_columns:
+            conn.execute("ALTER TABLE users DROP COLUMN failed_attempts")
+
+        if "must_change_password" in existing_columns:
+            conn.execute("ALTER TABLE users DROP COLUMN must_change_password")
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def migrate_add_chat_sessions_user_id(sqlite_path: str) -> None:
+    """
+    Migration: Add user_id column to chat_sessions table for session persistence.
+
+    Phase 1 migration - adds user_id column and index for user-scoped
+    chat session access. This migration is idempotent.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+    """
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+        # Check if user_id column already exists in chat_sessions
+        cursor = conn.execute("PRAGMA table_info(chat_sessions)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Add user_id column if not exists
+        if "user_id" not in existing_columns:
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN user_id INTEGER")
+
+        # Create index on user_id for faster lookups
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id)"
+        )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def rollback_chat_sessions_user_id(sqlite_path: str) -> None:
+    """
+    Down-migration: Remove user_id column from chat_sessions table.
+
+    Reverses the changes made by migrate_add_chat_sessions_user_id.
+    Safe to run multiple times (idempotent).
+    Requires SQLite 3.35.0+ for DROP COLUMN support.
+
+    Args:
+        sqlite_path: Path to the SQLite database file.
+    """
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+        # Drop index if exists
+        conn.execute("DROP INDEX IF EXISTS idx_chat_sessions_user_id")
+
+        # Get existing columns from chat_sessions table
+        cursor = conn.execute("PRAGMA table_info(chat_sessions)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Drop user_id column if exists (SQLite 3.35.0+ supports DROP COLUMN)
+        if "user_id" in existing_columns:
+            conn.execute("ALTER TABLE chat_sessions DROP COLUMN user_id")
+
         conn.commit()
     finally:
         conn.close()
@@ -703,7 +881,9 @@ class SQLiteConnectionPool:
                 continue
 
         # Max attempts exhausted
-        raise RuntimeError(f"Could not obtain a connection from the pool after {max_wait_attempts} attempts")
+        raise RuntimeError(
+            f"Could not obtain a connection from the pool after {max_wait_attempts} attempts"
+        )
 
     def release_connection(self, conn: sqlite3.Connection) -> None:
         """

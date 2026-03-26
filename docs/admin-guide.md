@@ -491,9 +491,33 @@ ab -n 100 -c 10 http://localhost:8080/health
 
 ## Security
 
+### Authentication
+
+KnowledgeVault has built-in user authentication with role-based access control (RBAC).
+
+**User Roles:**
+- **superadmin** - Full system access, first registered user
+- **admin** - User management, document operations
+- **member** - Default role for new users
+- **viewer** - Read-only access
+
+**Password Policy:**
+- Minimum 8 characters
+- At least 1 digit
+- At least 1 uppercase letter
+
+**Account Lockout:**
+- After 5 failed login attempts, account is locked for 15 minutes
+- Failed attempts reset on successful login
+
+**Session Management:**
+- Access tokens expire after 15 minutes
+- Refresh tokens valid for 30 days
+- Users can view and revoke sessions via `/api/v1/auth/sessions`
+
 ### Network Security
 
-KnowledgeVault has no built-in authentication. Secure it at the network level:
+For additional security, you can also secure at the network level:
 
 **Option 1: Localhost Only (Safest)**
 - Keep default configuration
@@ -546,7 +570,36 @@ knowledgevault.example.com {
 - [ ] Review access logs monthly
 - [ ] Update Docker images quarterly
 - [ ] Rotate backup encryption keys annually
-- [ ] Audit user access (if using reverse proxy auth)
+- [ ] Audit user access via `/api/v1/auth/sessions`
+
+### User Management
+
+Manage users via the API:
+
+```bash
+# View current user
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/auth/me
+
+# List your active sessions
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/auth/sessions
+
+# Revoke a specific session
+curl -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/auth/sessions/{session_id}
+
+# Revoke all other sessions
+curl -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/auth/sessions
+```
+
+### Vault Access Control
+
+Vaults support role-based access control:
+
+- **superadmin/admin** - Access to all vaults
+- **vault_members** - Direct per-vault permissions (read/write/admin)
+- **group access** - Group-based vault permissions
+- **public vaults** - Visible to all authenticated users
+
+Use `/api/v1/vaults/accessible` to list vaults the current user can access.
 
 ---
 

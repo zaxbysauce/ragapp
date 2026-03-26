@@ -269,6 +269,12 @@ export interface ChatStreamCallbacks {
   onComplete?: () => void;
 }
 
+export interface ApiStreamCallbacks {
+  onChunk?: (text: string) => void;
+  onDone?: (sources?: Source[]) => void;
+  onError?: (error: Error) => void;
+}
+
 export interface ChatHistoryItem {
   id: string;
   title: string;
@@ -358,6 +364,15 @@ export async function testConnections(): Promise<ConnectionTestResult> {
 
 export async function listVaults(): Promise<VaultListResponse> {
   const response = await apiClient.get<VaultListResponse>("/vaults");
+  return response.data;
+}
+
+export interface AccessibleVaultsResponse {
+  vault_ids: number[];
+}
+
+export async function listAccessibleVaults(): Promise<AccessibleVaultsResponse> {
+  const response = await apiClient.get<AccessibleVaultsResponse>("/vaults/accessible");
   return response.data;
 }
 
@@ -574,6 +589,125 @@ export function chatStream(
 
   return () => {
     abortController.abort();
+  };
+}
+
+/**
+ * Generic SSE streaming function.
+ * @param path API path (e.g., "/chat/stream")
+ * @param body Request body object
+ * @param callbacks.onChunk Called for each text chunk (event type "content")
+ * @param callbacks.onDone Called when stream completes (event type "done") with optional sources
+ * @param callbacks.onError Called on error event or HTTP error
+ * @returns {abort: () => void} to cancel the stream
+ */
+export function apiStream(
+  path: string,
+  body: Record<string, unknown>,
+  callbacks: ApiStreamCallbacks
+): { abort: () => void } {
+  const abortController = new AbortController();
+  let retryCount = 0;
+  const MAX_RETRIES = 1;
+
+  const startStream = async (retryRefreshed = false) => {
+    // Reject absolute URLs to prevent SSRF / token exfiltration
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      callbacks.onError?.(new Error("Invalid path: absolute URLs not allowed"));
+      return;
+    }
+
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      const token = useAuthStore.getState().accessToken;
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      });
+
+      // Handle 401: try token refresh once, then retry
+      if (response.status === 401 && retryCount < MAX_RETRIES && !retryRefreshed) {
+        retryCount++;
+        const refreshed = await useAuthStore.getState().refreshToken();
+        if (refreshed) {
+          return startStream(true); // retry with new token
+        } else {
+          callbacks.onError?.(new Error("Authentication failed"));
+          return;
+        }
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        callbacks.onError?.(new Error(errorData.detail || `HTTP ${response.status}`));
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        callbacks.onError?.(new Error("Response body is not readable"));
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const data = trimmed.slice(6);
+          if (data === "[DONE]") {
+            callbacks.onDone?.();
+            return;
+          }
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === "error") {
+              callbacks.onError?.(new Error(parsed.message || "Stream error"));
+              return;
+            }
+            if (parsed.type === "content" && parsed.content) {
+              callbacks.onChunk?.(parsed.content);
+            }
+            if (parsed.type === "done") {
+              callbacks.onDone?.(parsed.sources);
+              return;
+            }
+          } catch {
+            // Ignore parse errors for non-JSON lines
+          }
+        }
+      }
+
+      callbacks.onDone?.();
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return; // intentional abort, silent
+      }
+      callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
+    }
+  };
+
+  startStream();
+
+  return {
+    abort: () => abortController.abort(),
   };
 }
 

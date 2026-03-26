@@ -1,4 +1,5 @@
 """Authentication service with bcrypt and JWT."""
+
 import secrets
 import hashlib
 from datetime import datetime, timedelta, timezone
@@ -8,11 +9,7 @@ import jwt
 from app.config import settings
 
 # Password hashing
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__rounds=12
-)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 
 # Constants
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
@@ -30,16 +27,42 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
+def password_strength_check(plain_password: str) -> None:
+    """
+    Validate password meets strength requirements.
+
+    Requirements:
+    - Minimum 8 characters
+    - At least 1 digit
+    - At least 1 uppercase letter
+
+    Raises ValueError with a clear message if requirements not met.
+    """
+    if not plain_password:
+        raise ValueError("Password cannot be empty")
+
+    if len(plain_password) < 8:
+        raise ValueError("Password must be at least 8 characters long")
+
+    if not any(char.isdigit() for char in plain_password):
+        raise ValueError("Password must contain at least one digit")
+
+    if not any(char.isupper() for char in plain_password):
+        raise ValueError("Password must contain at least one uppercase letter")
+
+
 def create_access_token(user_id: int, username: str, role: str) -> str:
     """Create a JWT access token."""
-    expires = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expires = datetime.now(timezone.utc) + timedelta(
+        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+    )
     payload = {
         "sub": str(user_id),
         "username": username,
         "role": role,
         "exp": expires,
         "iat": datetime.now(timezone.utc),
-        "type": "access"
+        "type": "access",
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=ALGORITHM)
 

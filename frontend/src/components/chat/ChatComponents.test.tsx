@@ -37,6 +37,7 @@ vi.mock('lucide-react', () => ({
   Edit3: () => <svg data-testid="mock-edit">✏️</svg>,
   ThumbsUp: () => <svg data-testid="mock-thumbs-up">👍</svg>,
   ThumbsDown: () => <svg data-testid="mock-thumbs-down">👎</svg>,
+  GitCompare: () => <svg data-testid="mock-git-compare">⟷</svg>,
 }));
 
 // Mock UI components
@@ -84,13 +85,11 @@ vi.mock('@/components/ui/textarea', () => ({
 // Mock stores - MUST be before component imports
 const {
   mockUseChatStore,
-  mockUseChatStoreRedesign,
   mockUseVaultStore,
   mockUseSendMessage,
   mockUseChatHistory,
 } = vi.hoisted(() => ({
   mockUseChatStore: vi.fn(),
-  mockUseChatStoreRedesign: vi.fn(),
   mockUseVaultStore: vi.fn(),
   mockUseSendMessage: vi.fn(),
   mockUseChatHistory: vi.fn(),
@@ -98,10 +97,6 @@ const {
 
 vi.mock('@/stores/useChatStore', () => ({
   useChatStore: mockUseChatStore,
-}));
-
-vi.mock('@/stores/useChatStoreRedesign', () => ({
-  useChatStoreRedesign: mockUseChatStoreRedesign,
 }));
 
 vi.mock('@/stores/useVaultStore', () => ({
@@ -162,7 +157,6 @@ import { ChatMessages } from './ChatMessages';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 import { CanvasPanel } from '../canvas/CanvasPanel';
-import ChatPageRedesigned from '@/pages/ChatPageRedesigned';
 import { MessageContent } from './MessageContent';
 import { DocumentPreview } from '../canvas/DocumentPreview';
 import { CodeViewer } from '../canvas/CodeViewer';
@@ -768,98 +762,6 @@ describe('CanvasPanel Component', () => {
     );
 
     expect(screen.getByTestId('mock-resizable-handle')).toBeInTheDocument();
-  });
-});
-
-describe('ChatPageRedesigned Component', () => {
-  let unmount: () => void;
-
-  const mockCanvasState = {
-    canvas: {
-      view: null,
-      isCollapsed: true,
-      width: 400,
-    },
-    setCanvasView: vi.fn(),
-    toggleCanvasCollapse: vi.fn(),
-    setCanvasWidth: vi.fn(),
-  };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockUseChatStoreRedesign.mockReturnValue(mockCanvasState);
-    mockUseVaultStore.mockReturnValue({ activeVaultId: 'vault-1' });
-    mockUseChatStore.mockReturnValue({
-      messages: [],
-      isStreaming: false,
-      newChat: vi.fn(),
-      input: '',
-      setInput: vi.fn(),
-      inputError: null,
-    });
-    mockUseChatHistory.mockReturnValue({
-      chatHistory: [],
-      isChatLoading: false,
-      chatHistoryError: null,
-      handleLoadChat: vi.fn(),
-      refreshHistory: vi.fn(),
-    });
-  });
-
-  afterEach(() => {
-    if (unmount) {
-      unmount();
-    }
-  });
-
-  it('should render ChatMessages and CanvasPanel', () => {
-    render(<ChatPageRedesigned />);
-
-    expect(screen.getByTestId('mock-scroll-area')).toBeInTheDocument();
-    expect(screen.getByText('Conversations')).toBeInTheDocument();
-  });
-
-  it('should pass canvas state to CanvasPanel', () => {
-    mockUseChatStoreRedesign.mockReturnValue({
-      canvas: {
-        view: 'document',
-        isCollapsed: false,
-        width: 500,
-      },
-      setCanvasView: vi.fn(),
-      toggleCanvasCollapse: vi.fn(),
-      setCanvasWidth: vi.fn(),
-    });
-
-    render(<ChatPageRedesigned />);
-
-    // CanvasPanel should be visible (not collapsed)
-    expect(screen.getByText('Resize')).toBeInTheDocument();
-  });
-
-  it('should pass toggleCanvasCollapse to ChatMessages', () => {
-    const toggleFn = vi.fn();
-    mockUseChatStoreRedesign.mockReturnValue({
-      canvas: {
-        view: null,
-        isCollapsed: true,
-        width: 400,
-      },
-      setCanvasView: vi.fn(),
-      toggleCanvasCollapse: toggleFn,
-      setCanvasWidth: vi.fn(),
-    });
-
-    render(<ChatPageRedesigned />);
-
-    // ChatMessages should be rendered
-    expect(screen.getByTestId('mock-scroll-area')).toBeInTheDocument();
-  });
-
-  it('should render KeyboardShortcutsDialog', () => {
-    render(<ChatPageRedesigned />);
-
-    expect(screen.getByTestId('mock-keyboard-shortcuts')).toBeInTheDocument();
   });
 });
 

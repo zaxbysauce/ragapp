@@ -51,7 +51,7 @@ KnowledgeVault enables you to:
 
 | Component | Technology |
 |-----------|------------|
-| Frontend | React 18, TypeScript, Vite, shadcn/ui, Tailwind CSS |
+| Frontend | React 18, TypeScript, Vite, shadcn/ui, Tailwind CSS, assistant-ui |
 | Backend | Python 3.11, FastAPI, Pydantic |
 | Vector DB | LanceDB (embedded) |
 | Memory DB | SQLite with FTS5 |
@@ -281,46 +281,72 @@ docker compose logs knowledgevault
 |--------|----------|-------------|
 | GET | `/health` | Service health status |
 
+### Authentication
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/auth/register` | Register new user (first = superadmin) |
+| POST | `/api/v1/auth/login` | Login with username/password |
+| POST | `/api/v1/auth/refresh` | Refresh access token |
+| POST | `/api/v1/auth/logout` | Logout and revoke refresh token |
+| GET | `/api/v1/auth/me` | Get current user profile (includes `must_change_password` flag) |
+| PATCH | `/api/v1/auth/me` | Update current user profile |
+| POST | `/api/v1/auth/change-password` | Change user password (validates strength policy) |
+| GET | `/api/v1/auth/sessions` | List active sessions for current user |
+| DELETE | `/api/v1/auth/sessions/{id}` | Revoke a specific session |
+| DELETE | `/api/v1/auth/sessions` | Revoke all other sessions |
+
+### Vaults
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/vaults` | List all vaults with counts |
+| GET | `/api/v1/vaults/accessible` | List vault IDs user has access to |
+| GET | `/api/v1/vaults/{id}` | Get vault details |
+| POST | `/api/v1/vaults` | Create new vault |
+| PUT | `/api/v1/vaults/{id}` | Update vault |
+| DELETE | `/api/v1/vaults/{id}` | Delete vault |
+
 ### Chat
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/chat` | Non-streaming chat |
-| POST | `/api/chat/stream` | Streaming chat (SSE) |
+| POST | `/api/v1/chat` | Non-streaming chat (requires vault_id with read access) |
+| POST | `/api/v1/chat/stream` | Streaming chat (SSE, requires vault_id with read access) |
 
 ### Documents
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/documents` | List all documents |
-| GET | `/api/documents/stats` | Document statistics |
-| POST | `/api/documents/upload` | Upload file(s) |
-| POST | `/api/documents/scan` | Trigger directory scan |
-| DELETE | `/api/documents/{id}` | Delete document |
+| GET | `/api/v1/documents` | List all documents |
+| GET | `/api/v1/documents/stats` | Document statistics |
+| POST | `/api/v1/documents/upload` | Upload file(s) |
+| POST | `/api/v1/documents/scan` | Trigger directory scan |
+| DELETE | `/api/v1/documents/{id}` | Delete document |
 
 ### Search
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/search` | Semantic search |
-| POST | `/api/search/chunks` | Search document chunks |
+| POST | `/api/v1/search` | Semantic search |
+| POST | `/api/v1/search/chunks` | Search document chunks |
 
 ### Memories
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/memories` | List all memories |
-| GET | `/api/memories/search` | Search memories |
-| POST | `/api/memories` | Create memory |
-| PUT | `/api/memories/{id}` | Update memory |
-| DELETE | `/api/memories/{id}` | Delete memory |
+| GET | `/api/v1/memories` | List all memories |
+| GET | `/api/v1/memories/search` | Search memories |
+| POST | `/api/v1/memories` | Create memory |
+| PUT | `/api/v1/memories/{id}` | Update memory |
+| DELETE | `/api/v1/memories/{id}` | Delete memory |
 
 ### Settings
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/settings` | Get settings |
-| PUT | `/api/settings` | Update settings |
+| GET | `/api/v1/settings` | Get settings |
+| PUT | `/api/v1/settings` | Update settings |
 
 ### API Documentation
 
@@ -334,19 +360,30 @@ OpenAPI schema: `http://localhost:8080/openapi.json`
 
 The web interface uses a navigation rail with five sections:
 
-1. **Chat** - Ask questions about your documents
+1. **Chat** - Ask questions about your documents using the streaming AI interface
 2. **Search** - Find specific content in your knowledge base
 3. **Documents** - Upload and manage documents
 4. **Memory** - View and manage stored memories
-5. **Settings** - Configure application settings
+5. **Settings** - Configure application settings (includes password change for forced updates)
+
+### Authentication Flow
+
+The frontend implements secure route protection with the following features:
+
+- **JWT Authentication**: Access tokens with automatic refresh on expiration
+- **Password Policy Enforcement**: Users with `must_change_password=true` are automatically redirected to change their password
+- **Role-Based Access**: Admin-only routes are protected via `AdminRoute` component
+- **Session Management**: Users can view and revoke active sessions from Settings
 
 ### Chat Interface
 
 1. Type your question in the input field
 2. Press Enter or click Send
-3. Watch the AI response stream in real-time
+3. Watch the AI response stream in real-time (powered by SSE)
 4. Click "Sources" to see which documents were referenced
 5. Say "Remember that..." to save information to memory
+
+**Streaming**: The chat interface uses Server-Sent Events (SSE) for real-time response streaming with automatic token refresh on 401 errors.
 
 ### Document Upload
 
@@ -400,6 +437,18 @@ cd frontend
 npm install
 npm run dev
 ```
+
+#### Frontend API Library
+
+The frontend includes a streaming-capable API client (`frontend/src/lib/api.ts`):
+
+- `apiRequest<T>(method, path, body?)` - Standard REST requests with JWT auth
+- `apiStream(path, body, callbacks)` - SSE streaming with automatic token refresh
+
+The auth store (`frontend/src/stores/authStore.ts`) tracks:
+- User session state
+- `must_change_password` flag from `/api/v1/auth/me` endpoint
+- Password change enforcement via `useRequirePasswordChange` hook
 
 ### Building Production Images
 

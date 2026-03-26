@@ -1,10 +1,12 @@
 """
 FastAPI application with lifespan context manager.
 """
+
 import asyncio
 import logging
 import sqlite3
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, HTTPException
 
@@ -16,9 +18,11 @@ from starlette.responses import Response, FileResponse
 
 from app.api.routes.admin import router as admin_router
 from app.api.routes.chat import router as chat_router
+from app.api.routes.chat_sessions import router as chat_sessions_router
 from app.api.routes.documents import router as documents_router
 from app.api.routes.email import router as email_router
 from app.api.routes.eval import router as eval_router
+from app.api.routes.groups import router as groups_router
 from app.api.routes.health import router as health_router
 from app.api.routes.memories import router as memories_router
 from app.api.routes.organizations import router as organizations_router
@@ -54,18 +58,19 @@ from app.api.routes.documents import validation_exception_handler
 async def _llm_keepalive_task(llm_client: LLMClient, interval: int = 30):
     """
     Background task to keep LLM model loaded in LM Studio.
-    
+
     LM Studio unloads models when clients disconnect. This task periodically
     sends a ping request to keep the model in memory.
-    
+
     Args:
         llm_client: The LLM client instance
         interval: Seconds between keep-alive pings (default: 30)
     """
     import logging
+
     logger = logging.getLogger(__name__)
     logger.info("Starting LLM keep-alive task (interval: %ds)", interval)
-    
+
     while True:
         try:
             await asyncio.sleep(interval)
@@ -84,13 +89,14 @@ async def _llm_keepalive_task(llm_client: LLMClient, interval: int = 30):
 def _load_persisted_settings(sqlite_path: str) -> None:
     """Load user-configurable settings from DB if they were previously saved."""
     import json
+
     conn = sqlite3.connect(sqlite_path)
     conn.row_factory = sqlite3.Row
     try:
         cursor = conn.execute("SELECT key, value FROM settings_kv")
         # Build persisted dict from all rows
         persisted = {row["key"]: row["value"] for row in cursor.fetchall()}
-        
+
         # Legacy keys — require JSON parsing and type conversion
         legacy_keys = {
             "chunk_size": int,
@@ -111,7 +117,7 @@ def _load_persisted_settings(sqlite_path: str) -> None:
                         setattr(settings, key, float(json.loads(persisted[key])))
                 except Exception as e:
                     logger.warning(f"Failed to restore persisted setting {key}: {e}")
-        
+
         # New fields — load directly without legacy conversion
         NEW_DIRECT_KEYS = [
             "chunk_size_chars",
@@ -142,7 +148,11 @@ def _load_persisted_settings(sqlite_path: str) -> None:
                     if expected_type == type(None):  # NoneType - just set as string
                         setattr(settings, key, raw)
                     elif expected_type == bool:
-                        setattr(settings, key, str(raw).lower() in ("true", "1", "yes", "on"))
+                        setattr(
+                            settings,
+                            key,
+                            str(raw).lower() in ("true", "1", "yes", "on"),
+                        )
                     elif expected_type == int:
                         setattr(settings, key, int(raw))
                     elif expected_type == float:
@@ -162,6 +172,21 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     # Startup: Initialize database and services
     run_migrations(str(settings.sqlite_path))
+
+    # Clean up expired refresh token sessions
+    conn = sqlite3.connect(str(settings.sqlite_path))
+    try:
+        cursor = conn.execute(
+            "DELETE FROM user_sessions WHERE expires_at < ?",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+        deleted = cursor.rowcount
+        conn.commit()
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} expired sessions")
+    finally:
+        conn.close()
+
     _load_persisted_settings(str(settings.sqlite_path))
 
     # Security warning for default admin token in single-user mode
@@ -176,6 +201,7 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.upload_path import migrate_uploads
         import asyncio
+
         logger.info("Checking for upload migration...")
         await asyncio.to_thread(migrate_uploads, False)
     except Exception as e:
@@ -195,12 +221,14 @@ async def lifespan(app: FastAPI):
         reranker_model=settings.reranker_model,
         top_n=settings.reranker_top_n,
     )
-    
+
     # Validate schema at startup
     try:
         embedding_model_id = settings.embedding_model
         embedding_dim = settings.embedding_dim
-        validation_result = app.state.vector_store.validate_schema(embedding_model_id, embedding_dim)
+        validation_result = app.state.vector_store.validate_schema(
+            embedding_model_id, embedding_dim
+        )
         logger.info(f"Vector store schema validation completed: {validation_result}")
     except VectorStoreError as e:
         logger.error("=" * 60)
@@ -223,7 +251,9 @@ async def lifespan(app: FastAPI):
     app.state.model_checker = ModelChecker()
     app.state.model_validation = (
         settings.enable_model_validation
-        or app.state.toggle_manager.get_toggle("model_validation", settings.enable_model_validation)
+        or app.state.toggle_manager.get_toggle(
+            "model_validation", settings.enable_model_validation
+        )
     )
     # Initialize background processor as singleton (runs continuously)
     app.state.background_processor = get_background_processor(
@@ -238,7 +268,7 @@ async def lifespan(app: FastAPI):
         llm_client=app.state.llm_client,
     )
     await app.state.background_processor.start()
-    
+
     # Initialize email ingestion service if enabled
     app.state.email_service = EmailIngestionService(
         settings=settings,
@@ -246,11 +276,13 @@ async def lifespan(app: FastAPI):
         background_processor=app.state.background_processor,
     )
     await app.state.email_service.start_polling()
-    
+
     # Start FileWatcher for auto-scanning directories
-    app.state.file_watcher = FileWatcher(app.state.background_processor, pool=app.state.db_pool)
+    app.state.file_watcher = FileWatcher(
+        app.state.background_processor, pool=app.state.db_pool
+    )
     await app.state.file_watcher.start()
-    
+
     # Warm up embedding model so the first user query doesn't cold-start Ollama
     try:
         logger.info("Warming up embedding service...")
@@ -261,9 +293,9 @@ async def lifespan(app: FastAPI):
 
     # Start LLM keep-alive task to prevent LM Studio from unloading model
     keepalive_task = asyncio.create_task(_llm_keepalive_task(app.state.llm_client))
-    
+
     yield
-    
+
     # Shutdown: Cancel keepalive, stop file watcher, and close services
     # Stop email ingestion service
     app.state.email_service.stop_polling()
@@ -284,7 +316,7 @@ app = FastAPI(
     title="KnowledgeVault API",
     version="0.1.0",
     description="Self-hosted RAG Knowledge Base API",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Configure CORS
@@ -302,11 +334,16 @@ app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 # Note: MaintenanceMiddleware is initialized with a lazy getter since
 # maintenance_service is only available after lifespan startup
-app.state._maintenance_service_getter = lambda: getattr(app.state, 'maintenance_service', None)
-app.add_middleware(MaintenanceMiddleware, service_getter=app.state._maintenance_service_getter)
+app.state._maintenance_service_getter = lambda: getattr(
+    app.state, "maintenance_service", None
+)
+app.add_middleware(
+    MaintenanceMiddleware, service_getter=app.state._maintenance_service_getter
+)
 
 app.include_router(health_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(chat_sessions_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api")
 app.include_router(memories_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
@@ -316,6 +353,7 @@ app.include_router(users_router, prefix="/api")
 app.include_router(vaults_router, prefix="/api")
 app.include_router(vault_members_router, prefix="/api")
 app.include_router(organizations_router, prefix="/api")
+app.include_router(groups_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(email_router, prefix="/api")
 app.include_router(eval_router, prefix="/api")
@@ -332,12 +370,19 @@ async def health_check():
 
 # Serve frontend static files
 from pathlib import Path
+
 static_dir = Path("/app/static")
-logger.info(f"Checking for static files at: {static_dir} (exists: {static_dir.exists()})")
+logger.info(
+    f"Checking for static files at: {static_dir} (exists: {static_dir.exists()})"
+)
 if static_dir.exists():
     try:
         # Mount assets only (without html=True to avoid catch-all behavior)
-        app.mount("/assets", StaticFiles(directory=str(static_dir / "assets"), html=False), name="assets")
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(static_dir / "assets"), html=False),
+            name="assets",
+        )
         logger.info(f"Static files mounted successfully from {static_dir}")
 
         # Catch-all route for SPA client-side routing
@@ -346,14 +391,21 @@ if static_dir.exists():
         async def serve_spa(full_path: str):
             # Return 404 for API and assets paths to avoid shadowing (case-insensitive)
             normalized_path = full_path.lower()
-            if normalized_path == "api" or normalized_path == "assets" or normalized_path.startswith("api/") or normalized_path.startswith("assets/"):
+            if (
+                normalized_path == "api"
+                or normalized_path == "assets"
+                or normalized_path.startswith("api/")
+                or normalized_path.startswith("assets/")
+            ):
                 raise HTTPException(status_code=404, detail="Not found")
             return FileResponse(static_dir / "index.html")
 
     except Exception as e:
         logger.error(f"Failed to mount static files: {e}")
 else:
-    logger.warning(f"Static directory {static_dir} does not exist - frontend will not be served")
+    logger.warning(
+        f"Static directory {static_dir} does not exist - frontend will not be served"
+    )
     # List what's in /app to help debug
     try:
         app_contents = list(Path("/app").iterdir()) if Path("/app").exists() else []

@@ -92,7 +92,16 @@ export function DocumentCard({
               >
                 {document.filename}
               </h3>
-              {/* TODO: Optional subtitle (e.g., file extension) */}
+              {(() => {
+                const lastDotIndex = document.filename.lastIndexOf(".");
+                const extension =
+                  lastDotIndex > 0
+                    ? document.filename.slice(lastDotIndex + 1).toUpperCase()
+                    : null;
+                return extension ? (
+                  <p className="text-xs text-muted-foreground">{extension}</p>
+                ) : null;
+              })()}
             </div>
           </div>
 
@@ -119,7 +128,6 @@ export function DocumentCard({
                 <Trash2 className="w-4 h-4 mr-2" />
                 Delete
               </DropdownMenuItem>
-              {/* TODO: Add more actions (e.g., download, reprocess) if needed */}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

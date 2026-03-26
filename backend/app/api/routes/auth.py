@@ -1,4 +1,5 @@
 """Authentication routes."""
+
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -12,6 +13,7 @@ from app.services.auth_service import (
     create_access_token,
     create_refresh_token,
     hash_password,
+    password_strength_check,
     verify_password,
 )
 from app.limiter import limiter
@@ -36,6 +38,11 @@ class LoginRequest(BaseModel):
     password: str = Field(max_length=128)
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 @router.post("/register")
 @limiter.limit("5/hour")
 async def register(
@@ -50,12 +57,18 @@ async def register(
     """
     # Validate input
     if not body.username or len(body.username) < 3:
-        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+        raise HTTPException(
+            status_code=400, detail="Username must be at least 3 characters"
+        )
     if not body.password or len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+        raise HTTPException(
+            status_code=400, detail="Password must be at least 8 characters"
+        )
 
     # Check if username already exists
-    cursor = db.execute("SELECT id FROM users WHERE username = ? COLLATE NOCASE", (body.username,))
+    cursor = db.execute(
+        "SELECT id FROM users WHERE username = ? COLLATE NOCASE", (body.username,)
+    )
     if cursor.fetchone():
         raise HTTPException(status_code=409, detail="Username already exists")
 
@@ -104,9 +117,9 @@ async def login(
 
     Rate limiting: Apply 10 requests per minute per IP.
     """
-    # Fetch user by username
+    # Fetch user by username including lockout fields
     cursor = db.execute(
-        "SELECT id, username, hashed_password, full_name, role, is_active FROM users WHERE username = ? COLLATE NOCASE",
+        "SELECT id, username, hashed_password, full_name, role, is_active, failed_attempts, locked_until FROM users WHERE username = ? COLLATE NOCASE",
         (body.username,),
     )
     row = cursor.fetchone()
@@ -114,13 +127,53 @@ async def login(
     if not row:
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    user_id, db_username, hashed_pw, full_name, role, is_active = row
+    (
+        user_id,
+        db_username,
+        hashed_pw,
+        full_name,
+        role,
+        is_active,
+        failed_attempts,
+        locked_until,
+    ) = row
+
+    # Check if account is locked
+    if locked_until is not None:
+        locked_until_dt = datetime.fromisoformat(locked_until)
+        if locked_until_dt > datetime.now(timezone.utc):
+            seconds_remaining = max(
+                1, int((locked_until_dt - datetime.now(timezone.utc)).total_seconds())
+            )
+            raise HTTPException(
+                status_code=423,
+                detail=f"Account locked. Try again in {seconds_remaining} seconds.",
+                headers={"Retry-After": str(seconds_remaining)},
+            )
 
     if not is_active:
         raise HTTPException(status_code=403, detail="User account is inactive")
 
     # Verify password
     if not verify_password(body.password, hashed_pw):
+        # Increment failed_attempts
+        new_failed_attempts = failed_attempts + 1
+        try:
+            if new_failed_attempts >= 5:
+                # Lock the account for 15 minutes
+                lockout_time = datetime.now(timezone.utc) + timedelta(minutes=15)
+                db.execute(
+                    "UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?",
+                    (new_failed_attempts, lockout_time.isoformat(), user_id),
+                )
+            else:
+                db.execute(
+                    "UPDATE users SET failed_attempts = ? WHERE id = ?",
+                    (new_failed_attempts, user_id),
+                )
+            db.commit()
+        except Exception:
+            db.rollback()
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     # Create tokens
@@ -140,18 +193,26 @@ async def login(
             INSERT INTO user_sessions (user_id, refresh_token_hash, expires_at, ip_address, user_agent)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (user_id, refresh_token_hash, expires_at.isoformat(), ip_address, user_agent),
+            (
+                user_id,
+                refresh_token_hash,
+                expires_at.isoformat(),
+                ip_address,
+                user_agent,
+            ),
         )
 
-        # Update last_login_at
+        # Update last_login_at and reset failed_attempts/locked_until on successful login
         db.execute(
-            "UPDATE users SET last_login_at = ? WHERE id = ?",
+            "UPDATE users SET last_login_at = ?, failed_attempts = 0, locked_until = NULL WHERE id = ?",
             (datetime.now(timezone.utc).isoformat(), user_id),
         )
         db.commit()
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create session: {str(e)}"
+        )
 
     # Set refresh token as httpOnly cookie
     response.set_cookie(
@@ -228,7 +289,9 @@ async def refresh(
 
     # Rotate refresh token (create new one, invalidate old)
     new_refresh_token_raw, new_refresh_token_hash = create_refresh_token()
-    new_expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_MAX_AGE_DAYS)
+    new_expires_at = datetime.now(timezone.utc) + timedelta(
+        days=REFRESH_TOKEN_MAX_AGE_DAYS
+    )
 
     try:
         # Delete old session and create new one
@@ -238,12 +301,19 @@ async def refresh(
             INSERT INTO user_sessions (user_id, refresh_token_hash, expires_at, last_used_at)
             VALUES (?, ?, ?, ?)
             """,
-            (user_id, new_refresh_token_hash, new_expires_at.isoformat(), datetime.now(timezone.utc).isoformat()),
+            (
+                user_id,
+                new_refresh_token_hash,
+                new_expires_at.isoformat(),
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
         db.commit()
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to rotate session: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to rotate session: {str(e)}"
+        )
 
     # Create new access token
     access_token = create_access_token(user_id, username, role)
@@ -282,7 +352,9 @@ async def logout(
 
         # Hash the token to find and delete the session
         token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
-        db.execute("DELETE FROM user_sessions WHERE refresh_token_hash = ?", (token_hash,))
+        db.execute(
+            "DELETE FROM user_sessions WHERE refresh_token_hash = ?", (token_hash,)
+        )
         db.commit()
 
     # Clear the refresh token cookie
@@ -332,7 +404,9 @@ async def update_me(
 
     if password is not None:
         if len(password) < 8:
-            raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+            raise HTTPException(
+                status_code=400, detail="Password must be at least 8 characters"
+            )
         hashed_pw = hash_password(password)
         updates.append("hashed_password = ?")
         params.append(hashed_pw)
@@ -367,3 +441,222 @@ async def update_me(
         "is_active": bool(row[4]),
         "message": "Profile updated successfully",
     }
+
+
+@router.post("/change-password")
+async def change_password(
+    request: Request,
+    response: Response,
+    body: ChangePasswordRequest,
+    user: dict = Depends(get_current_active_user),
+    db=Depends(get_db),
+):
+    """
+    Change the current user's password.
+
+    Validates current password, enforces strength policy on new password,
+    revokes all existing sessions, and issues new tokens.
+    """
+    # 1. Fetch user from DB to get hashed_password
+    cursor = db.execute("SELECT hashed_password FROM users WHERE id = ?", (user["id"],))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    hashed_pw = row[0]
+
+    # 2. Verify current password
+    if not verify_password(body.current_password, hashed_pw):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    # 3. Validate new password with password_strength_check
+    try:
+        password_strength_check(body.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # 4. Hash new password
+    new_hashed = hash_password(body.new_password)
+
+    # 5. Update password and set must_change_password=False
+    db.execute(
+        "UPDATE users SET hashed_password = ?, must_change_password = 0 WHERE id = ?",
+        (new_hashed, user["id"]),
+    )
+
+    # 6. Revoke ALL existing sessions for this user (delete all user_sessions rows)
+    db.execute("DELETE FROM user_sessions WHERE user_id = ?", (user["id"],))
+
+    # 7. Create new tokens
+    access_token = create_access_token(user["id"], user["username"], user["role"])
+    refresh_token_raw, refresh_token_hash = create_refresh_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_MAX_AGE_DAYS)
+
+    db.execute(
+        """INSERT INTO user_sessions (user_id, refresh_token_hash, expires_at, last_used_at)
+           VALUES (?, ?, ?, ?)""",
+        (
+            user["id"],
+            refresh_token_hash,
+            expires_at.isoformat(),
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    db.commit()
+
+    # 8. Set new refresh token cookie
+    response.set_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        value=refresh_token_raw,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=REFRESH_TOKEN_MAX_AGE_DAYS * 24 * 60 * 60,
+        path="/api/v1/auth/refresh",
+    )
+
+    return {
+        "message": "Password changed successfully",
+        "access_token": access_token,
+        "token_type": "bearer",
+    }
+
+
+@router.get("/sessions")
+async def list_sessions(
+    user: dict = Depends(get_current_active_user),
+    db=Depends(get_db),
+):
+    """
+    List all active sessions for the current user.
+
+    Returns sessions with id, ip_address, user_agent, created_at, last_used_at.
+    Does NOT return token hashes (security).
+    """
+    cursor = db.execute(
+        """
+        SELECT id, ip_address, user_agent, created_at, last_used_at
+        FROM user_sessions
+        WHERE user_id = ?
+        """,
+        (user["id"],),
+    )
+    rows = cursor.fetchall()
+
+    sessions = []
+    for row in rows:
+        session_id, ip_address, user_agent, created_at, last_used_at = row
+        sessions.append(
+            {
+                "id": session_id,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+                "created_at": created_at,
+                "last_used_at": last_used_at if last_used_at else created_at,
+            }
+        )
+
+    return sessions
+
+
+@router.delete("/sessions/{session_id}")
+async def revoke_session(
+    session_id: int,
+    user: dict = Depends(get_current_active_user),
+    db=Depends(get_db),
+):
+    """
+    Revoke a specific session by ID.
+
+    User can only revoke their own sessions.
+    """
+    # Verify session belongs to user
+    cursor = db.execute(
+        "SELECT id FROM user_sessions WHERE id = ? AND user_id = ?",
+        (session_id, user["id"]),
+    )
+    row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Delete the session
+    db.execute("DELETE FROM user_sessions WHERE id = ?", (session_id,))
+    db.commit()
+
+    return Response(status_code=204)
+
+
+@router.delete("/sessions")
+async def revoke_all_sessions(
+    response: Response,
+    user: dict = Depends(get_current_active_user),
+    db=Depends(get_db),
+    refresh_token: Optional[str] = Cookie(None, alias=REFRESH_TOKEN_COOKIE_NAME),
+):
+    """
+    Revoke all sessions for the current user except the current one.
+
+    The current session is identified by the refresh token cookie.
+    User stays logged in with a new session.
+    """
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Refresh token missing")
+
+    import hashlib
+
+    # Hash the current refresh token to find the current session
+    token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+
+    # Find the current session
+    cursor = db.execute(
+        "SELECT id FROM user_sessions WHERE refresh_token_hash = ? AND user_id = ?",
+        (token_hash, user["id"]),
+    )
+    row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    current_session_id = row[0]
+
+    # Delete all sessions for this user except the current one
+    db.execute(
+        "DELETE FROM user_sessions WHERE user_id = ? AND id != ?",
+        (user["id"], current_session_id),
+    )
+
+    # Rotate the current session (create new refresh token for current session)
+    new_refresh_token_raw, new_refresh_token_hash = create_refresh_token()
+    new_expires_at = datetime.now(timezone.utc) + timedelta(
+        days=REFRESH_TOKEN_MAX_AGE_DAYS
+    )
+
+    # Delete old session and create new one
+    db.execute("DELETE FROM user_sessions WHERE id = ?", (current_session_id,))
+    db.execute(
+        """
+        INSERT INTO user_sessions (user_id, refresh_token_hash, expires_at, last_used_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            user["id"],
+            new_refresh_token_hash,
+            new_expires_at.isoformat(),
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    db.commit()
+
+    # Set new refresh token cookie so user stays logged in
+    response.set_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        value=new_refresh_token_raw,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=REFRESH_TOKEN_MAX_AGE_DAYS * 24 * 60 * 60,
+        path="/api/v1/auth/refresh",
+    )
+
+    return {"message": "All other sessions revoked"}

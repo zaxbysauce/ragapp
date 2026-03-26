@@ -4,6 +4,7 @@ Documents API routes for file management and processing.
 Provides endpoints for listing documents, uploading files, scanning directories,
 and managing document processing status.
 """
+
 import asyncio
 import hashlib
 import hmac
@@ -15,17 +16,41 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import aiofiles
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Query, Body
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    UploadFile,
+    File,
+    Query,
+    Body,
+)
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import settings, Settings
-from app.services.document_processor import DocumentProcessor, DocumentProcessingError, DuplicateFileError
+from app.services.document_processor import (
+    DocumentProcessor,
+    DocumentProcessingError,
+    DuplicateFileError,
+)
 from app.services.vector_store import VectorStore
 from app.services.embeddings import EmbeddingService
 from app.services.secret_manager import SecretManager
 from app.models.database import SQLiteConnectionPool
-from app.api.deps import get_secret_manager, get_background_processor, get_vector_store, get_embedding_service, get_settings, get_db, get_db_pool, require_vault_permission, get_current_active_user
+from app.api.deps import (
+    get_secret_manager,
+    get_background_processor,
+    get_vector_store,
+    get_embedding_service,
+    get_settings,
+    get_db,
+    get_db_pool,
+    require_vault_permission,
+    get_current_active_user,
+    require_admin_role,
+)
 from app.security import csrf_protect, require_scope
 from app.limiter import limiter
 from app.services.background_tasks import BackgroundProcessor
@@ -34,7 +59,7 @@ from app.services.background_tasks import BackgroundProcessor
 def secure_filename(filename: str) -> str:
     """
     Sanitize a filename to prevent security issues.
-    
+
     - Strips paths using os.path.basename
     - Removes non-ASCII characters
     - Replaces spaces with underscores
@@ -42,16 +67,16 @@ def secure_filename(filename: str) -> str:
     """
     # Strip paths
     filename = os.path.basename(filename)
-    
+
     # Replace spaces with underscores
     filename = filename.replace(" ", "_")
-    
+
     # Remove non-ASCII characters
     filename = filename.encode("ascii", "ignore").decode("ascii")
-    
+
     # Allow only alphanumeric, dots, hyphens, and underscores
     filename = re.sub(r"[^a-zA-Z0-9._-]", "", filename)
-    
+
     return filename
 
 
@@ -103,13 +128,15 @@ async def retry_document(
     file_id: int,
     request: Request,
     conn: sqlite3.Connection = Depends(get_db),
-    user: dict = Depends(get_current_active_user),
+    user: dict = Depends(require_admin_role),
     csrf_token: str = Depends(csrf_protect),
     secret_manager: SecretManager = Depends(get_secret_manager),
     background_processor: BackgroundProcessor = Depends(get_background_processor),
 ) -> dict:
     try:
-        cursor = await asyncio.to_thread(conn.execute, "SELECT file_path FROM files WHERE id = ?", (file_id,))
+        cursor = await asyncio.to_thread(
+            conn.execute, "SELECT file_path FROM files WHERE id = ?", (file_id,)
+        )
         row = await asyncio.to_thread(cursor.fetchone)
         if not row:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -150,6 +177,7 @@ async def retry_document(
 
 class DocumentResponse(BaseModel):
     """Response model for a document record - frontend compatible."""
+
     id: int
     file_name: str
     filename: str  # Frontend alias
@@ -166,22 +194,27 @@ class DocumentResponse(BaseModel):
 
 class DocumentListResponse(BaseModel):
     """Response model for listing documents - frontend compatible with total."""
+
     documents: List[DocumentResponse]
     total: int
 
 
 class DocumentStatsResponse(BaseModel):
     """Response model for document statistics - frontend compatible."""
+
     total_documents: int  # Frontend expects this field
     total_chunks: int
     total_size_bytes: int = 0  # Frontend expects this field
-    documents_by_status: dict = Field(default_factory=dict)  # Frontend expects this field
+    documents_by_status: dict = Field(
+        default_factory=dict
+    )  # Frontend expects this field
     total_files: int = 0  # Backward compatibility alias
     status: str = "success"
 
 
 class UploadResponse(BaseModel):
     """Response model for file upload - frontend compatible."""
+
     file_id: int
     file_name: str
     id: int  # Frontend alias for file_id
@@ -192,6 +225,7 @@ class UploadResponse(BaseModel):
 
 class ScanResponse(BaseModel):
     """Response model for directory scan - frontend compatible."""
+
     files_enqueued: int
     status: str
     message: str
@@ -202,6 +236,7 @@ class ScanResponse(BaseModel):
 
 class DeleteResponse(BaseModel):
     """Response model for document deletion."""
+
     file_id: int
     status: str
     message: str
@@ -209,12 +244,14 @@ class DeleteResponse(BaseModel):
 
 class BatchDeleteResponse(BaseModel):
     """Response model for batch document deletion."""
+
     deleted_count: int
     failed_ids: List[str]
 
 
 class DeleteAllVaultResponse(BaseModel):
     """Response model for deleting all documents in a vault."""
+
     deleted_count: int
     vault_id: int
 
@@ -231,7 +268,9 @@ def _row_to_document_response(row: sqlite3.Row) -> DocumentResponse:
         file_path=row["file_path"],
         status=status,
         chunk_count=chunk_count,
-        size=row["file_size"] if "file_size" in row.keys() and row["file_size"] is not None else None,
+        size=row["file_size"]
+        if "file_size" in row.keys() and row["file_size"] is not None
+        else None,
         created_at=row["created_at"],
         processed_at=row["processed_at"],
         metadata={
@@ -274,12 +313,12 @@ async def list_documents(
             SELECT id, file_name, file_path, status, chunk_count, file_size, created_at, processed_at
             FROM files
             ORDER BY created_at DESC
-            """
+            """,
         )
     rows = await asyncio.to_thread(cursor.fetchall)
-    
+
     documents = [_row_to_document_response(row) for row in rows]
-    
+
     return DocumentListResponse(documents=documents, total=len(documents))
 
 
@@ -298,39 +337,65 @@ async def get_document_stats(
     """
     # Get total files count
     if vault_id is not None:
-        cursor = await asyncio.to_thread(conn.execute, "SELECT COUNT(*) as total_files FROM files WHERE vault_id = ?", (vault_id,))
+        cursor = await asyncio.to_thread(
+            conn.execute,
+            "SELECT COUNT(*) as total_files FROM files WHERE vault_id = ?",
+            (vault_id,),
+        )
     else:
-        cursor = await asyncio.to_thread(conn.execute, "SELECT COUNT(*) as total_files FROM files")
+        cursor = await asyncio.to_thread(
+            conn.execute, "SELECT COUNT(*) as total_files FROM files"
+        )
     row = await asyncio.to_thread(cursor.fetchone)
     total_files = row["total_files"]
-    
+
     # Get total chunks count
     if vault_id is not None:
-        cursor = await asyncio.to_thread(conn.execute, "SELECT COALESCE(SUM(chunk_count), 0) as total_chunks FROM files WHERE vault_id = ?", (vault_id,))
+        cursor = await asyncio.to_thread(
+            conn.execute,
+            "SELECT COALESCE(SUM(chunk_count), 0) as total_chunks FROM files WHERE vault_id = ?",
+            (vault_id,),
+        )
     else:
-        cursor = await asyncio.to_thread(conn.execute, "SELECT COALESCE(SUM(chunk_count), 0) as total_chunks FROM files")
+        cursor = await asyncio.to_thread(
+            conn.execute,
+            "SELECT COALESCE(SUM(chunk_count), 0) as total_chunks FROM files",
+        )
     row = await asyncio.to_thread(cursor.fetchone)
     total_chunks = row["total_chunks"]
-    
+
     # Get total size (sum of file_size if column exists, otherwise 0)
     try:
         if vault_id is not None:
-            cursor = await asyncio.to_thread(conn.execute, "SELECT COALESCE(SUM(file_size), 0) as total_size FROM files WHERE vault_id = ?", (vault_id,))
+            cursor = await asyncio.to_thread(
+                conn.execute,
+                "SELECT COALESCE(SUM(file_size), 0) as total_size FROM files WHERE vault_id = ?",
+                (vault_id,),
+            )
         else:
-            cursor = await asyncio.to_thread(conn.execute, "SELECT COALESCE(SUM(file_size), 0) as total_size FROM files")
+            cursor = await asyncio.to_thread(
+                conn.execute,
+                "SELECT COALESCE(SUM(file_size), 0) as total_size FROM files",
+            )
         row = await asyncio.to_thread(cursor.fetchone)
         total_size_bytes = row["total_size"] or 0
     except sqlite3.OperationalError:
         total_size_bytes = 0
-    
+
     # Get documents grouped by status
     if vault_id is not None:
-        cursor = await asyncio.to_thread(conn.execute, "SELECT status, COUNT(*) as count FROM files WHERE vault_id = ? GROUP BY status", (vault_id,))
+        cursor = await asyncio.to_thread(
+            conn.execute,
+            "SELECT status, COUNT(*) as count FROM files WHERE vault_id = ? GROUP BY status",
+            (vault_id,),
+        )
     else:
-        cursor = await asyncio.to_thread(conn.execute, "SELECT status, COUNT(*) as count FROM files GROUP BY status")
+        cursor = await asyncio.to_thread(
+            conn.execute, "SELECT status, COUNT(*) as count FROM files GROUP BY status"
+        )
     rows = await asyncio.to_thread(cursor.fetchall)
     documents_by_status = {row["status"]: row["count"] for row in rows}
-    
+
     return DocumentStatsResponse(
         total_documents=total_files,  # Frontend field
         total_chunks=total_chunks,
@@ -356,7 +421,9 @@ async def upload_document_root(
     Upload endpoint at root /documents for frontend compatibility.
     Delegates to the main upload handler.
     """
-    return await _do_upload(request, file, settings_dep, vector_store, embedding_service, db_pool, vault_id)
+    return await _do_upload(
+        request, file, settings_dep, vector_store, embedding_service, db_pool, vault_id
+    )
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -377,7 +444,9 @@ async def upload_document(
     Saves the uploaded file to settings.uploads_dir using aiofiles,
     then processes it via DocumentProcessor.process_file in asyncio.to_thread.
     """
-    return await _do_upload(request, file, settings_dep, vector_store, embedding_service, db_pool, vault_id)
+    return await _do_upload(
+        request, file, settings_dep, vector_store, embedding_service, db_pool, vault_id
+    )
 
 
 async def _do_upload(
@@ -400,7 +469,9 @@ async def _do_upload(
     # Validate vault exists before doing anything with the file
     conn = db_pool.get_connection()
     try:
-        vault_row = conn.execute("SELECT id FROM vaults WHERE id = ?", (vault_id,)).fetchone()
+        vault_row = conn.execute(
+            "SELECT id FROM vaults WHERE id = ?", (vault_id,)
+        ).fetchone()
         if not vault_row:
             raise HTTPException(status_code=404, detail=f"Vault {vault_id} not found")
     finally:
@@ -409,7 +480,7 @@ async def _do_upload(
     # Ensure uploads directory exists
     upload_dir = settings.vault_uploads_dir(vault_id or settings.orphan_vault_id)
     upload_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Sanitize filename
     file_name = secure_filename(file.filename or "unnamed_file")
     if not file_name:
@@ -418,13 +489,13 @@ async def _do_upload(
     # Ensure file has an extension for validation
     if not Path(file_name).suffix:
         file_name = f"{file_name}.txt"
-    
+
     # Validate file extension
     file_suffix = Path(file_name).suffix.lower()
     if file_suffix not in settings_dep.allowed_extensions:
         raise HTTPException(
             status_code=400,
-            detail=f"File extension '{file_suffix}' not allowed. Allowed: {settings_dep.allowed_extensions}"
+            detail=f"File extension '{file_suffix}' not allowed. Allowed: {settings_dep.allowed_extensions}",
         )
 
     # Validate file size from content-length header
@@ -433,13 +504,16 @@ async def _do_upload(
     if content_length:
         try:
             if int(content_length) > max_size_bytes:
-                raise HTTPException(status_code=413, detail=f"File too large. Max size: {settings.max_file_size_mb}MB")
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Max size: {settings.max_file_size_mb}MB",
+                )
         except ValueError:
             pass  # Invalid content-length header, will check during streaming
-    
+
     # Generate safe file path
     file_path = upload_dir / file_name
-    
+
     # Handle duplicate file names
     counter = 1
     original_path = file_path
@@ -448,7 +522,7 @@ async def _do_upload(
         suffix = original_path.suffix
         file_path = upload_dir / f"{stem}_{counter}{suffix}"
         counter += 1
-    
+
     # Path safety: ensure file_path is within upload_dir
     try:
         resolved_path = file_path.resolve()
@@ -457,7 +531,7 @@ async def _do_upload(
             raise HTTPException(status_code=400, detail="Invalid file path")
     except (OSError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid file path")
-    
+
     temp_file_path = None
     try:
         # Save file using aiofiles with chunked reading and size validation
@@ -471,9 +545,12 @@ async def _do_upload(
                     await f.close()
                     if temp_file_path.exists():
                         temp_file_path.unlink(missing_ok=True)
-                    raise HTTPException(status_code=413, detail=f"File too large. Max size: {settings.max_file_size_mb}MB")
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Max size: {settings.max_file_size_mb}MB",
+                    )
                 await f.write(chunk)
-        
+
         # Process file with injected dependencies
         processor = DocumentProcessor(
             chunk_size_chars=settings_dep.chunk_size_chars,
@@ -485,7 +562,7 @@ async def _do_upload(
 
         try:
             result = await processor.process_file(str(file_path), vault_id=vault_id)
-            
+
             return UploadResponse(
                 file_id=result.file_id,
                 file_name=file_name,
@@ -497,7 +574,9 @@ async def _do_upload(
         except DuplicateFileError as e:
             # File is a duplicate, remove the uploaded file
             file_path.unlink(missing_ok=True)
-            raise HTTPException(status_code=409, detail=f"{e} (uploaded file was cleaned up)")
+            raise HTTPException(
+                status_code=409, detail=f"{e} (uploaded file was cleaned up)"
+            )
         except HTTPException:
             # Clean up partial file if it exists
             if temp_file_path and temp_file_path.exists():
@@ -545,7 +624,9 @@ async def scan_directories(
         files_enqueued = await watcher.scan_once()
 
         if files_enqueued > 0:
-            message = f"Scan complete: {files_enqueued} new files enqueued for processing"
+            message = (
+                f"Scan complete: {files_enqueued} new files enqueued for processing"
+            )
         else:
             message = "Scan complete: no new files found"
 
@@ -578,12 +659,16 @@ async def delete_document(
     chunks from the vector store. Returns 404 if the file is not found.
     """
     # Check if file exists
-    cursor = await asyncio.to_thread(conn.execute, "SELECT id, file_name FROM files WHERE id = ?", (file_id,))
+    cursor = await asyncio.to_thread(
+        conn.execute, "SELECT id, file_name FROM files WHERE id = ?", (file_id,)
+    )
     row = await asyncio.to_thread(cursor.fetchone)
-    
+
     if row is None:
-        raise HTTPException(status_code=404, detail=f"Document with id {file_id} not found")
-    
+        raise HTTPException(
+            status_code=404, detail=f"Document with id {file_id} not found"
+        )
+
     file_name = row["file_name"]
 
     try:
@@ -592,18 +677,29 @@ async def delete_document(
             db = vector_store.db
             if db is not None and "chunks" in db.table_names():
                 vector_store.table = db.open_table("chunks")
-                deleted_chunks = await asyncio.to_thread(vector_store.delete_by_file, str(file_id))
-                logger.info("Deleted %d chunks from vector store for file_id %s", deleted_chunks, file_id)
+                deleted_chunks = await asyncio.to_thread(
+                    vector_store.delete_by_file, str(file_id)
+                )
+                logger.info(
+                    "Deleted %d chunks from vector store for file_id %s",
+                    deleted_chunks,
+                    file_id,
+                )
             else:
-                logger.debug("Chunks table not found, skipping vector store deletion for file_id %s", file_id)
+                logger.debug(
+                    "Chunks table not found, skipping vector store deletion for file_id %s",
+                    file_id,
+                )
         except Exception as e:
             logger.warning("Error deleting chunks from vector store: %s", e)
             # Continue with database deletion even if vector store fails
 
         # Delete from database
-        await asyncio.to_thread(conn.execute, "DELETE FROM files WHERE id = ?", (file_id,))
+        await asyncio.to_thread(
+            conn.execute, "DELETE FROM files WHERE id = ?", (file_id,)
+        )
         await asyncio.to_thread(conn.commit)
-        
+
         return DeleteResponse(
             file_id=file_id,
             status="success",
@@ -620,7 +716,9 @@ async def delete_document(
 @router.post("/batch", response_model=BatchDeleteResponse)
 async def batch_delete_documents(
     request: Request,
-    file_ids: List[str] = Body(..., embed=True, description="List of file IDs to delete"),
+    file_ids: List[str] = Body(
+        ..., embed=True, description="List of file IDs to delete"
+    ),
     conn: sqlite3.Connection = Depends(get_db),
     user: dict = Depends(require_vault_permission("write")),
     vector_store: VectorStore = Depends(get_vector_store),
@@ -638,7 +736,9 @@ async def batch_delete_documents(
     for file_id in file_ids:
         try:
             # Check if file exists
-            cursor = await asyncio.to_thread(conn.execute, "SELECT id, file_name FROM files WHERE id = ?", (file_id,))
+            cursor = await asyncio.to_thread(
+                conn.execute, "SELECT id, file_name FROM files WHERE id = ?", (file_id,)
+            )
             row = await asyncio.to_thread(cursor.fetchone)
 
             if row is None:
@@ -654,10 +754,16 @@ async def batch_delete_documents(
                     vector_store.table = db.open_table("chunks")
                     await asyncio.to_thread(vector_store.delete_by_file, str(file_id))
             except Exception as e:
-                logger.warning("Error deleting chunks from vector store for file_id %d: %s", file_id, e)
+                logger.warning(
+                    "Error deleting chunks from vector store for file_id %d: %s",
+                    file_id,
+                    e,
+                )
 
             # Delete from database
-            await asyncio.to_thread(conn.execute, "DELETE FROM files WHERE id = ?", (file_id,))
+            await asyncio.to_thread(
+                conn.execute, "DELETE FROM files WHERE id = ?", (file_id,)
+            )
             await asyncio.to_thread(conn.commit)
             deleted_count += 1
             logger.info("Deleted document '%s' (id: %d)", file_name, file_id)
@@ -687,7 +793,9 @@ async def delete_all_vault_documents(
     chunks from the vector store for the specified vault.
     """
     # Get all file IDs in the vault
-    cursor = await asyncio.to_thread(conn.execute, "SELECT id FROM files WHERE vault_id = ?", (vault_id,))
+    cursor = await asyncio.to_thread(
+        conn.execute, "SELECT id FROM files WHERE vault_id = ?", (vault_id,)
+    )
     rows = await asyncio.to_thread(cursor.fetchall)
 
     file_ids = [row["id"] for row in rows]
@@ -702,15 +810,23 @@ async def delete_all_vault_documents(
                     vector_store.table = db.open_table("chunks")
                     await asyncio.to_thread(vector_store.delete_by_file, str(file_id))
             except Exception as e:
-                logger.warning("Error deleting chunks from vector store for file_id %d: %s", file_id, e)
+                logger.warning(
+                    "Error deleting chunks from vector store for file_id %d: %s",
+                    file_id,
+                    e,
+                )
 
             # Delete from database
-            await asyncio.to_thread(conn.execute, "DELETE FROM files WHERE id = ?", (file_id,))
+            await asyncio.to_thread(
+                conn.execute, "DELETE FROM files WHERE id = ?", (file_id,)
+            )
             await asyncio.to_thread(conn.commit)
             deleted_count += 1
 
         except Exception as e:
-            logger.exception("Error deleting document %d from vault %d", file_id, vault_id)
+            logger.exception(
+                "Error deleting document %d from vault %d", file_id, vault_id
+            )
 
     logger.info("Deleted %d documents from vault %d", deleted_count, vault_id)
 
@@ -726,19 +842,22 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     """Convert validation errors to 400 for empty filename cases only."""
     errors = exc.errors()
     for error in errors:
-        if error.get("loc") == ("body", "file") and "filename" in str(error.get("input", "")).lower():
+        if (
+            error.get("loc") == ("body", "file")
+            and "filename" in str(error.get("input", "")).lower()
+        ):
             raise HTTPException(status_code=400, detail="Filename cannot be empty")
     # For all other validation errors, return standard 422
     # Convert errors to dict format for JSON serialization
     from fastapi.responses import JSONResponse
+
     error_dicts = [
         {
             "loc": error.get("loc"),
             "msg": error.get("msg"),
             "type": error.get("type"),
-            "input": error.get("input")
+            "input": error.get("input"),
         }
         for error in errors
     ]
     return JSONResponse(status_code=422, content={"detail": error_dicts})
-

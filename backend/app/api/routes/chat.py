@@ -4,6 +4,7 @@ Chat API routes for RAG-based conversational interface.
 Provides streaming and non-streaming chat endpoints that leverage
 the RAG engine for context-aware responses.
 """
+
 import asyncio
 import json
 import logging
@@ -14,7 +15,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_db, get_rag_engine, require_vault_permission, get_current_active_user
+from app.api.deps import (
+    get_db,
+    get_rag_engine,
+    require_vault_permission,
+    get_current_active_user,
+    get_user_accessible_vault_ids,
+)
 from app.security import require_auth
 from app.services.rag_engine import RAGEngine, RAGEngineError
 
@@ -26,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
+
     message: str
     history: List[Dict[str, Any]] = Field(default_factory=list)
     stream: bool = False
@@ -34,6 +42,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Response model for non-streaming chat endpoint."""
+
     content: str
     sources: List[Dict[str, Any]] = Field(default_factory=list)
     memories_used: List[str] = Field(default_factory=list)
@@ -52,12 +61,14 @@ class ChatStreamRequest(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     """Request model for creating a new chat session."""
+
     title: Optional[str] = None
     vault_id: int = 1
 
 
 class AddMessageRequest(BaseModel):
     """Request model for adding a message to a chat session."""
+
     role: str
     content: str
     sources: Optional[List[dict]] = None
@@ -65,6 +76,7 @@ class AddMessageRequest(BaseModel):
 
 class UpdateSessionRequest(BaseModel):
     """Request model for updating a chat session title."""
+
     title: str
 
 
@@ -82,8 +94,10 @@ def stream_chat_response(
     Ends with a done event containing sources and memories_used.
     """
     if rag_engine is None:
+
         async def error_generator():
             yield f"data: {json.dumps({'type': 'error', 'message': 'RAG engine not available', 'code': 'SERVICE_UNAVAILABLE'})}\n\n"
+
         return StreamingResponse(
             error_generator(),
             media_type="text/event-stream",
@@ -99,9 +113,11 @@ def stream_chat_response(
         yield ": ping\n\n"
 
         try:
-            async for chunk in rag_engine.query(message, history, stream=True, vault_id=vault_id):
+            async for chunk in rag_engine.query(
+                message, history, stream=True, vault_id=vault_id
+            ):
                 chunk_type = chunk.get("type")
-                
+
                 if chunk_type == "content":
                     content = chunk.get("content", "")
                     collected_content.append(content)
@@ -119,14 +135,14 @@ def stream_chat_response(
                 len(history),
                 type(e).__name__,
                 str(e),
-                exc_info=False
+                exc_info=False,
             )
             yield f"data: {json.dumps({'type': 'error', 'message': 'An error occurred while processing your request', 'code': 'INTERNAL_ERROR'})}\n\n"
             return
-        
+
         # Yield final done event with sources and memories
         yield f"data: {json.dumps({'type': 'done', 'sources': sources, 'memories_used': memories_used})}\n\n"
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -146,19 +162,18 @@ async def non_stream_chat_response(
     response with content, sources, and memories used.
     """
     if rag_engine is None:
-        raise HTTPException(
-            status_code=503,
-            detail="RAG engine not available"
-        )
+        raise HTTPException(status_code=503, detail="RAG engine not available")
 
     collected_content = []
     sources = []
     memories_used = []
 
     try:
-        async for chunk in rag_engine.query(message, history, stream=False, vault_id=vault_id):
+        async for chunk in rag_engine.query(
+            message, history, stream=False, vault_id=vault_id
+        ):
             chunk_type = chunk.get("type")
-            
+
             if chunk_type == "content":
                 collected_content.append(chunk.get("content", ""))
             elif chunk_type == "done":
@@ -166,9 +181,9 @@ async def non_stream_chat_response(
                 memories_used = chunk.get("memories_used", [])
     except RAGEngineError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-    
+
     full_content = "".join(collected_content)
-    
+
     return ChatResponse(
         content=full_content,
         sources=sources,
@@ -184,45 +199,62 @@ async def chat(
 ):
     """
     Chat endpoint for RAG-based conversational interface.
-    
+
     Args:
         request: ChatRequest containing message, optional history, and stream flag
-        
+
     Returns:
         ChatResponse with content, sources, memories_used
-        
+
     Raises:
         HTTPException: If stream=True is requested (use /chat/stream instead)
     """
     if request.stream:
         raise HTTPException(
             status_code=400,
-            detail="Streaming is not supported on this endpoint. Use /chat/stream for streaming responses."
+            detail="Streaming is not supported on this endpoint. Use /chat/stream for streaming responses.",
         )
-    return await non_stream_chat_response(request.message, request.history, rag_engine, vault_id=request.vault_id)
+    return await non_stream_chat_response(
+        request.message, request.history, rag_engine, vault_id=request.vault_id
+    )
 
 
 @router.post("/chat/stream")
 async def chat_stream(
     request: ChatStreamRequest,
+    user: dict = Depends(get_current_active_user),
+    db=Depends(get_db),
     rag_engine: RAGEngine = Depends(get_rag_engine),
-    user: dict = Depends(require_vault_permission("read")),
 ):
     """Streaming chat endpoint that accepts a sequence of chat messages."""
+    # Validate vault_id is in user's accessible list
+    user_role = user.get("role", "")
+
+    # superadmin/admin can access any vault
+    if user_role not in ("superadmin", "admin"):
+        accessible = await get_user_accessible_vault_ids(user, db)
+        if request.vault_id not in accessible:
+            raise HTTPException(status_code=403, detail="Vault access denied")
+
     if not request.messages:
         raise HTTPException(status_code=400, detail="At least one message is required")
 
     last_message = request.messages[-1]
     if last_message.role.lower() != "user":
-        raise HTTPException(status_code=400, detail="The last message must be from the user")
+        raise HTTPException(
+            status_code=400, detail="The last message must be from the user"
+        )
 
     history = [msg.model_dump(exclude_none=True) for msg in request.messages[:-1]]
-    return stream_chat_response(last_message.content, history, rag_engine, vault_id=request.vault_id)
+    return stream_chat_response(
+        last_message.content, history, rag_engine, vault_id=request.vault_id
+    )
 
 
 # ============================================================================
 # Chat Session History Management Endpoints
 # ============================================================================
+
 
 @router.get("/chat/sessions")
 async def list_sessions(
@@ -262,14 +294,16 @@ async def list_sessions(
     # Map rows to dicts (message_count is now the 6th column, index 5)
     sessions_with_count = []
     for row in rows:
-        sessions_with_count.append({
-            "id": row[0],
-            "vault_id": row[1],
-            "title": row[2],
-            "created_at": row[3],
-            "updated_at": row[4],
-            "message_count": row[5]
-        })
+        sessions_with_count.append(
+            {
+                "id": row[0],
+                "vault_id": row[1],
+                "title": row[2],
+                "created_at": row[3],
+                "updated_at": row[4],
+                "message_count": row[5],
+            }
+        )
 
     return {"sessions": sessions_with_count}
 
@@ -296,7 +330,9 @@ async def get_session(
 
     # Get messages
     messages_query = "SELECT id, role, content, sources, created_at FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC"
-    messages_result = await asyncio.to_thread(conn.execute, messages_query, (session_id,))
+    messages_result = await asyncio.to_thread(
+        conn.execute, messages_query, (session_id,)
+    )
     message_rows = await asyncio.to_thread(messages_result.fetchall)
 
     # Parse messages with JSON sources
@@ -309,13 +345,15 @@ async def get_session(
             except json.JSONDecodeError:
                 sources = []
 
-        messages.append({
-            "id": msg_row[0],
-            "role": msg_row[1],
-            "content": msg_row[2],
-            "sources": sources,
-            "created_at": msg_row[4]
-        })
+        messages.append(
+            {
+                "id": msg_row[0],
+                "role": msg_row[1],
+                "content": msg_row[2],
+                "sources": sources,
+                "created_at": msg_row[4],
+            }
+        )
 
     return {
         "id": session_row[0],
@@ -323,7 +361,7 @@ async def get_session(
         "title": session_row[2],
         "created_at": session_row[3],
         "updated_at": session_row[4],
-        "messages": messages
+        "messages": messages,
     }
 
 
@@ -339,7 +377,9 @@ async def create_session(
     Returns the created session with its ID.
     """
     query = "INSERT INTO chat_sessions (vault_id, title, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-    cursor = await asyncio.to_thread(conn.execute, query, (request.vault_id, request.title))
+    cursor = await asyncio.to_thread(
+        conn.execute, query, (request.vault_id, request.title)
+    )
     await asyncio.to_thread(conn.commit)
 
     # Get the created session
@@ -353,7 +393,7 @@ async def create_session(
         "vault_id": row[1],
         "title": row[2],
         "created_at": row[3],
-        "updated_at": row[4]
+        "updated_at": row[4],
     }
 
 
@@ -375,21 +415,21 @@ async def _auto_name_session(first_message: str) -> str:
 
     # Remove common prefixes
     prefixes = [
-        r'^please\s+',
-        r'^can\s+you\s+',
-        r'^could\s+you\s+',
-        r'^what\s+(is|are)\s+',
-        r'^how\s+(do|does|can|to)\s+',
-        r'^tell\s+me\s+about\s+',
-        r'^explain\s+',
-        r'^summarize\s+',
-        r'^compare\s+',
-        r'^analyze\s+',
+        r"^please\s+",
+        r"^can\s+you\s+",
+        r"^could\s+you\s+",
+        r"^what\s+(is|are)\s+",
+        r"^how\s+(do|does|can|to)\s+",
+        r"^tell\s+me\s+about\s+",
+        r"^explain\s+",
+        r"^summarize\s+",
+        r"^compare\s+",
+        r"^analyze\s+",
     ]
 
     cleaned = text.lower()
     for prefix in prefixes:
-        cleaned = re.sub(prefix, '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(prefix, "", cleaned, flags=re.IGNORECASE)
 
     # Extract key phrases
     # Look for quoted text first (often contains the main topic)
@@ -400,25 +440,25 @@ async def _auto_name_session(first_message: str) -> str:
         # Extract the first meaningful phrase (up to first punctuation or 10 words)
         words = cleaned.split()
         if len(words) <= 3:
-            candidate = ' '.join(words)
+            candidate = " ".join(words)
         else:
             # Take first 4-6 words that form a coherent phrase
-            candidate = ' '.join(words[:5])
+            candidate = " ".join(words[:5])
 
     # Capitalize first letter
     candidate = candidate.strip().capitalize()
 
     # Remove trailing punctuation
-    candidate = re.sub(r'[.,;:!?]+$', '', candidate)
+    candidate = re.sub(r"[.,;:!?]+$", "", candidate)
 
     # Limit length and add ellipsis if needed
     if len(candidate) > 47:
-        candidate = candidate[:47].rsplit(' ', 1)[0] + "..."
+        candidate = candidate[:47].rsplit(" ", 1)[0] + "..."
     elif len(candidate) < 10 and len(text) > 10:
         # If too short, use more context
         candidate = text[:47].strip()
         if len(candidate) > 47:
-            candidate = candidate[:47].rsplit(' ', 1)[0] + "..."
+            candidate = candidate[:47].rsplit(" ", 1)[0] + "..."
 
     return candidate if candidate else "New Chat"
 
@@ -455,7 +495,9 @@ async def add_message(
     if is_first_message and session_row[1] is None:
         auto_title = await _auto_name_session(request.content)
         update_title_query = "UPDATE chat_sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        await asyncio.to_thread(conn.execute, update_title_query, (auto_title, session_id))
+        await asyncio.to_thread(
+            conn.execute, update_title_query, (auto_title, session_id)
+        )
 
     # Serialize sources to JSON
     sources_json = json.dumps(request.sources) if request.sources else None
@@ -465,16 +507,24 @@ async def add_message(
         INSERT INTO chat_messages (session_id, role, content, sources, created_at)
         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
     """
-    cursor = await asyncio.to_thread(conn.execute, insert_query, (session_id, request.role, request.content, sources_json))
+    cursor = await asyncio.to_thread(
+        conn.execute,
+        insert_query,
+        (session_id, request.role, request.content, sources_json),
+    )
 
     # Update session's updated_at
-    update_query = "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    update_query = (
+        "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    )
     await asyncio.to_thread(conn.execute, update_query, (session_id,))
     await asyncio.to_thread(conn.commit)
 
     # Get the created message
     message_id = cursor.lastrowid
-    select_query = "SELECT id, role, content, sources, created_at FROM chat_messages WHERE id = ?"
+    select_query = (
+        "SELECT id, role, content, sources, created_at FROM chat_messages WHERE id = ?"
+    )
     result = await asyncio.to_thread(conn.execute, select_query, (message_id,))
     row = await asyncio.to_thread(result.fetchone)
 
@@ -491,7 +541,7 @@ async def add_message(
         "role": row[1],
         "content": row[2],
         "sources": sources,
-        "created_at": row[4]
+        "created_at": row[4],
     }
 
 
@@ -530,7 +580,7 @@ async def update_session(
         "vault_id": row[1],
         "title": row[2],
         "created_at": row[3],
-        "updated_at": row[4]
+        "updated_at": row[4],
     }
 
 
