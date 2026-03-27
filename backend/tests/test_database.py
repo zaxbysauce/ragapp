@@ -1,5 +1,6 @@
 """Unit tests for database schema initialization."""
 
+import gc
 import os
 import sqlite3
 import tempfile
@@ -20,9 +21,20 @@ class TestDatabaseSchema(unittest.TestCase):
         os.close(self.temp_fd)
 
     def tearDown(self):
-        """Clean up the temporary database file."""
-        if os.path.exists(self.temp_db_path):
-            os.remove(self.temp_db_path)
+        """Clean up the temporary database file and WAL/SHM sidecars.
+
+        On Windows, SQLite WAL mode creates -wal and -shm sidecar files.
+        gc.collect() forces finalization of any lingering connection objects
+        before the remove attempt, avoiding WinError 32 (file in use).
+        """
+        gc.collect()
+        for suffix in ("", "-wal", "-shm"):
+            path = self.temp_db_path + suffix
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except PermissionError:
+                    pass  # Best-effort on Windows; temp files are cleaned by OS at process exit
 
     def test_init_db_creates_required_tables(self):
         """Test that init_db creates all required tables and FTS virtual table."""

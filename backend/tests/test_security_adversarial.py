@@ -283,27 +283,22 @@ class TestUnicodeEncodingAttacks:
         assert exc_info.value.status_code in [401, 403]
 
     def test_require_auth_handles_fullwidth_characters(self):
-        """SECURITY BUG: Fullwidth Unicode causes TypeError in compare_digest.
-        
-        The current code doesn't encode to bytes before comparison,
-        causing unhandled TypeError with non-ASCII characters.
-        This test documents the vulnerability - code should be fixed to handle Unicode.
-        """
-        # Current behavior: TypeError is raised (BUG - should return 400/403 gracefully)
-        with pytest.raises(TypeError):
+        """Fullwidth Unicode tokens are rejected with an HTTP error (not a crash)."""
+        with pytest.raises(HTTPException) as exc_info:
             require_auth("Bearer \uff41\uff44\uff4d\uff49\uff4e")  # Fullwidth Latin characters
+        assert exc_info.value.status_code in (400, 403)
 
     def test_require_auth_handles_combining_characters(self):
-        """SECURITY BUG: Combining Unicode causes TypeError in compare_digest."""
-        # Current behavior: TypeError is raised (BUG - should return 400/403 gracefully)
-        with pytest.raises(TypeError):
+        """Combining Unicode tokens are rejected with an HTTP error (not a crash)."""
+        with pytest.raises(HTTPException) as exc_info:
             require_auth("Bearer a\u0301")  # a with acute accent
+        assert exc_info.value.status_code in (400, 403)
 
     def test_require_auth_handles_homoglyph_attack(self):
-        """SECURITY BUG: Homoglyph attacks cause TypeError in compare_digest."""
-        # Current behavior: TypeError is raised (BUG - should return 400/403 gracefully)
-        with pytest.raises(TypeError):
+        """Homoglyph attack tokens are rejected with an HTTP error (not a crash)."""
+        with pytest.raises(HTTPException) as exc_info:
             require_auth("Bearer \u03b1dmin")  # Greek alpha + 'dmin'
+        assert exc_info.value.status_code in (400, 403)
 
     def test_require_auth_rejects_mixed_encoding(self):
         """Mixed encoding attempts should be rejected."""
@@ -312,18 +307,19 @@ class TestUnicodeEncodingAttacks:
         assert exc_info.value.status_code in [401, 403]
 
     def test_require_auth_handles_right_to_left_override(self):
-        """SECURITY BUG: RTL override causes TypeError in compare_digest."""
-        # Current behavior: TypeError is raised (BUG - should return 400/403 gracefully)
-        with pytest.raises(TypeError):
+        """RTL override tokens are rejected with an HTTP error (not a crash)."""
+        with pytest.raises(HTTPException) as exc_info:
             require_auth("Bearer admin\u202etoken")  # RLE character
+        assert exc_info.value.status_code in (400, 403)
 
     def test_require_scope_handles_unicode_token(self):
-        """SECURITY BUG: require_scope also has Unicode TypeError vulnerability."""
-        with pytest.raises(TypeError):
+        """Unicode tokens in require_scope are rejected with an HTTP error (not a crash)."""
+        with pytest.raises(HTTPException) as exc_info:
             require_scope("admin")(
                 authorization="Bearer \uff41\uff44\uff4d\uff49\uff4e",
                 x_scopes="admin"
             )
+        assert exc_info.value.status_code in (400, 403)
 
 
 class TestValidAuthentication:

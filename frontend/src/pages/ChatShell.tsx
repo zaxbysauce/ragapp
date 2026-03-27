@@ -410,9 +410,8 @@ export default function ChatShell() {
           onPromptClick={(prompt) => {
             setInput(prompt);
             setTimeout(() => {
-              const textarea = document.querySelector<HTMLTextAreaElement>("textarea");
-              textarea?.focus();
-            }, 50);
+              document.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+            }, 0);
           }}
           onUploadClick={() => {
             // Navigate to documents or open upload modal

@@ -62,11 +62,20 @@ class TestChatStreaming(unittest.TestCase):
     def setUp(self):
         """Set up test client."""
         self.client = TestClient(app)
+        from app.api.deps import get_current_active_user
+
+        async def mock_auth():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
+        app.dependency_overrides[get_current_active_user] = mock_auth
+        self._get_current_active_user = get_current_active_user
 
     def tearDown(self):
         from app.api.deps import get_rag_engine
         from app.main import app
         app.dependency_overrides.pop(get_rag_engine, None)
+        if self._get_current_active_user is not None:
+            app.dependency_overrides.pop(self._get_current_active_user, None)
         # Clean up app.state services
         if hasattr(app.state, '_test_services'):
             for key in app.state._test_services:
@@ -144,9 +153,14 @@ class TestChatStreaming(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "text/event-stream; charset=utf-8")
 
-        # Verify SSE format: each line starts with "data: "
+        # Verify SSE format: each non-comment block starts with "data: "
         text = response.text
         for line in text.strip().split('\n\n'):
+            if not line:
+                continue
+            # Skip SSE comment lines (e.g., keepalive pings like ": ping")
+            if line.startswith(':'):
+                continue
             self.assertTrue(line.startswith("data: "), f"Line does not start with 'data: ': {line}")
 
     def test_stream_chat_accumulates_content(self):

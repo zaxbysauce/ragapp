@@ -249,10 +249,13 @@ class RAGEngineTests(unittest.IsolatedAsyncioTestCase):
     async def test_fallback_returns_sources_when_all_chunks_filtered(self):
         """Test that when all chunks fail the distance threshold, the fallback mechanism
         returns the best available chunks so the LLM always has some context to work with."""
-        # All results have distance > threshold (fail threshold filtering)
+        # All results have distance > threshold (fail threshold filtering).
+        # Texts must be > 50 chars to survive context distillation's short-chunk filter.
         vector_results = [
-            {"text": "irrelevant1", "file_id": "f1", "metadata": {}, "_distance": 0.9},
-            {"text": "irrelevant2", "file_id": "f2", "metadata": {}, "_distance": 0.95},
+            {"text": "This document discusses an irrelevant topic that does not match the query at all.",
+             "file_id": "f1", "metadata": {}, "_distance": 0.9},
+            {"text": "Another unrelated passage covering completely different subject matter from the query.",
+             "file_id": "f2", "metadata": {}, "_distance": 0.95},
         ]
         engine = RAGEngine()
         engine.embedding_service = cast(EmbeddingService, FakeEmbeddingService([0.1, 0.2]))

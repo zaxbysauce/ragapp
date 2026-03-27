@@ -29,6 +29,10 @@ class TestEmbeddingService(unittest.TestCase):
         self.mock_settings = self.settings_patcher.start()
         self.mock_settings.ollama_embedding_url = "http://localhost:11434"
         self.mock_settings.embedding_model = "nomic-embed-text"
+        self.mock_settings.embedding_doc_prefix = ""
+        self.mock_settings.embedding_query_prefix = ""
+        self.mock_settings.tri_vector_search_enabled = False
+        self.mock_settings.flag_embedding_url = ""
 
     def tearDown(self):
         """Clean up test fixtures."""
@@ -44,12 +48,11 @@ class TestEmbeddingService(unittest.TestCase):
             mock_response.raise_for_status = MagicMock()
 
             mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.post = AsyncMock(return_value=mock_response)
+            # Replace the persistent client with mock directly
+            service._client = mock_client
 
-            with patch("httpx.AsyncClient", return_value=mock_client):
-                result = await service.embed_single("test text")
+            result = await service.embed_single("test text")
 
             self.assertEqual(result, [0.1, 0.2, 0.3])
             mock_client.post.assert_called_once()
@@ -67,13 +70,12 @@ class TestEmbeddingService(unittest.TestCase):
             mock_response.text = "Internal Server Error"
 
             mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.post = AsyncMock(return_value=mock_response)
+            # Replace the persistent client with mock directly
+            service._client = mock_client
 
-            with patch("httpx.AsyncClient", return_value=mock_client):
-                with self.assertRaises(EmbeddingError) as context:
-                    await service.embed_single("test text")
+            with self.assertRaises(EmbeddingError) as context:
+                await service.embed_single("test text")
 
             self.assertIn("500", str(context.exception))
             self.assertIn("Internal Server Error", str(context.exception))
@@ -90,13 +92,12 @@ class TestEmbeddingService(unittest.TestCase):
             mock_response.raise_for_status = MagicMock()
 
             mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.post = AsyncMock(return_value=mock_response)
+            # Replace the persistent client with mock directly
+            service._client = mock_client
 
-            with patch("httpx.AsyncClient", return_value=mock_client):
-                with self.assertRaises(EmbeddingError) as context:
-                    await service.embed_single("test text")
+            with self.assertRaises(EmbeddingError) as context:
+                await service.embed_single("test text")
 
             self.assertIn("Invalid JSON", str(context.exception))
 

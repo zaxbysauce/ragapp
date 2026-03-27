@@ -13,6 +13,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))  # tests/ dir for local test helpers
 from test_optional_dependency_stubs import install_optional_dependency_stubs
 
 install_optional_dependency_stubs()

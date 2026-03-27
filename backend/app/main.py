@@ -55,6 +55,37 @@ from fastapi.exceptions import RequestValidationError
 from app.api.routes.documents import validation_exception_handler
 
 
+# Allowlist of settings keys that may be restored from the database.
+# Only keys explicitly listed here can be written via _load_persisted_settings.
+# Any key arriving from the DB that is NOT in this set is skipped and logged.
+SETTINGS_ALLOWLIST: frozenset[str] = frozenset({
+    # Legacy keys
+    "chunk_size",
+    "chunk_overlap",
+    "max_context_chunks",
+    "auto_scan_interval_minutes",
+    "auto_scan_enabled",
+    "rag_relevance_threshold",
+    # New direct keys
+    "chunk_size_chars",
+    "chunk_overlap_chars",
+    "retrieval_top_k",
+    "retrieval_window",
+    "max_distance_threshold",
+    "vector_metric",
+    "embedding_doc_prefix",
+    "embedding_query_prefix",
+    "embedding_batch_size",
+    "reranking_enabled",
+    "reranker_top_n",
+    "initial_retrieval_top_k",
+    "hybrid_search_enabled",
+    "hybrid_alpha",
+    "reranker_url",
+    "reranker_model",
+})
+
+
 async def _llm_keepalive_task(llm_client: LLMClient, interval: int = 30):
     """
     Background task to keep LLM model loaded in LM Studio.
@@ -108,6 +139,9 @@ def _load_persisted_settings(sqlite_path: str) -> None:
         }
         for key, expected_type in legacy_keys.items():
             if key in persisted:
+                if key not in SETTINGS_ALLOWLIST:
+                    logger.warning(f"Persisted setting {key!r} is not in SETTINGS_ALLOWLIST, skipping")
+                    continue
                 try:
                     if expected_type == bool:
                         setattr(settings, key, bool(json.loads(persisted[key])))
@@ -139,6 +173,9 @@ def _load_persisted_settings(sqlite_path: str) -> None:
         ]
         for key in NEW_DIRECT_KEYS:
             if key in persisted:
+                if key not in SETTINGS_ALLOWLIST:
+                    logger.warning(f"Persisted setting {key!r} is not in SETTINGS_ALLOWLIST, skipping")
+                    continue
                 try:
                     if not hasattr(settings, key):
                         logger.warning(f"Unknown persisted setting {key}, skipping")
@@ -189,13 +226,9 @@ async def lifespan(app: FastAPI):
 
     _load_persisted_settings(str(settings.sqlite_path))
 
-    # Security warning for default admin token in single-user mode
-    if settings.admin_secret_token in ("", "admin-secret-token"):
-        if not settings.users_enabled:
-            logger.critical(
-                "SECURITY: ADMIN_SECRET_TOKEN is the default placeholder. "
-                "All API routes are effectively unauthenticated. Set a strong value in .env."
-            )
+    # Default-credential check is enforced by Settings.validate_no_default_credentials
+    # (a model_validator in config.py) which raises ValueError before the app starts.
+    # This runtime block is therefore unreachable and has been removed.
 
     # Migrate uploads to per-vault directories (run before accepting requests)
     try:

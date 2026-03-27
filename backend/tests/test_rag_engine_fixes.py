@@ -459,13 +459,38 @@ class TestRAGASEndpoint(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        from httpx import AsyncClient
+        from httpx import AsyncClient, ASGITransport
         from app.main import app
-        self.client = AsyncClient(app=app, base_url="http://test")
+        from app.api.deps import get_embedding_service
+        from app.security import require_auth
+
+        # Stub embedding service so the endpoint never touches app.state
+        class _FakeEmbeddingService:
+            async def embed_single(self, text: str):
+                return [0.1, 0.2, 0.3]
+
+            async def embed_batch(self, texts):
+                return [[0.1, 0.2, 0.3] for _ in texts]
+
+        def _override_embedding():
+            return _FakeEmbeddingService()
+
+        def _override_auth(authorization: str = None):
+            return {"role": "admin", "sub": "test-user"}
+
+        app.dependency_overrides[get_embedding_service] = _override_embedding
+        app.dependency_overrides[require_auth] = _override_auth
+        self._app = app
+        self.client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
     async def asyncTearDown(self):
         """Clean up after tests."""
         await self.client.aclose()
+        # Remove overrides to avoid contaminating other test suites
+        from app.api.deps import get_embedding_service
+        from app.security import require_auth
+        self._app.dependency_overrides.pop(get_embedding_service, None)
+        self._app.dependency_overrides.pop(require_auth, None)
 
     async def test_ragas_endpoint_basic(self):
         """Test RAGAS evaluation endpoint with valid request."""

@@ -8,6 +8,7 @@ export interface Message {
   sources?: Source[];
   stopped?: boolean;
   error?: string;
+  interrupted?: boolean;
 }
 
 export interface ChatState {

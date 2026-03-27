@@ -27,6 +27,8 @@ KnowledgeVault enables you to:
 
 ## Architecture
 
+### Development Architecture
+
 ```
 +------------------+     +------------------+     +------------------+
 |   React Frontend |---->|  FastAPI Backend |---->|   LanceDB Vector |
@@ -46,6 +48,10 @@ KnowledgeVault enables you to:
                         |  - Chat (your choice of model)   |
                         +----------------------------------+
 ```
+
+### Production Architecture
+
+In production, the frontend is built as static files and served directly by the backend container on port 8080. Both the React frontend and FastAPI backend are accessible through a single port (8080).
 
 ### Technology Stack
 

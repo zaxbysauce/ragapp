@@ -113,14 +113,19 @@ class TestVectorStoreIndexCreation(unittest.TestCase):
         self.assertNotIn("embedding_idx", index_names)
 
     def test_fts_index_created_on_init(self):
-        """Test that FTS index is created during table initialization."""
+        """Test that FTS index is created during table initialization.
+
+        LanceDB names the index "text_idx" when created via create_fts_index("text").
+        We accept either "text_idx" or the legacy "fts_text" name.
+        """
         self.store.init_table(embedding_dim=384)
 
         # FTS index should exist
         indices = self.store.table.list_indices()
         index_names = [idx.name for idx in indices]
 
-        self.assertIn("fts_text", index_names)
+        fts_exists = any(name in ("text_idx", "fts_text") for name in index_names)
+        self.assertTrue(fts_exists, f"No FTS index found; got: {index_names}")
 
     def test_fts_index_not_recreated_if_exists(self):
         """Test that FTS index is not recreated if it already exists."""
@@ -131,9 +136,9 @@ class TestVectorStoreIndexCreation(unittest.TestCase):
         store2 = VectorStore(db_path=self.db_path)
         store2.init_table(embedding_dim=384)
 
-        # Should still have exactly one FTS index
+        # Should still have exactly one FTS index (either name)
         indices = store2.table.list_indices()
-        fts_indices = [idx for idx in indices if idx.name == "fts_text"]
+        fts_indices = [idx for idx in indices if idx.name in ("text_idx", "fts_text")]
 
         self.assertEqual(len(fts_indices), 1)
 

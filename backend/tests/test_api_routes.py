@@ -167,7 +167,7 @@ class TestHealthEndpoint(unittest.TestCase):
 
 class TestSettingsEndpoints(unittest.TestCase):
     """Tests for the /api/settings GET and POST endpoints."""
-    
+
     def setUp(self):
         self.client = TestClient(app)
         # Store original values
@@ -175,7 +175,7 @@ class TestSettingsEndpoints(unittest.TestCase):
         self._original_rag_threshold = settings.rag_relevance_threshold
         # Override get_db to use a pool that allows cross-thread usage
         from app.models.database import get_pool
-        from app.api.deps import get_db
+        from app.api.deps import get_db, get_current_active_user
 
         self._test_pool = get_pool(str(TEST_DB_PATH))
 
@@ -186,15 +186,21 @@ class TestSettingsEndpoints(unittest.TestCase):
             finally:
                 self._test_pool.release_connection(conn)
 
+        async def mock_auth():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_current_active_user] = mock_auth
         self._get_db = get_db
-    
+        self._get_current_active_user = get_current_active_user
+
     def tearDown(self):
         # Restore original values
         settings.chunk_size = self._original_chunk_size
         settings.rag_relevance_threshold = self._original_rag_threshold
         # Restore get_db dependency
         app.dependency_overrides.pop(self._get_db, None)
+        app.dependency_overrides.pop(self._get_current_active_user, None)
     
     def test_get_settings(self):
         """Test GET /api/settings returns current settings."""
@@ -328,16 +334,33 @@ class TestMemoriesEndpoints(unittest.TestCase):
             finally:
                 self._connection_pool.release_connection(conn)
 
+        from app.api.deps import get_current_active_user
+        from app.security import require_auth
+
+        _mock_user = {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
+        async def mock_auth():
+            return _mock_user
+
+        def mock_require_auth():
+            return _mock_user
+
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_memory_store] = lambda: test_store
+        app.dependency_overrides[get_current_active_user] = mock_auth
+        app.dependency_overrides[require_auth] = mock_require_auth
         self._test_store = test_store
         self._db_path = db_path
         self._get_db = get_db
         self._get_memory_store = get_memory_store
+        self._get_current_active_user = get_current_active_user
+        self._require_auth = require_auth
 
     def tearDown(self):
         app.dependency_overrides.pop(self._get_db, None)
         app.dependency_overrides.pop(self._get_memory_store, None)
+        app.dependency_overrides.pop(self._get_current_active_user, None)
+        app.dependency_overrides.pop(self._require_auth, None)
         if hasattr(self, 'test_pool'):
             self.test_pool.close_all()
         if hasattr(self, '_connection_pool'):
@@ -523,12 +546,20 @@ class TestDocumentsEndpoints(unittest.TestCase):
             finally:
                 self._connection_pool.release_connection(conn)
 
+        from app.api.deps import get_current_active_user
+
+        async def mock_auth():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_current_active_user] = mock_auth
         self._db_path = db_path
         self._get_db = get_db
+        self._get_current_active_user = get_current_active_user
 
     def tearDown(self):
         app.dependency_overrides.pop(self._get_db, None)
+        app.dependency_overrides.pop(self._get_current_active_user, None)
         if hasattr(self, '_connection_pool'):
             self._connection_pool.close_all()
         import shutil
@@ -558,10 +589,18 @@ class TestChatEndpoint(unittest.TestCase):
 
     def setUp(self):
         self.client = TestClient(app)
+        from app.api.deps import get_current_active_user
+
+        async def mock_auth():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
+        app.dependency_overrides[get_current_active_user] = mock_auth
+        self._get_current_active_user = get_current_active_user
 
     def tearDown(self):
         from app.api.deps import get_rag_engine
         app.dependency_overrides.pop(get_rag_engine, None)
+        app.dependency_overrides.pop(self._get_current_active_user, None)
 
     def _set_mock_rag_engine(self, mock_query_fn):
         """Helper to override get_rag_engine with a mock that uses the given query function."""
@@ -593,7 +632,7 @@ class TestChatEndpoint(unittest.TestCase):
             "stream": False
         }
 
-        response = self.client.post("/api/chat", json=payload)
+        response = self.client.post("/api/chat?vault_id=1", json=payload)
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -627,7 +666,7 @@ class TestChatEndpoint(unittest.TestCase):
             "stream": False
         }
 
-        response = self.client.post("/api/chat", json=payload)
+        response = self.client.post("/api/chat?vault_id=1", json=payload)
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -652,7 +691,7 @@ class TestChatEndpoint(unittest.TestCase):
             "stream": False
         }
 
-        response = self.client.post("/api/chat", json=payload)
+        response = self.client.post("/api/chat?vault_id=1", json=payload)
 
         self.assertEqual(response.status_code, 200)
         data = response.json()

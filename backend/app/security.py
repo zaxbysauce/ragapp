@@ -23,27 +23,29 @@ class _InMemoryCSRFStore:
 
     def __init__(self, ttl: int = 900) -> None:
         self.ttl = ttl
-        self._store: Dict[str, float] = {}
+        self._store: Dict[str, tuple] = {}
         self._lock = threading.Lock()
 
     def setex(self, key: str, ttl: int, value: str) -> None:
         with self._lock:
-            self._store[key] = time.time() + ttl
+            self._store[key] = (value, time.time() + ttl)
 
     def get(self, key: str) -> str | None:
         with self._lock:
-            expiry = self._store.get(key)
-            if expiry is None:
+            entry = self._store.get(key)
+            if entry is None:
                 return None
+            value, expiry = entry
             if time.time() > expiry:
                 del self._store[key]
                 return None
-            return "1"
+            return value
 
     def expire(self, key: str, ttl: int) -> None:
         with self._lock:
             if key in self._store:
-                self._store[key] = time.time() + ttl
+                value, _ = self._store[key]
+                self._store[key] = (value, time.time() + ttl)
 
     def delete(self, key: str) -> None:
         with self._lock:
@@ -117,9 +119,9 @@ class CSRFManager:
             raise HTTPException(status_code=503, detail="CSRF storage unavailable")
         if exists:
             try:
-                store.expire(key, self.ttl)
+                store.delete(key)
             except Exception:
-                logger.warning("Failed to extend CSRF token TTL")
+                logger.warning("Failed to delete CSRF token after use")
             return True
         return False
 
@@ -157,12 +159,18 @@ def require_scope(scope: str) -> Callable:
         scopes = [s.strip().lower() for s in x_scopes.split(",") if s.strip()]
         if scope.lower() not in scopes:
             raise HTTPException(status_code=403, detail="Missing required scope")
-        
-        # SECURITY FIX: Reject default token to prevent auth bypass
-        if secrets.compare_digest(token, DEFAULT_TOKEN):
+
+        # Encode to bytes for safe comparison (prevents Unicode TypeError)
+        try:
+            token_bytes = token.encode("utf-8")
+        except (UnicodeEncodeError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid token encoding")
+        admin_token_bytes = settings.admin_secret_token.encode("utf-8")
+        default_bytes = DEFAULT_TOKEN.encode("utf-8") if isinstance(DEFAULT_TOKEN, str) else DEFAULT_TOKEN
+
+        if secrets.compare_digest(token_bytes, default_bytes):
             raise HTTPException(status_code=403, detail="Unauthorized token")
-        
-        if not secrets.compare_digest(token, settings.admin_secret_token):
+        if not secrets.compare_digest(token_bytes, admin_token_bytes):
             raise HTTPException(status_code=403, detail="Unauthorized token")
         return {"user_id": token}
 
@@ -173,6 +181,8 @@ def csrf_protect(
     request: Request,
     x_csrf_token: str = Header(""),
 ) -> str:
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return x_csrf_token
     csrf_manager = get_csrf_manager(request)
     cookie = request.cookies.get(CSRF_COOKIE_NAME)
     if not cookie or not x_csrf_token or cookie != x_csrf_token:
@@ -189,7 +199,7 @@ def issue_csrf_token(response: Response, csrf_manager: CSRFManager) -> str:
         token,
         max_age=settings.csrf_token_ttl,
         samesite="strict",
-        secure=True,
+        secure=not getattr(settings, "debug", False),
         httponly=False,
     )
     return token
@@ -214,12 +224,18 @@ def require_auth(
     if len(parts) < 2 or not parts[1].strip():
         raise HTTPException(status_code=401, detail="Token missing")
     token = parts[1].strip()
-    
-    # SECURITY FIX: Reject default token to prevent auth bypass
-    if secrets.compare_digest(token, DEFAULT_TOKEN):
+
+    # Encode to bytes for safe comparison (prevents Unicode TypeError)
+    try:
+        token_bytes = token.encode("utf-8")
+    except (UnicodeEncodeError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid token encoding")
+    admin_token_bytes = settings.admin_secret_token.encode("utf-8")
+    default_bytes = DEFAULT_TOKEN.encode("utf-8") if isinstance(DEFAULT_TOKEN, str) else DEFAULT_TOKEN
+
+    if secrets.compare_digest(token_bytes, default_bytes):
         raise HTTPException(status_code=403, detail="Invalid credentials")
-    
-    if not secrets.compare_digest(token, settings.admin_secret_token):
+    if not secrets.compare_digest(token_bytes, admin_token_bytes):
         raise HTTPException(status_code=403, detail="Invalid credentials")
     return {"authenticated": True}
 

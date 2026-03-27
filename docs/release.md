@@ -33,7 +33,7 @@ Before deploying KnowledgeVault to production, ensure the following:
   DATA_DIR=/data/knowledgevault
   OLLAMA_EMBEDDING_URL=http://host.docker.internal:11434
   OLLAMA_CHAT_URL=http://host.docker.internal:11434
-  EMBEDDING_MODEL=nomic-embed-text
+  EMBEDDING_MODEL=bge-m3
   CHAT_MODEL=qwen2.5:32b
   
   # Security settings
@@ -264,7 +264,7 @@ done
 # test-embedding.sh
 
 EMBEDDING_URL="${OLLAMA_EMBEDDING_URL:-http://localhost:11434}/api/embeddings"
-EMBEDDING_MODEL="${EMBEDDING_MODEL:-nomic-embed-text}"
+EMBEDDING_MODEL="${EMBEDDING_MODEL:-bge-m3}"
 
 echo "Testing embedding service at $EMBEDDING_URL..."
 

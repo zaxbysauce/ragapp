@@ -61,6 +61,16 @@ class TestAPI(unittest.TestCase):
     def setUp(self):
         """Set up test client."""
         self.client = TestClient(app)
+        from app.api.deps import get_current_active_user
+
+        async def mock_auth():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
+        app.dependency_overrides[get_current_active_user] = mock_auth
+        self._get_current_active_user = get_current_active_user
+
+    def tearDown(self):
+        app.dependency_overrides.pop(self._get_current_active_user, None)
 
     def test_get_health_returns_status_ok(self):
         """Test GET /health returns status ok."""

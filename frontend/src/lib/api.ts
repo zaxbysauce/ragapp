@@ -267,6 +267,7 @@ export interface ChatStreamCallbacks {
   onSources?: (sources: Source[]) => void;
   onError?: (error: Error) => void;
   onComplete?: () => void;
+  onAbort?: () => void;
 }
 
 export interface ApiStreamCallbacks {
@@ -577,6 +578,7 @@ export function chatStream(
       callbacks.onComplete?.();
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
+        callbacks.onAbort?.();
         return;
       }
       callbacks.onError?.(
@@ -765,6 +767,103 @@ export async function updateChatSession(sessionId: number, title: string): Promi
 
 export async function deleteChatSession(sessionId: number): Promise<void> {
   await apiClient.delete(`/chat/sessions/${sessionId}`);
+}
+
+// User management types
+export interface User {
+  id: number;
+  username: string;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface UserListResponse {
+  users: User[];
+  total: number;
+}
+
+export interface CreateUserRequest {
+  username: string;
+  full_name?: string;
+  password: string;
+}
+
+export interface UpdateUserRoleRequest {
+  role: string;
+}
+
+export interface UpdateUserActiveRequest {
+  is_active: boolean;
+}
+
+// User management API functions
+export async function listUsers(): Promise<UserListResponse> {
+  const response = await apiClient.get<UserListResponse>("/users");
+  return response.data;
+}
+
+export async function updateUserRole(userId: number, role: string): Promise<User> {
+  const response = await apiClient.patch<User>(`/users/${userId}/role`, { role });
+  return response.data;
+}
+
+export async function updateUserActive(userId: number, isActive: boolean): Promise<User> {
+  const response = await apiClient.patch<User>(`/users/${userId}/active`, { is_active: isActive });
+  return response.data;
+}
+
+export async function deleteUser(userId: number): Promise<void> {
+  await apiClient.delete(`/users/${userId}`);
+}
+
+// Organization management types
+export interface Organization {
+  id: number;
+  name: string;
+  description?: string;
+  created_at: string;
+}
+
+export interface OrganizationListResponse {
+  organizations: Organization[];
+  total: number;
+}
+
+export interface CreateOrganizationRequest {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateOrganizationRequest {
+  name?: string;
+  description?: string;
+}
+
+// Organization management API functions
+export async function listOrganizations(): Promise<OrganizationListResponse> {
+  const response = await apiClient.get<OrganizationListResponse>("/organizations");
+  return response.data;
+}
+
+export async function getOrganization(orgId: number): Promise<Organization> {
+  const response = await apiClient.get<Organization>(`/organizations/${orgId}`);
+  return response.data;
+}
+
+export async function createOrganization(request: CreateOrganizationRequest): Promise<Organization> {
+  const response = await apiClient.post<Organization>("/organizations", request);
+  return response.data;
+}
+
+export async function updateOrganization(orgId: number, request: UpdateOrganizationRequest): Promise<Organization> {
+  const response = await apiClient.patch<Organization>(`/organizations/${orgId}`, request);
+  return response.data;
+}
+
+export async function deleteOrganization(orgId: number): Promise<void> {
+  await apiClient.delete(`/organizations/${orgId}`);
 }
 
 export default apiClient;

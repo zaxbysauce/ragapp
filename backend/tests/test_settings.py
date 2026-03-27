@@ -117,7 +117,7 @@ SETTINGS_FIELDS_UNDER_TEST = (
 
 class TestSettingsResponseFields(unittest.TestCase):
     """Tests for SettingsResponse including advanced retrieval fields."""
-    
+
     def setUp(self):
         self.client = TestClient(app)
         self._settings_snapshot = {
@@ -127,6 +127,7 @@ class TestSettingsResponseFields(unittest.TestCase):
         # Override get_db to use a pool that allows cross-thread usage
         from app.models.database import get_pool
         from app.api.deps import get_db
+        from app.api.deps import get_current_active_user as _get_current_active_user
 
         self._test_pool = get_pool(str(TEST_DB_PATH))
 
@@ -137,14 +138,20 @@ class TestSettingsResponseFields(unittest.TestCase):
             finally:
                 self._test_pool.release_connection(conn)
 
+        async def _mock_auth():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[_get_current_active_user] = _mock_auth
         self._get_db = get_db
-    
+        self._get_current_active_user = _get_current_active_user
+
     def tearDown(self):
         for field, value in self._settings_snapshot.items():
             setattr(settings, field, value)
-        # Restore get_db dependency
+        # Restore dependencies
         app.dependency_overrides.pop(self._get_db, None)
+        app.dependency_overrides.pop(self._get_current_active_user, None)
     
     def test_settings_response_includes_reranker_fields(self):
         """Test GET /api/settings includes reranking configuration fields."""
@@ -181,7 +188,7 @@ class TestSettingsResponseFields(unittest.TestCase):
         self.assertIsInstance(data["hybrid_search_enabled"], bool)
         self.assertIsInstance(data["hybrid_alpha"], float)
         self.assertTrue(data["hybrid_search_enabled"])  # Default is True
-        self.assertEqual(data["hybrid_alpha"], 0.5)  # Default is 0.5
+        self.assertEqual(data["hybrid_alpha"], 0.6)  # Default is 0.6
     
     def test_settings_response_all_new_fields_present(self):
         """Test GET /api/settings includes all new character-based and config fields."""
@@ -223,7 +230,7 @@ class TestSettingsResponseFields(unittest.TestCase):
 
 class TestSettingsUpdateValidation(unittest.TestCase):
     """Tests for SettingsUpdate validation of new fields."""
-    
+
     def setUp(self):
         self.client = TestClient(app)
         self._settings_snapshot = {
@@ -233,6 +240,7 @@ class TestSettingsUpdateValidation(unittest.TestCase):
         # Override get_db to use a pool that allows cross-thread usage
         from app.models.database import get_pool
         from app.api.deps import get_db
+        from app.api.deps import get_current_active_user as _get_current_active_user
 
         self._test_pool = get_pool(str(TEST_DB_PATH))
 
@@ -243,14 +251,20 @@ class TestSettingsUpdateValidation(unittest.TestCase):
             finally:
                 self._test_pool.release_connection(conn)
 
+        async def _mock_auth():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[_get_current_active_user] = _mock_auth
         self._get_db = get_db
-    
+        self._get_current_active_user = _get_current_active_user
+
     def tearDown(self):
         for field, value in self._settings_snapshot.items():
             setattr(settings, field, value)
-        # Restore get_db dependency
+        # Restore dependencies
         app.dependency_overrides.pop(self._get_db, None)
+        app.dependency_overrides.pop(self._get_current_active_user, None)
     
     def test_post_settings_valid_reranker_config(self):
         """Test POST /api/settings with valid reranker configuration."""
@@ -439,7 +453,7 @@ class TestSettingsUpdateValidation(unittest.TestCase):
 
 class TestConnectionEndpoint(unittest.TestCase):
     """Tests for the /api/settings/connection endpoint."""
-    
+
     def setUp(self):
         self.client = TestClient(app)
         self._settings_snapshot = {
@@ -449,6 +463,7 @@ class TestConnectionEndpoint(unittest.TestCase):
         # Override get_db to use a pool that allows cross-thread usage
         from app.models.database import get_pool
         from app.api.deps import get_db
+        from app.api.deps import get_current_active_user as _get_current_active_user
 
         self._test_pool = get_pool(str(TEST_DB_PATH))
 
@@ -459,14 +474,20 @@ class TestConnectionEndpoint(unittest.TestCase):
             finally:
                 self._test_pool.release_connection(conn)
 
+        async def _mock_auth():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[_get_current_active_user] = _mock_auth
         self._get_db = get_db
-    
+        self._get_current_active_user = _get_current_active_user
+
     def tearDown(self):
         for field, value in self._settings_snapshot.items():
             setattr(settings, field, value)
-        # Restore get_db dependency
+        # Restore dependencies
         app.dependency_overrides.pop(self._get_db, None)
+        app.dependency_overrides.pop(self._get_current_active_user, None)
     
     @patch("app.api.routes.settings.httpx.AsyncClient")
     def test_connection_endpoint_with_reranker(self, mock_async_client):

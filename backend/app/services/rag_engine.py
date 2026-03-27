@@ -198,8 +198,9 @@ class RAGEngine:
 
                 # Search with all query embeddings and fuse results
                 all_results: List[List[Dict[str, Any]]] = []
-                for embedding in query_embeddings:
-                    is_original = embedding is query_embeddings[0]
+                for idx, embedding in enumerate(query_embeddings):
+                    # Use index instead of identity comparison (more robust)
+                    is_original = (idx == 0)
                     results = await asyncio.to_thread(
                         self.vector_store.search,
                         embedding,
@@ -264,6 +265,12 @@ class RAGEngine:
                             chunks=vector_results,
                             top_n=self.reranker_top_n,
                         )
+                        # Re-sort by rerank score (descending) so final limit respects reranked order
+                        vector_results = sorted(
+                            vector_results,
+                            key=lambda c: c.get("_rerank_score", 0.0),
+                            reverse=True,
+                        )
                         reranking_applied = True
                     except Exception as e:
                         logger.warning(f"Reranking failed, using original results: {e}")
@@ -304,7 +311,7 @@ class RAGEngine:
                     except Exception as e:
                         logger.warning("Retrieval evaluation failed: %s", e)
             except Exception as exc:
-                fallback_reason = str(exc)
+                fallback_reason = f"{type(exc).__name__}: {exc}"
                 vector_results = []
 
         relevant_chunks = self._filter_relevant(vector_results)
@@ -526,12 +533,37 @@ class RAGEngine:
         # DEBUG: Log filtering results summary
         filtered_count = len(sources)
         if input_count > 0 and filtered_count == 0:
-            # All chunks exceeded threshold - return empty list (NO_MATCH)
-            logger.warning(
-                "All %d chunks exceeded max_distance_threshold - returning NO_MATCH",
-                input_count
+            # All chunks exceeded threshold - fallback: return all results so the LLM
+            # always has some context to work with rather than returning nothing.
+            _threshold_display = (
+                f"{self.max_distance_threshold:.3f}"
+                if self.max_distance_threshold is not None
+                else (
+                    f"{self.relevance_threshold:.3f}"
+                    if self.relevance_threshold is not None
+                    else "None"
+                )
             )
-            return []
+            logger.warning(
+                "All %d chunks exceeded max_distance_threshold - fallback: returning all results (threshold=%s)",
+                input_count,
+                _threshold_display,
+            )
+            fallback_sources = []
+            for record in results:
+                has_distance = "_distance" in record
+                distance = record.get("_distance")
+                if distance is None:
+                    distance = record.get("score", 1.0)
+                fallback_sources.append(
+                    RAGSource(
+                        text=record.get("text", ""),
+                        file_id=record.get("file_id", ""),
+                        score=distance,
+                        metadata=self._normalize_metadata(record.get("metadata")),
+                    )
+                )
+            return fallback_sources
         logger.debug("Filtering complete: %d results returned", len(sources))
 
         return sources

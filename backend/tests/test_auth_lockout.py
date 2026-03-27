@@ -109,11 +109,18 @@ class TestAccountLockout(unittest.TestCase):
         finally:
             pool.release_connection(conn)
 
+        # Reset rate limiter to avoid 429 errors across tests
+        from app.limiter import limiter
+        try:
+            limiter.reset()
+        except Exception:
+            pass
+
     def _register_user(self, username, password):
         """Helper to register a test user."""
         return self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": username,
                 "password": password,
                 "full_name": f"Test {username}",
@@ -155,7 +162,7 @@ class TestAccountLockout(unittest.TestCase):
         # Try to login
         response = self.client.post(
             "/api/auth/login",
-            params={"username": "lockeduser", "password": "password123"},
+            json={"username": "lockeduser", "password": "password123"},
         )
 
         self.assertEqual(response.status_code, 423)
@@ -173,18 +180,18 @@ class TestAccountLockout(unittest.TestCase):
         # Register user
         self._register_user("locktest", "correctpassword")
 
-        # Attempt 5 wrong passwords
-        for i in range(4):
+        # Attempt 5 wrong passwords (each returns 401 for invalid credentials)
+        for i in range(5):
             response = self.client.post(
                 "/api/auth/login",
-                params={"username": "locktest", "password": f"wrongpassword{i}"},
+                json={"username": "locktest", "password": f"wrongpassword{i}"},
             )
             self.assertEqual(response.status_code, 401)
 
-        # 5th wrong password should lock the account
+        # 6th attempt should return 423 because account is now locked
         response = self.client.post(
             "/api/auth/login",
-            params={"username": "locktest", "password": "wrongpassword5"},
+            json={"username": "locktest", "password": "wrongpassword5"},
         )
         self.assertEqual(response.status_code, 423)
         data = response.json()
@@ -211,7 +218,7 @@ class TestAccountLockout(unittest.TestCase):
         for i in range(3):
             self.client.post(
                 "/api/auth/login",
-                params={"username": "resettest", "password": f"wrong{i}"},
+                json={"username": "resettest", "password": f"wrong{i}"},
             )
 
         # Check failed_attempts is now 3
@@ -221,7 +228,7 @@ class TestAccountLockout(unittest.TestCase):
         # Now login with correct password
         response = self.client.post(
             "/api/auth/login",
-            params={"username": "resettest", "password": "correctpassword"},
+            json={"username": "resettest", "password": "correctpassword"},
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -255,7 +262,7 @@ class TestAccountLockout(unittest.TestCase):
         # Login should now work
         response = self.client.post(
             "/api/auth/login",
-            params={"username": "expirytest", "password": "correctpassword"},
+            json={"username": "expirytest", "password": "correctpassword"},
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -279,7 +286,7 @@ class TestAccountLockout(unittest.TestCase):
         for i in range(3):
             self.client.post(
                 "/api/auth/login",
-                params={"username": "incrementtest", "password": f"wrong{i}"},
+                json={"username": "incrementtest", "password": f"wrong{i}"},
             )
             failed_attempts, _ = self._get_user_lockout_info("incrementtest")
             self.assertEqual(failed_attempts, i + 1)
@@ -305,7 +312,7 @@ class TestAccountLockout(unittest.TestCase):
         # Try correct password - should still be locked
         response = self.client.post(
             "/api/auth/login",
-            params={"username": "authtest", "password": "correctpassword"},
+            json={"username": "authtest", "password": "correctpassword"},
         )
         self.assertEqual(response.status_code, 423)
         self.assertIn("locked", response.json()["detail"].lower())
@@ -331,7 +338,7 @@ class TestAccountLockout(unittest.TestCase):
         # Wrong password should give 423 (not 401)
         response = self.client.post(
             "/api/auth/login",
-            params={"username": "ordertest", "password": "wrongpassword"},
+            json={"username": "ordertest", "password": "wrongpassword"},
         )
         self.assertEqual(response.status_code, 423)
         self.assertIn("locked", response.json()["detail"].lower())

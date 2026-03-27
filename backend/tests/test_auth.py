@@ -95,7 +95,7 @@ class TestAuth(unittest.TestCase):
     def setUp(self):
         """Set up test client and clear users table."""
         self.client = TestClient(app)
-        
+
         # Clear users and sessions tables
         pool = get_pool(str(self.db_path))
         conn = pool.get_connection()
@@ -108,11 +108,18 @@ class TestAuth(unittest.TestCase):
         finally:
             pool.release_connection(conn)
 
+        # Reset rate limiter to avoid 429 errors across tests
+        from app.limiter import limiter
+        try:
+            limiter.reset()
+        except Exception:
+            pass
+
     def test_registration_first_user_becomes_superadmin(self):
         """Test that the first registered user becomes superadmin."""
         response = self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "firstuser",
                 "password": "password123",
                 "full_name": "First User"
@@ -130,7 +137,7 @@ class TestAuth(unittest.TestCase):
         # Create first user (superadmin)
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "admin",
                 "password": "password123",
                 "full_name": "Admin User"
@@ -140,7 +147,7 @@ class TestAuth(unittest.TestCase):
         # Create second user (should be member)
         response = self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "regularuser",
                 "password": "password123",
                 "full_name": "Regular User"
@@ -156,17 +163,17 @@ class TestAuth(unittest.TestCase):
         # Create first user
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
             }
         )
-        
+
         # Try to create user with same username
         response = self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Another User"
@@ -181,7 +188,7 @@ class TestAuth(unittest.TestCase):
         """Test that usernames shorter than 3 characters are rejected."""
         response = self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "ab",
                 "password": "password123",
                 "full_name": "Test User"
@@ -196,7 +203,7 @@ class TestAuth(unittest.TestCase):
         """Test that passwords shorter than 8 characters are rejected."""
         response = self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "short",
                 "full_name": "Test User"
@@ -212,17 +219,17 @@ class TestAuth(unittest.TestCase):
         # Register user
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
             }
         )
-        
+
         # Login
         response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123"
             }
@@ -240,17 +247,17 @@ class TestAuth(unittest.TestCase):
         # Register user
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
             }
         )
-        
+
         # Login with wrong password
         response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "testuser",
                 "password": "wrongpassword"
             }
@@ -264,7 +271,7 @@ class TestAuth(unittest.TestCase):
         """Test login with non-existent user."""
         response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "nonexistent",
                 "password": "password123"
             }
@@ -279,7 +286,7 @@ class TestAuth(unittest.TestCase):
         # Register user
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
@@ -298,12 +305,12 @@ class TestAuth(unittest.TestCase):
         # Try to login
         response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123"
             }
         )
-        
+
         self.assertEqual(response.status_code, 403)
         data = response.json()
         self.assertIn("inactive", data["detail"].lower())
@@ -313,16 +320,16 @@ class TestAuth(unittest.TestCase):
         # Register and login
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
             }
         )
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123"
             }
@@ -367,16 +374,16 @@ class TestAuth(unittest.TestCase):
         # Register and login
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
             }
         )
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123"
             }
@@ -425,16 +432,16 @@ class TestAuth(unittest.TestCase):
         # Register and login
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
             }
         )
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123"
             }
@@ -458,16 +465,16 @@ class TestAuth(unittest.TestCase):
         # Register admin
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "admin",
                 "password": "password123",
                 "full_name": "Admin User"
             }
         )
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "admin",
                 "password": "password123"
             }
@@ -490,26 +497,26 @@ class TestAuth(unittest.TestCase):
         # Register superadmin first
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "superadmin",
                 "password": "password123",
                 "full_name": "Super Admin"
             }
         )
-        
+
         # Register member
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "member",
                 "password": "password123",
                 "full_name": "Member User"
             }
         )
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "member",
                 "password": "password123"
             }
@@ -532,27 +539,27 @@ class TestAuth(unittest.TestCase):
         # Register superadmin
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "superadmin",
                 "password": "password123",
                 "full_name": "Super Admin"
             }
         )
-        
+
         # Register member
         member_response = self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "member",
                 "password": "password123",
                 "full_name": "Member User"
             }
         )
         member_id = member_response.json()["id"]
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "superadmin",
                 "password": "password123"
             }
@@ -576,37 +583,37 @@ class TestAuth(unittest.TestCase):
         # Register superadmin first
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "superadmin",
                 "password": "password123",
                 "full_name": "Super Admin"
             }
         )
-        
+
         # Register admin
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "admin",
                 "password": "password123",
                 "full_name": "Admin User"
             }
         )
-        
+
         # Register member
         member_response = self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "member",
                 "password": "password123",
                 "full_name": "Member User"
             }
         )
         member_id = member_response.json()["id"]
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "admin",
                 "password": "password123"
             }
@@ -628,16 +635,16 @@ class TestAuth(unittest.TestCase):
         # Register user
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
             }
         )
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123"
             }
@@ -662,16 +669,16 @@ class TestAuth(unittest.TestCase):
         # Register user
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
             }
         )
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123"
             }
@@ -714,16 +721,16 @@ class TestAuth(unittest.TestCase):
         # Register and login
         self.client.post(
             "/api/auth/register",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123",
                 "full_name": "Test User"
             }
         )
-        
+
         login_response = self.client.post(
             "/api/auth/login",
-            params={
+            json={
                 "username": "testuser",
                 "password": "password123"
             }

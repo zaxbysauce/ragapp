@@ -1,9 +1,12 @@
 """Memory storage service backed by SQLite + FTS5."""
 
+import logging
 import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.models.database import SQLiteConnectionPool, get_pool
@@ -93,6 +96,26 @@ class MemoryStore:
 
     @with_retry(max_attempts=3, retry_exceptions=(sqlite3.Error,), raise_last_exception=True)
     def search_memories(self, query: str, limit: int = 5, vault_id: Optional[int] = None) -> List[MemoryRecord]:
+        # SECURITY: Callers are responsible for verifying the authenticated user has
+        # access to vault_id before calling this function. This function does NOT
+        # perform access control checks itself.
+
+        # Audit trail for vault-scoped searches
+        if vault_id is not None:
+            logger.debug("search_memories called for vault_id=%s", vault_id)
+
+        # Enforce reasonable bounds on limit to prevent resource exhaustion
+        MAX_MEMORY_SEARCH_LIMIT = 100
+        limit = min(limit, MAX_MEMORY_SEARCH_LIMIT)
+        if limit <= 0:
+            limit = 5
+
+        # Enforce maximum query length
+        MAX_QUERY_LENGTH = 10_000
+        if query and len(query) > MAX_QUERY_LENGTH:
+            query = query[:MAX_QUERY_LENGTH]
+            logger.warning("Memory search query truncated to %d characters", MAX_QUERY_LENGTH)
+
         if not query or not query.strip():
             return []
 

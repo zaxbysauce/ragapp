@@ -46,8 +46,16 @@ _unstructured = make_module(
     },
 )
 
-sys.modules["lancedb"] = make_module("lancedb")
-sys.modules["pyarrow"] = make_module("pyarrow")
+# Only stub if not already importable (preserves real modules when available)
+try:
+    import lancedb as _lancedb_check  # noqa: F401
+except ImportError:
+    sys.modules["lancedb"] = make_module("lancedb")
+
+try:
+    import pyarrow as _pyarrow_check  # noqa: F401
+except ImportError:
+    sys.modules["pyarrow"] = make_module("pyarrow")
 sys.modules["unstructured"] = _unstructured
 sys.modules["unstructured.partition"] = _unstructured_partition
 sys.modules["unstructured.partition.auto"] = _unstructured_partition_auto

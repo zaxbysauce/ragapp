@@ -8,6 +8,7 @@ Tests cover:
 - Authorization enforcement for regular users and admins
 """
 
+import asyncio
 import os
 import sqlite3
 import sys
@@ -146,6 +147,8 @@ class TestGetUserAccessibleVaultIds(unittest.TestCase):
         self.conn.execute("DELETE FROM vault_members")
         self.conn.execute("DELETE FROM vault_group_access")
         self.conn.execute("DELETE FROM group_members")
+        self.conn.execute("DELETE FROM groups")
+        self.conn.execute("DELETE FROM organizations")
         self.conn.execute("DELETE FROM vaults")
         self.conn.execute("DELETE FROM users")
         self.conn.commit()
@@ -154,7 +157,7 @@ class TestGetUserAccessibleVaultIds(unittest.TestCase):
     def _create_user(self, username, role="member"):
         """Helper to create a user."""
         cursor = self.conn.execute(
-            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, 1)",
+            "INSERT INTO users (username, hashed_password, role, is_active) VALUES (?, ?, ?, 1)",
             (username, "hash123", role),
         )
         self.conn.commit()
@@ -182,8 +185,15 @@ class TestGetUserAccessibleVaultIds(unittest.TestCase):
         self.conn.commit()
 
     def _create_group(self, name):
-        """Helper to create a group."""
-        cursor = self.conn.execute("INSERT INTO groups (name) VALUES (?)", (name,))
+        """Helper to create a group (creates an org if needed)."""
+        # Ensure an org exists for the group
+        self.conn.execute(
+            "INSERT OR IGNORE INTO organizations (id, name) VALUES (1, 'Test Org')"
+        )
+        self.conn.commit()
+        cursor = self.conn.execute(
+            "INSERT INTO groups (org_id, name) VALUES (1, ?)", (name,)
+        )
         self.conn.commit()
         return cursor.lastrowid
 
@@ -206,7 +216,7 @@ class TestGetUserAccessibleVaultIds(unittest.TestCase):
     def test_user_with_no_vaults_returns_empty_list(self):
         """Test that a regular user with no vault access returns empty list."""
         user = self._create_user("regular_user", role="member")
-        vault_ids = get_user_accessible_vault_ids(user, self.conn)
+        vault_ids = asyncio.run(get_user_accessible_vault_ids(user, self.conn))
         self.assertEqual(vault_ids, [])
 
     def test_user_with_direct_vault_access(self):
@@ -218,20 +228,20 @@ class TestGetUserAccessibleVaultIds(unittest.TestCase):
         self._add_vault_member(user["id"], vault1, "read")
         self._add_vault_member(user["id"], vault2, "write")
 
-        vault_ids = get_user_accessible_vault_ids(user, self.conn)
+        vault_ids = asyncio.run(get_user_accessible_vault_ids(user, self.conn))
         self.assertEqual(set(vault_ids), {vault1, vault2})
 
     def test_admin_returns_empty_list(self):
         """Test that admin role returns empty list (means all vaults)."""
         user = self._create_user("admin_user", role="admin")
-        vault_ids = get_user_accessible_vault_ids(user, self.conn)
+        vault_ids = asyncio.run(get_user_accessible_vault_ids(user, self.conn))
         # Empty list means "all vaults" for admin/superadmin
         self.assertEqual(vault_ids, [])
 
     def test_superadmin_returns_empty_list(self):
         """Test that superadmin role returns empty list (means all vaults)."""
         user = self._create_user("superadmin_user", role="superadmin")
-        vault_ids = get_user_accessible_vault_ids(user, self.conn)
+        vault_ids = asyncio.run(get_user_accessible_vault_ids(user, self.conn))
         # Empty list means "all vaults" for admin/superadmin
         self.assertEqual(vault_ids, [])
 
@@ -244,7 +254,7 @@ class TestGetUserAccessibleVaultIds(unittest.TestCase):
         self._add_to_group(user["id"], group)
         self._add_group_vault_access(group, vault, "read")
 
-        vault_ids = get_user_accessible_vault_ids(user, self.conn)
+        vault_ids = asyncio.run(get_user_accessible_vault_ids(user, self.conn))
         self.assertEqual(vault_ids, [vault])
 
     def test_user_with_mixed_access(self):
@@ -258,7 +268,7 @@ class TestGetUserAccessibleVaultIds(unittest.TestCase):
         self._add_to_group(user["id"], group)
         self._add_group_vault_access(group, vault2, "write")
 
-        vault_ids = get_user_accessible_vault_ids(user, self.conn)
+        vault_ids = asyncio.run(get_user_accessible_vault_ids(user, self.conn))
         self.assertEqual(set(vault_ids), {vault1, vault2})
 
 
@@ -314,7 +324,7 @@ class TestVaultsAccessibleEndpoint(unittest.TestCase):
         """Helper to create a user."""
         conn = self.pool.get_connection()
         cursor = conn.execute(
-            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, 1)",
+            "INSERT INTO users (username, hashed_password, role, is_active) VALUES (?, ?, ?, 1)",
             (username, "hash123", role),
         )
         conn.commit()
@@ -323,7 +333,7 @@ class TestVaultsAccessibleEndpoint(unittest.TestCase):
 
         from app.services.auth_service import create_access_token
 
-        token = create_access_token(str(user_id))
+        token = create_access_token(user_id, username, role)
         return {"id": user_id, "username": username, "role": role, "token": token}
 
     def _create_vault(self, name):
@@ -351,7 +361,7 @@ class TestVaultsAccessibleEndpoint(unittest.TestCase):
         """Test that /vaults/accessible returns empty list for user with no access."""
         user = self._create_user("no_access_user")
         response = self.client.get(
-            "/api/v1/vaults/accessible",
+            "/api/vaults/accessible",
             headers={"Authorization": f"Bearer {user['token']}"},
         )
         self.assertEqual(response.status_code, 200)
@@ -367,7 +377,7 @@ class TestVaultsAccessibleEndpoint(unittest.TestCase):
         self._add_vault_member(user["id"], vault2, "write")
 
         response = self.client.get(
-            "/api/v1/vaults/accessible",
+            "/api/vaults/accessible",
             headers={"Authorization": f"Bearer {user['token']}"},
         )
         self.assertEqual(response.status_code, 200)
@@ -379,7 +389,7 @@ class TestVaultsAccessibleEndpoint(unittest.TestCase):
         self._create_vault("Admin Vault")
 
         response = self.client.get(
-            "/api/v1/vaults/accessible",
+            "/api/vaults/accessible",
             headers={"Authorization": f"Bearer {user['token']}"},
         )
         self.assertEqual(response.status_code, 200)
@@ -445,7 +455,7 @@ class TestChatStreamVaultValidation(unittest.TestCase):
         """Helper to create a user."""
         conn = self.pool.get_connection()
         cursor = conn.execute(
-            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, ?, 1)",
+            "INSERT INTO users (username, hashed_password, role, is_active) VALUES (?, ?, ?, 1)",
             (username, "hash123", role),
         )
         conn.commit()
@@ -454,7 +464,7 @@ class TestChatStreamVaultValidation(unittest.TestCase):
 
         from app.services.auth_service import create_access_token
 
-        token = create_access_token(str(user_id))
+        token = create_access_token(user_id, username, role)
         return {"id": user_id, "username": username, "role": role, "token": token}
 
     def _create_vault(self, name):
@@ -484,7 +494,7 @@ class TestChatStreamVaultValidation(unittest.TestCase):
         unauthorized_vault = self._create_vault("Unauthorized Vault")
 
         response = self.client.post(
-            "/api/v1/chat/stream",
+            "/api/chat/stream",
             json={
                 "messages": [{"role": "user", "content": "Hello"}],
                 "vault_id": unauthorized_vault,
@@ -501,7 +511,7 @@ class TestChatStreamVaultValidation(unittest.TestCase):
         self._add_vault_member(user["id"], authorized_vault, "read")
 
         response = self.client.post(
-            "/api/v1/chat/stream",
+            "/api/chat/stream",
             json={
                 "messages": [{"role": "user", "content": "Hello"}],
                 "vault_id": authorized_vault,
@@ -517,7 +527,7 @@ class TestChatStreamVaultValidation(unittest.TestCase):
         any_vault = self._create_vault("Any Vault")
 
         response = self.client.post(
-            "/api/v1/chat/stream",
+            "/api/chat/stream",
             json={
                 "messages": [{"role": "user", "content": "Hello"}],
                 "vault_id": any_vault,
@@ -533,7 +543,7 @@ class TestChatStreamVaultValidation(unittest.TestCase):
         any_vault = self._create_vault("Any Vault")
 
         response = self.client.post(
-            "/api/v1/chat/stream",
+            "/api/chat/stream",
             json={
                 "messages": [{"role": "user", "content": "Hello"}],
                 "vault_id": any_vault,
@@ -552,7 +562,7 @@ class TestChatStreamVaultValidation(unittest.TestCase):
 
         # User1 tries to access User2's vault
         response = self.client.post(
-            "/api/v1/chat/stream",
+            "/api/chat/stream",
             json={
                 "messages": [{"role": "user", "content": "Hello"}],
                 "vault_id": user2_vault,
@@ -562,17 +572,18 @@ class TestChatStreamVaultValidation(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_chat_stream_default_vault_id(self):
-        """Test that default vault_id (1) works for authorized users."""
+        """Test that default vault_id works for authorized users."""
         user = self._create_user("default_vault_user")
-        # User has access to vault 1 (default)
-        self._add_vault_member(user["id"], 1, "read")
+        # Create a vault first, then give the user access
+        vault_id = self._create_vault("Default Vault")
+        self._add_vault_member(user["id"], vault_id, "read")
 
         response = self.client.post(
-            "/api/v1/chat/stream",
-            json={"messages": [{"role": "user", "content": "Hello"}]},
+            "/api/chat/stream",
+            json={"messages": [{"role": "user", "content": "Hello"}], "vault_id": vault_id},
             headers={"Authorization": f"Bearer {user['token']}"},
         )
-        # Should succeed with default vault_id=1
+        # Should succeed since the user has access to the vault
         self.assertNotEqual(response.status_code, 403)
 
 

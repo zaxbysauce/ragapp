@@ -74,8 +74,8 @@ function AssistantMessage() {
  */
 function AssistantActions() {
   const message = useMessage();
-  const content = message.message.content
-    .map((part) => (part.type === "text" ? part.text : ""))
+  const content = (message.content ?? [])
+    .map((part: { type: string; text?: string }) => (part.type === "text" ? part.text ?? "" : ""))
     .join("");
 
   return (

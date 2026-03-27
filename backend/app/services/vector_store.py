@@ -118,11 +118,13 @@ class VectorStore:
         if table_just_created:
             logger.info("Table created; vector index deferred until ≥256 rows")
         
-        # Create FTS index only if missing (Bug C fix)
+        # Create FTS index only if missing (Bug C fix).
+        # LanceDB names the FTS index created with create_fts_index("text") as "text_idx".
+        # Check for either name for forward/backward compatibility.
         fts_index_exists = False
         try:
             indices = self.table.list_indices()
-            fts_index_exists = any(idx.name == "fts_text" for idx in indices)
+            fts_index_exists = any(idx.name in ("text_idx", "fts_text") for idx in indices)
         except Exception:
             pass
         
@@ -177,6 +179,7 @@ class VectorStore:
                 metric=settings.vector_metric,  # "cosine" or "l2"
                 num_partitions=256,
                 num_sub_vectors=96,
+                vector_column_name="embedding",  # schema field (LanceDB default is "vector")
                 replace=True,
             )
             logger.info(
@@ -446,7 +449,9 @@ class VectorStore:
         vault_id: Optional[int] = None,
         query_text: str = "",
         hybrid: bool = True,
-        hybrid_alpha: float = 0.5,
+        hybrid_alpha: float = 0.5,  # NOTE: Not currently applied to RRF weights.
+                              # RRF uses uniform rank weighting (1/(k+rank+1)).
+                              # Reserved for future weighted fusion implementation.
         query_sparse: Optional[dict] = None,
     ) -> List[Dict[str, Any]]:
         """
@@ -460,7 +465,8 @@ class VectorStore:
                       chunks from the specified vault.
             query_text: Raw query text for BM25 FTS search (used in hybrid search).
             hybrid: If True, combine dense vector search with BM25 FTS (or sparse) using RRF.
-            hybrid_alpha: Weight for RRF fusion (not directly used in pure RRF).
+            hybrid_alpha: Not currently applied to RRF weights. RRF uses uniform rank
+                weighting (1/(k+rank+1)). Reserved for future weighted fusion implementation.
             query_sparse: Optional sparse query vector (dict of token_id→weight). When provided
                 and hybrid=True, replaces BM25 FTS with learned sparse dot-product retrieval.
 
@@ -608,7 +614,8 @@ class VectorStore:
             try:
                 fts_query = self.table.search(query_text)  # LanceDB FTS
                 if vault_id:
-                    fts_query = fts_query.where(f"vault_id = '{vault_id}'")
+                    safe_vault_id = str(vault_id).replace("'", "\\'")
+                    fts_query = fts_query.where(f"vault_id = '{safe_vault_id}'")
                 if filter_expr:
                     # FTS doesn't support complex filter_expr, apply basic vault filter only
                     fts_query = fts_query.where(filter_expr)
@@ -1001,11 +1008,12 @@ class VectorStore:
             self.db.drop_table("chunks")
             try:
                 self.table = self.db.create_table("chunks", data=df)
-                # Recreate vector index
+                # Recreate vector index (explicitly name the column)
                 self.table.create_index(
                     metric=settings.vector_metric,
                     num_partitions=256,
                     num_sub_vectors=96,
+                    vector_column_name="embedding",
                     replace=True,
                 )
                 logger.info(f"Vector index recreated with metric={settings.vector_metric}")

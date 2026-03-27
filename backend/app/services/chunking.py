@@ -513,20 +513,53 @@ class EmbeddingSemanticChunker:
     async def _fallback_chunk_text(self, text: str, section_title: Optional[str] = None) -> List[ProcessedChunk]:
         """
         Fallback to title-based chunking when embedding chunking fails.
-        
+
+        Tries SemanticChunker first; if it returns nothing (e.g. unstructured not
+        available in test environments), falls back to a simple paragraph/size-based
+        splitter so that the caller always receives at least one chunk.
+
         Args:
             text: Text content to chunk
             section_title: Optional section title for metadata
-            
+
         Returns:
             List of ProcessedChunk objects
         """
-        # Use the existing SemanticChunker as fallback
+        # Try the unstructured-based chunker first
         fallback_chunker = SemanticChunker(
             chunk_size_chars=self.max_chunk_size,
             chunk_overlap_chars=max(100, self.max_chunk_size // 10),
         )
-        return fallback_chunker.chunk_text(text, section_title)
+        chunks = fallback_chunker.chunk_text(text, section_title)
+
+        if chunks:
+            return chunks
+
+        # Final fallback: split by max_chunk_size characters so the caller always
+        # receives at least one chunk even when unstructured is unavailable.
+        if not text or not text.strip():
+            return []
+
+        result: List[ProcessedChunk] = []
+        step = max(self.max_chunk_size, 100)
+        for start in range(0, len(text), step):
+            chunk_text = text[start: start + step].strip()
+            if not chunk_text:
+                continue
+            result.append(ProcessedChunk(
+                text=chunk_text,
+                metadata={
+                    "section_title": section_title or "",
+                    "element_type": "Text",
+                    "total_chunks": 0,  # Updated below
+                },
+                chunk_index=len(result),
+            ))
+
+        for chunk in result:
+            chunk.metadata["total_chunks"] = len(result)
+
+        return result
     
     async def chunk_elements(self, elements: List[Element]) -> List[ProcessedChunk]:
         """

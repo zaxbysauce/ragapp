@@ -335,16 +335,5 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     });
   },
 
-  // Alias for resetState to match task requirements
-  reset: () => {
-    set({
-      settings: null,
-      formData: { ...defaultFormData },
-      loading: true,
-      saving: false,
-      error: null,
-      errors: {},
-      saveStatus: "idle",
-    });
-  },
+  reset: () => get().resetState(),
 }));

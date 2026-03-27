@@ -252,7 +252,7 @@ ollama list
 
 Update a model:
 ```bash
-ollama pull nomic-embed-text
+ollama pull bge-m3
 ollama pull qwen2.5:32b
 ```
 

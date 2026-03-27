@@ -7,6 +7,7 @@ This module provides the database schema and initialization helper for the appli
 import logging
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from queue import Queue, Empty, Full
 from contextlib import contextmanager
@@ -42,7 +43,7 @@ CREATE TABLE IF NOT EXISTS files (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     processed_at TIMESTAMP,
     modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (vault_id) REFERENCES vaults(id)
+    FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE
 );
 
 -- Memories table: stores processed document chunks with embeddings
@@ -54,7 +55,8 @@ CREATE TABLE IF NOT EXISTS memories (
     tags TEXT,       -- JSON array of tags
     source TEXT,     -- Source reference
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE SET NULL
 );
 
 -- Full-text search virtual table for memories content
@@ -85,6 +87,7 @@ END;
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     vault_id INTEGER NOT NULL DEFAULT 1,
+    user_id INTEGER,
     title TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -168,7 +171,11 @@ CREATE TABLE IF NOT EXISTS users (
     role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('superadmin','admin','member','viewer')),
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login_at TIMESTAMP
+    last_login_at TIMESTAMP,
+    -- Phase 1 auth extensions (account lockout & password policy)
+    must_change_password INTEGER NOT NULL DEFAULT 0,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP
 );
 
 -- Organizations table: stores organization entities
@@ -268,6 +275,8 @@ CREATE INDEX IF NOT EXISTS idx_vault_group_access_vault_id ON vault_group_access
 CREATE INDEX IF NOT EXISTS idx_vault_group_access_group_id ON vault_group_access(group_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_refresh_hash ON user_sessions(refresh_token_hash);
+CREATE INDEX IF NOT EXISTS idx_memories_vault_id ON memories(vault_id);
+CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
 """
 
 
@@ -323,30 +332,51 @@ def run_migrations(sqlite_path: str) -> None:
     Returns:
         None
     """
-    init_db(sqlite_path)
-    migrate_add_vaults(sqlite_path)
-    migrate_add_email_columns(sqlite_path)
-    migrate_add_versioning_fields(sqlite_path)
-
-    # Phase 3: RBAC and permission system migrations
-    migrate_add_user_org_tables(sqlite_path)
-    migrate_add_vault_permission_columns(sqlite_path)
-
-    # Phase 1: Auth extensions (password policy, account lockout)
-    migrate_add_auth_extensions(sqlite_path)
-
-    # Phase 1: Chat session persistence - add user_id to chat_sessions
-    migrate_add_chat_sessions_user_id(sqlite_path)
-
-    # Vault path migration: name-based → ID-based directories
+    conn = sqlite3.connect(sqlite_path)
+    # Simple migration lock: create a lock record, bail if another instance is migrating
     try:
-        from app.services.upload_path import migrate_vault_paths
-        from app.config import settings
-        import asyncio
+        conn.execute("CREATE TABLE IF NOT EXISTS _migration_lock (id INTEGER PRIMARY KEY, started_at REAL)")
+        result = conn.execute("SELECT COUNT(*) FROM _migration_lock").fetchone()
+        if result[0] > 0:
+            logger.warning("Migration already in progress in another process, skipping")
+            return
+        conn.execute("INSERT INTO _migration_lock (id, started_at) VALUES (1, ?)", (time.time(),))
+        conn.commit()
+    except Exception:
+        pass  # If we can't acquire lock, proceed anyway (best-effort)
 
-        migrate_vault_paths(sqlite_path, settings.data_dir)
-    except Exception as e:
-        logger.warning(f"Vault path migration failed (continuing): {e}")
+    try:
+        init_db(sqlite_path)
+        migrate_add_vaults(sqlite_path)
+        migrate_add_email_columns(sqlite_path)
+        migrate_add_versioning_fields(sqlite_path)
+
+        # Phase 3: RBAC and permission system migrations
+        migrate_add_user_org_tables(sqlite_path)
+        migrate_add_vault_permission_columns(sqlite_path)
+
+        # Phase 1: Auth extensions (password policy, account lockout)
+        migrate_add_auth_extensions(sqlite_path)
+
+        # Phase 1: Chat session persistence - add user_id to chat_sessions
+        migrate_add_chat_sessions_user_id(sqlite_path)
+
+        # Vault path migration: name-based → ID-based directories
+        try:
+            from app.services.upload_path import migrate_vault_paths
+            from app.config import settings
+            import asyncio
+
+            migrate_vault_paths(sqlite_path, settings.data_dir)
+        except Exception as e:
+            logger.warning(f"Vault path migration failed (continuing): {e}")
+    finally:
+        try:
+            conn.execute("DELETE FROM _migration_lock")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
 
 
 def migrate_add_vaults(sqlite_path: str) -> None:
@@ -619,11 +649,15 @@ def migrate_add_auth_extensions(sqlite_path: str) -> None:
 
 def rollback_auth_extensions(sqlite_path: str) -> None:
     """
-    Down-migration: Remove password policy and account lockout columns.
+    Down-migration: Remove indexes added by migrate_add_auth_extensions.
 
-    Reverses the changes made by migrate_add_auth_extensions by dropping
-    the added columns and indexes. Safe to run multiple times (idempotent).
-    Requires SQLite 3.35.0+ for DROP COLUMN support.
+    The auth extension columns (must_change_password, failed_attempts,
+    locked_until) are now part of the base schema created by init_db, so
+    this rollback intentionally does NOT drop those columns — doing so would
+    corrupt a freshly-initialised database.
+
+    Only the optional performance indexes added by the migration are removed.
+    Safe to run multiple times (idempotent).
 
     Args:
         sqlite_path: Path to the SQLite database file.
@@ -632,23 +666,10 @@ def rollback_auth_extensions(sqlite_path: str) -> None:
     try:
         conn.execute("PRAGMA foreign_keys = ON")
 
-        # Drop indexes if they exist
+        # Drop only the indexes added by the migration (not the columns, which
+        # are now part of the base schema and must be preserved).
         conn.execute("DROP INDEX IF EXISTS idx_user_sessions_expires")
         conn.execute("DROP INDEX IF EXISTS idx_users_locked_until")
-
-        # Get existing columns from users table
-        cursor = conn.execute("PRAGMA table_info(users)")
-        existing_columns = {row[1] for row in cursor.fetchall()}
-
-        # Drop columns if they exist (SQLite 3.35.0+ supports DROP COLUMN)
-        if "locked_until" in existing_columns:
-            conn.execute("ALTER TABLE users DROP COLUMN locked_until")
-
-        if "failed_attempts" in existing_columns:
-            conn.execute("ALTER TABLE users DROP COLUMN failed_attempts")
-
-        if "must_change_password" in existing_columns:
-            conn.execute("ALTER TABLE users DROP COLUMN must_change_password")
 
         conn.commit()
     finally:
@@ -835,6 +856,8 @@ class SQLiteConnectionPool:
             # Try to get an existing connection from the pool
             try:
                 conn = self._pool.get_nowait()
+                # Re-apply pragma on each use to ensure it persists across connections
+                conn.execute("PRAGMA foreign_keys = ON")
                 # Validate the connection before returning it
                 if self._validate_connection(conn):
                     return conn
@@ -863,6 +886,8 @@ class SQLiteConnectionPool:
             # If at max capacity, block until a connection is available
             try:
                 conn = self._pool.get(timeout=5)
+                # Re-apply pragma on each use to ensure it persists across connections
+                conn.execute("PRAGMA foreign_keys = ON")
                 # Validate the connection before returning it
                 if self._validate_connection(conn):
                     return conn

@@ -256,7 +256,7 @@ class TestAttachmentValidation(unittest.TestCase):
 
     def test_validate_pdf_mime_type_allowed(self):
         """Test PDF MIME type passes validation."""
-        part = self._create_attachment_part('application/pdf', b'fake pdf content')
+        part = self._create_attachment_part('application/pdf', b'%PDF-1.4 fake pdf content')
         is_valid, reason = self.service._validate_attachment(part)
         self.assertTrue(is_valid)
         self.assertEqual(reason, "")
@@ -277,9 +277,10 @@ class TestAttachmentValidation(unittest.TestCase):
 
     def test_validate_docx_mime_type_allowed(self):
         """Test DOCX MIME type passes validation."""
+        # DOCX is ZIP-based; use real ZIP magic bytes (PK\x03\x04)
         part = self._create_attachment_part(
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            b'fake docx content'
+            b'PK\x03\x04fake docx content'
         )
         is_valid, reason = self.service._validate_attachment(part)
         self.assertTrue(is_valid)
@@ -330,7 +331,8 @@ class TestAttachmentValidation(unittest.TestCase):
 
     def test_validate_exactly_at_size_limit_passes(self):
         """Test attachment exactly at size limit passes."""
-        exact_payload = b'x' * (10 * 1024 * 1024)  # Exactly 10MB
+        # Use valid PDF magic bytes so the magic check also passes
+        exact_payload = b'%PDF' + b'x' * (10 * 1024 * 1024 - 4)  # Exactly 10MB with PDF header
         part = self._create_attachment_part('application/pdf', exact_payload)
         is_valid, reason = self.service._validate_attachment(part)
         self.assertTrue(is_valid)
@@ -767,7 +769,7 @@ class TestEmailServiceIntegration(unittest.IsolatedAsyncioTestCase):
         msg['From'] = 'sender@example.com'
         msg.set_content('Email body')
         msg.add_attachment(
-            b'PDF content',
+            b'%PDF-1.4 PDF content',
             maintype='application',
             subtype='pdf',
             filename='test.pdf'
@@ -840,9 +842,9 @@ class TestEmailServiceIntegration(unittest.IsolatedAsyncioTestCase):
         msg['Subject'] = 'Test Document [Vault1]'
         msg['From'] = 'sender@example.com'
         msg.set_content('Email body')
-        msg.add_attachment(b'PDF content 1', maintype='application', subtype='pdf', filename='test1.pdf')
-        msg.add_attachment(b'PDF content 2', maintype='application', subtype='pdf', filename='test2.pdf')
-        msg.add_attachment(b'PDF content 3', maintype='application', subtype='pdf', filename='test3.pdf')
+        msg.add_attachment(b'%PDF-1.4 content 1', maintype='application', subtype='pdf', filename='test1.pdf')
+        msg.add_attachment(b'%PDF-1.4 content 2', maintype='application', subtype='pdf', filename='test2.pdf')
+        msg.add_attachment(b'%PDF-1.4 content 3', maintype='application', subtype='pdf', filename='test3.pdf')
 
         fake_imap.emails = {'1': {'content': msg.as_bytes()}}
 

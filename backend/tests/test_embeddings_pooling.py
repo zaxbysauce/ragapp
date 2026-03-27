@@ -47,6 +47,8 @@ def mock_settings():
         mock_settings.embedding_batch_min_sub_size = 1
         mock_settings.chunk_size_chars = 1200
         mock_settings.chunk_overlap_chars = 120
+        mock_settings.tri_vector_search_enabled = False
+        mock_settings.flag_embedding_url = ""
         yield mock_settings
 
 
@@ -145,7 +147,7 @@ class TestEmbeddingServiceCloseMethod:
         assert hasattr(service, 'close'), "EmbeddingService should have close method"
         # Clean up
         import asyncio
-        asyncio.get_event_loop().run_until_complete(service.close())
+        asyncio.run(service.close())
 
     def test_close_is_async_method(self, mock_settings):
         """The close method should be async (coroutine function)."""
@@ -154,7 +156,7 @@ class TestEmbeddingServiceCloseMethod:
             "close() should be an async method (coroutine function)"
         # Clean up
         import asyncio
-        asyncio.get_event_loop().run_until_complete(service.close())
+        asyncio.run(service.close())
 
     @pytest.mark.asyncio
     async def test_close_is_idempotent(self, mock_settings):

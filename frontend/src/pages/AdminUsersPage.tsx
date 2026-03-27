@@ -29,15 +29,7 @@ import {
 } from '@/components/ui/table';
 import { Users, Plus, Trash2, Shield, UserCheck, UserX, Loader2, Search } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
-
-interface User {
-  id: number;
-  username: string;
-  full_name: string;
-  role: 'superadmin' | 'admin' | 'member' | 'viewer';
-  is_active: boolean;
-  created_at: string;
-}
+import apiClient, { listUsers, updateUserRole, updateUserActive, deleteUser, User } from '@/lib/api';
 
 const roleLabels: Record<string, string> = {
   superadmin: 'Super Admin',
@@ -76,29 +68,13 @@ export default function AdminUsersPage() {
   const isSuperAdmin = currentUser?.role === 'superadmin';
   const isAdmin = currentUser?.role === 'admin' || isSuperAdmin;
 
-  // Helper to create auth headers - only includes Authorization when token exists
-  const getAuthHeaders = (): Record<string, string> => {
-    const token = useAuthStore.getState().accessToken;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    return headers;
-  };
-
   useEffect(() => {
     fetchUsers();
   }, []);
 
   async function fetchUsers() {
     try {
-      const response = await fetch('/api/users', { headers: getAuthHeaders() });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch users');
-      }
-      
-      const data = await response.json();
+      const data = await listUsers();
       setUsers(data.users || []);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load users');
@@ -144,29 +120,15 @@ export default function AdminUsersPage() {
 
     setSaving(true);
     try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          username: username.trim(),
-          full_name: fullName.trim(),
-          password,
-        }),
+      const registerResponse = await apiClient.post<{ id: number }>('/auth/register', {
+        username: username.trim(),
+        full_name: fullName.trim(),
+        password,
       });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({ message: 'Failed to create user' }));
-        throw new Error(data.message);
-      }
 
       // Update role if not member
       if (selectedRole !== 'member') {
-        const newUser = await response.json();
-        await fetch(`/api/users/${newUser.id}/role`, {
-          method: 'PATCH',
-          headers: getAuthHeaders(),
-          body: JSON.stringify({ role: selectedRole }),
-        });
+        await updateUserRole(registerResponse.data.id, selectedRole);
       }
 
       toast.success('User created successfully');
@@ -184,17 +146,7 @@ export default function AdminUsersPage() {
 
     setSaving(true);
     try {
-      const response = await fetch(`/api/users/${selectedUser.id}/role`, {
-        method: 'PATCH',
-headers: getAuthHeaders(),
-        body: JSON.stringify({ role: selectedRole }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({ message: 'Failed to update role' }));
-        throw new Error(data.message);
-      }
-
+      await updateUserRole(selectedUser.id, selectedRole);
       toast.success('Role updated successfully');
       setRoleDialogOpen(false);
       fetchUsers();
@@ -209,17 +161,7 @@ headers: getAuthHeaders(),
     if (!isAdmin) return;
 
     try {
-      const response = await fetch(`/api/users/${user.id}/active`, {
-        method: 'PATCH',
-headers: getAuthHeaders(),
-        body: JSON.stringify({ is_active: !user.is_active }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({ message: 'Failed to update status' }));
-        throw new Error(data.message);
-      }
-
+      await updateUserActive(user.id, !user.is_active);
       toast.success(`User ${user.is_active ? 'deactivated' : 'activated'} successfully`);
       fetchUsers();
     } catch (err) {
@@ -232,16 +174,7 @@ headers: getAuthHeaders(),
 
     setDeleting(true);
     try {
-      const response = await fetch(`/api/users/${selectedUser.id}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders(),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({ message: 'Failed to delete user' }));
-        throw new Error(data.message);
-      }
-
+      await deleteUser(selectedUser.id);
       toast.success('User deleted successfully');
       setDeleteDialogOpen(false);
       fetchUsers();

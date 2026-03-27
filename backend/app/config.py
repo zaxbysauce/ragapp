@@ -3,7 +3,8 @@ Application configuration using Pydantic Settings.
 """
 import logging
 from pathlib import Path
-from pydantic import SecretStr, field_validator, model_validator
+from typing import Optional
+from pydantic import PrivateAttr, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -11,13 +12,17 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     """Application settings with environment variable support."""
-    
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore"
     )
-    
+
+    # Private override for sqlite_path (test injection point).
+    # Use PrivateAttr so Pydantic v2 does not include it in field validation.
+    _sqlite_path_override: Optional[Path] = PrivateAttr(default=None)
+
     # Server configuration
     port: int = 8080
     
@@ -368,6 +373,27 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_no_default_credentials(self) -> "Settings":
+        """Reject startup if any secret field still holds its insecure default value."""
+        if self.admin_secret_token == "admin-secret-token":
+            raise ValueError(
+                "FATAL: admin_secret_token must be changed from the default value in your .env file."
+            )
+        if self.jwt_secret_key == "change-me-to-a-random-64-char-string":
+            raise ValueError(
+                "FATAL: jwt_secret_key must be set to a random 64+ character string in your .env file."
+            )
+        if len(self.jwt_secret_key) < 32:
+            raise ValueError(
+                "FATAL: jwt_secret_key must be at least 32 characters long."
+            )
+        if self.health_check_api_key == "health-api-key":
+            raise ValueError(
+                "FATAL: health_check_api_key must be changed from the default value in your .env file."
+            )
+        return self
+
     @property
     def documents_dir(self) -> Path:
         """Directory for storing documents."""
@@ -433,8 +459,21 @@ class Settings(BaseSettings):
     
     @property
     def sqlite_path(self) -> Path:
-        """Path to SQLite database."""
+        """Path to SQLite database.
+
+        Can be overridden at runtime via assignment (e.g. in tests):
+            settings.sqlite_path = "/tmp/test.db"
+        """
+        if self._sqlite_path_override is not None:
+            return self._sqlite_path_override
         return self.data_dir / "app.db"
+
+    @sqlite_path.setter
+    def sqlite_path(self, value) -> None:
+        """Override the SQLite path (used in tests to point at a temp DB)."""
+        # object.__setattr__ bypasses Pydantic's __setattr__ to write the
+        # PrivateAttr directly, which is the only safe way in Pydantic v2.
+        object.__setattr__(self, "_sqlite_path_override", Path(value))
 
     @property
     def effective_embedding_doc_prefix(self) -> str:

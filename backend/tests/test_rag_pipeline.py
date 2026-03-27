@@ -64,7 +64,17 @@ class FakeEmbeddingService:
         return self.embedding.copy()
 
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        return [self.embedding.copy() for _ in texts]
+        # Return orthogonal-ish vectors per text so context-distillation dedup
+        # does not falsely mark all chunks as near-duplicates.
+        # Additive perturbation keeps vectors in the same direction (cosine ~1.0),
+        # so instead we place the dominant weight on a rotating dimension.
+        dim = len(self.embedding)
+        result = []
+        for i, _text in enumerate(texts):
+            vec = [0.01] * dim          # small baseline in all dimensions
+            vec[i % dim] = 1.0          # dominant component rotates per index
+            result.append(vec)
+        return result
 
 
 class FakeVectorStore:
@@ -627,26 +637,32 @@ class TestRAGEnginePipeline(unittest.IsolatedAsyncioTestCase):
 
     async def test_retrieval_window_expansion(self):
         """Test that retrieval window expands to adjacent chunks."""
+        # Texts must be > 50 chars to survive context distillation's short-chunk filter.
         initial_results = [
-            {"text": "Main chunk", "file_id": "doc1", "_distance": 0.1, 
+            {"text": "Main chunk content describing the primary topic found in this document section.",
+             "file_id": "doc1", "_distance": 0.1,
              "metadata": {"chunk_index": 5}},
         ]
-        
+
         fake_vector = FakeVectorStore(results=initial_results)
         fake_embedding = FakeEmbeddingService()
         fake_memory = FakeMemoryStore()
         fake_llm = FakeLLMClient(response="Answer.")
-        
+
         # Enable window expansion before creating engine
         fake_vector.retrieval_window = 2
         fake_vector.retrieval_top_k = 10
-        
+
         # Mock get_chunks_by_uid to return adjacent chunks using patch
         # Note: The RAGEngine uses "id" field for lookup, so we need to include it
         adjacent_chunks = [
-            {"id": "doc1_4", "text": "Chunk 4", "file_id": "doc1", "_distance": 0.15,
+            {"id": "doc1_4",
+             "text": "Adjacent chunk four provides context immediately preceding the main section.",
+             "file_id": "doc1", "_distance": 0.15,
              "metadata": {"chunk_index": 4}},
-            {"id": "doc1_6", "text": "Chunk 6", "file_id": "doc1", "_distance": 0.18,
+            {"id": "doc1_6",
+             "text": "Adjacent chunk six provides context immediately following the main section.",
+             "file_id": "doc1", "_distance": 0.18,
              "metadata": {"chunk_index": 6}},
         ]
         

@@ -26,7 +26,10 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - TRI_VECTOR_SEARCH_ENABLED=${TRI_VECTOR_SEARCH_ENABLED:-true}
     extra_hosts:
+      # host.docker.internal allows reaching the host machine (e.g. for Ollama)
       - "host.docker.internal:host-gateway"
+      # flag-embed must be running on the host machine (embedding server)
+      # Start it separately with: cd backend/embedding_server && python server.py
       - "flag-embed:host-gateway"
     restart: unless-stopped
     depends_on:
@@ -39,7 +42,7 @@ services:
       retries: 3
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     container_name: knowledgevault_redis
     restart: unless-stopped
     volumes:

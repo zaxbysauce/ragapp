@@ -29,7 +29,7 @@ class RetrievalEvaluator:
             # Take top 3 chunks
             top_chunks = chunks[:3]
             if not top_chunks:
-                return "CONFIDENT"  # No chunks to evaluate
+                return "NO_MATCH"  # No chunks to evaluate
             
             # Extract and truncate text from each chunk
             chunk_texts = []

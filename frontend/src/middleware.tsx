@@ -1,3 +1,9 @@
+/**
+ * NOTE: This file is currently unused in production.
+ * ProtectedRoute is served from src/components/auth/ProtectedRoute.tsx
+ * AdminRoute functionality is handled via RoleGuard in src/components/RoleGuard.tsx
+ * This file may be safely removed in a future cleanup.
+ */
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { Loader2 } from "lucide-react";

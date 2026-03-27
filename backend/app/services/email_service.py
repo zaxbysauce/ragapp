@@ -203,6 +203,12 @@ class EmailIngestionService:
                 logger.warning(f"IMAP search failed: {result}")
                 return
 
+            if not data or not data[0]:
+                logger.warning("Empty IMAP search result")
+                return
+            if not isinstance(data[0], (bytes, str)):
+                logger.warning("Unexpected IMAP search result type: %s", type(data[0]))
+                return
             uids = data[0].split()
             logger.info(f"Found {len(uids)} UNSEEN emails")
 
@@ -278,15 +284,24 @@ class EmailIngestionService:
                 # Wait for server greeting (returns None, not a status code)
                 await imap_client.wait_hello_from_server()
 
-                result, _ = await imap_client.login(
-                    self.settings.imap_username,
-                    self.settings.imap_password.get_secret_value()
-                )
+                try:
+                    result, _ = await imap_client.login(
+                        self.settings.imap_username,
+                        self.settings.imap_password.get_secret_value()
+                    )
+                except Exception:
+                    logger.error(
+                        "IMAP authentication failed for user %s — check credentials",
+                        self.settings.imap_username
+                    )
+                    raise Exception("IMAP authentication failed: check username/password")
                 if result != 'OK':
                     # Auth error is permanent, don't retry with backoff
-                    error_msg = "IMAP authentication failed: check username/password"
-                    logger.error(error_msg)
-                    raise Exception(error_msg)
+                    logger.error(
+                        "IMAP authentication failed for user %s — check credentials",
+                        self.settings.imap_username
+                    )
+                    raise Exception("IMAP authentication failed: check username/password")
 
                 logger.info(f"IMAP connection established after {attempts} attempt(s)")
                 # Clear backoff delay on successful connection
@@ -367,6 +382,28 @@ class EmailIngestionService:
         # Extract subject and sender
         subject = self._decode_header_value(msg.get('Subject', ''))
         sender = self._decode_header_value(msg.get('From', ''))
+
+        # Extract and sanitize email body before any further processing
+        body = ""
+        if msg.is_multipart():
+            for body_part in msg.walk():
+                if body_part.get_content_type() == 'text/html' and body_part.get_content_disposition() != 'attachment':
+                    raw_body = body_part.get_payload(decode=True)
+                    if raw_body:
+                        body = raw_body.decode(body_part.get_content_charset() or 'utf-8', errors='replace')
+                        body = self._sanitize_html(body)
+                        break
+                elif body_part.get_content_type() == 'text/plain' and body_part.get_content_disposition() != 'attachment':
+                    raw_body = body_part.get_payload(decode=True)
+                    if raw_body:
+                        body = raw_body.decode(body_part.get_content_charset() or 'utf-8', errors='replace')
+                        break
+        else:
+            raw_body = msg.get_payload(decode=True)
+            if raw_body:
+                body = raw_body.decode(msg.get_content_charset() or 'utf-8', errors='replace')
+                if msg.get_content_type() == 'text/html':
+                    body = self._sanitize_html(body)
 
         # Use sanitized values for logging to prevent log injection
         logger.info(f"Processing email from {self._sanitize_log_value(sender)}: {self._sanitize_log_value(subject)}")
@@ -452,7 +489,19 @@ class EmailIngestionService:
         if not filename:
             return filename
         # Use basename to extract just the filename, removing any path components
-        return os.path.basename(filename)
+        filename = os.path.basename(filename)
+        # Remove null bytes and control characters
+        filename = re.sub(r'[\x00-\x1f\x7f]', '', filename)
+        # Keep only safe characters: alphanumeric, dot, hyphen, underscore, space
+        filename = re.sub(r'[^\w.\-\s]', '_', filename)
+        # Strip leading/trailing dots and spaces
+        filename = filename.strip('. ')
+        # Enforce reasonable length limit
+        filename = filename[:255] if len(filename) > 255 else filename
+        # Fallback if empty after sanitization
+        if not filename:
+            filename = 'attachment'
+        return filename
 
     def _extract_vault_name(self, subject: str) -> Optional[str]:
         """
@@ -478,6 +527,59 @@ class EmailIngestionService:
 
         return None
 
+    def _validate_file_magic(self, payload: bytes, declared_mime_type: str) -> bool:
+        """
+        Validate file payload against known magic number signatures.
+
+        Checks the first bytes of the payload against known file signatures
+        for common allowed MIME types to detect mismatched or spoofed content.
+
+        Args:
+            payload: Raw file bytes
+            declared_mime_type: MIME type declared in the email headers
+
+        Returns:
+            True if the actual file signature matches the declared type, False otherwise
+        """
+        if not payload:
+            return True
+
+        # Known executable/dangerous signatures — always reject if first bytes match these
+        # regardless of declared type
+        dangerous_signatures = [
+            b'MZ',           # Windows PE executable
+            b'\x7fELF',      # Linux ELF binary
+            b'\xca\xfe\xba\xbe',  # Mach-O fat binary
+        ]
+
+        # Signature map for declared MIME types
+        pdf_sig = b'%PDF'
+        zip_sig = b'PK\x03\x04'  # ZIP-based: docx, xlsx, pptx
+
+        if declared_mime_type == 'application/pdf':
+            return payload[:4] == pdf_sig
+
+        if declared_mime_type in (
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        ):
+            return payload[:4] == zip_sig
+
+        if declared_mime_type in ('text/plain', 'text/csv'):
+            # Text files: allow through, but still block known executable signatures
+            for sig in dangerous_signatures:
+                if payload[:len(sig)] == sig:
+                    return False
+            return True
+
+        # For any other declared type: reject if first bytes are a suspicious executable signature
+        for sig in dangerous_signatures:
+            if payload[:len(sig)] == sig:
+                return False
+
+        return True
+
     def _validate_attachment(self, part) -> tuple[bool, str]:
         """
         Validate attachment by MIME type and file size.
@@ -485,6 +587,7 @@ class EmailIngestionService:
         Checks MIME type against whitelist (imap_allowed_mime_types)
         and file size against max (imap_max_attachment_size).
         Checks actual payload size instead of Content-Length header.
+        Also validates file magic numbers to detect content spoofing.
 
         Args:
             part: Email message part (attachment)
@@ -505,6 +608,14 @@ class EmailIngestionService:
                 size_mb = size_bytes / (1024 * 1024)
                 max_mb = self.settings.imap_max_attachment_size / (1024 * 1024)
                 return False, f"File too large: {size_mb:.2f}MB (max {max_mb:.2f}MB)"
+
+            # Validate file magic numbers against declared MIME type
+            if not self._validate_file_magic(payload, content_type):
+                logger.warning(
+                    "Attachment rejected: file signature does not match declared MIME type '%s'",
+                    content_type
+                )
+                return False, f"File signature mismatch for declared MIME type: {content_type}"
 
         return True, ""
 

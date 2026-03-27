@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"def is_connected\\\\|def get_chunks_by_uid\\\\|def embed_query_sparse\\\\|def embed_multi\" /c/OpenCode/ragapp/backend/app/services/*.py)"
+    ]
+  }
+}

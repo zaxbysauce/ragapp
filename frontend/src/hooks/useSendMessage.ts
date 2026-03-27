@@ -87,6 +87,9 @@ export function useSendMessage(
         onSources: (sources) => {
           updateMessage(assistantMessageId, { sources });
         },
+        onAbort: () => {
+          updateMessage(assistantMessageId, { interrupted: true });
+        },
         onError: (error) => {
           console.error("Chat stream error:", error);
           updateMessage(assistantMessageId, { error: error.message });

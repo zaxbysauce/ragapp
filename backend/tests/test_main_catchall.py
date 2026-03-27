@@ -95,13 +95,16 @@ class TestMainCatchAllRoute(unittest.TestCase):
 
     def test_assets_mount_configured(self):
         """Test that /assets is mounted as static files."""
+        import re
         main_file = os.path.join(os.path.dirname(__file__), '..', 'app', 'main.py')
         with open(main_file, 'r') as f:
             content = f.read()
-        
-        # Check for assets mount configuration
-        self.assertIn('app.mount("/assets"', content,
-                      "Assets mount not found")
+
+        # Check for assets mount configuration (handles both single-line and multi-line call styles)
+        self.assertTrue(
+            re.search(r'app\.mount\s*\(\s*["\']\/assets["\']', content),
+            "Assets mount not found"
+        )
         self.assertIn('StaticFiles(directory=str(static_dir / "assets")', content,
                       "Assets directory configuration not found")
 

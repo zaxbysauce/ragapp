@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.api.deps import get_current_active_user, require_role
 from app.config import settings
 from app.models.database import get_pool
@@ -12,6 +12,13 @@ from app.services.auth_service import hash_password, password_strength_check
 class UserUpdateRequest(BaseModel):
     username: Optional[str] = None
     full_name: Optional[str] = None
+
+    @field_validator("username")
+    @classmethod
+    def username_max_length(cls, v):
+        if v is not None and len(v) > 255:
+            raise ValueError("Username must be at most 255 characters")
+        return v
 
 
 class PasswordResetRequest(BaseModel):
@@ -56,7 +63,7 @@ async def list_users(
         # Batch fetch all groups for users in one query
         group_cursor = conn.execute(
             f"""SELECT ug.user_id, g.name FROM groups g
-               JOIN user_groups ug ON g.id = ug.group_id
+               JOIN group_members ug ON g.id = ug.group_id
                WHERE ug.user_id IN ({placeholders})""",
             user_ids,
         )
@@ -404,7 +411,7 @@ async def get_user_groups(
         # Get user's groups
         cursor = conn.execute(
             """SELECT g.id, g.name FROM groups g
-               JOIN user_groups ug ON g.id = ug.group_id
+               JOIN group_members ug ON g.id = ug.group_id
                WHERE ug.user_id = ?""",
             (user_id,),
         )
@@ -458,12 +465,16 @@ async def update_user_groups(
                 )
 
         # Delete existing group memberships
-        cursor = conn.execute("DELETE FROM user_groups WHERE user_id = ?", (user_id,))
+        cursor = conn.execute("DELETE FROM group_members WHERE user_id = ?", (user_id,))
 
-        # Insert new group memberships
+        # Insert new group memberships (deduplicate to avoid UNIQUE constraint violations)
+        seen_group_ids = set()
         for group_id in request.group_ids:
+            if group_id in seen_group_ids:
+                continue
+            seen_group_ids.add(group_id)
             cursor = conn.execute(
-                "INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)",
+                "INSERT INTO group_members (user_id, group_id) VALUES (?, ?)",
                 (user_id, group_id),
             )
 

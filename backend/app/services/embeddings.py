@@ -240,7 +240,7 @@ class EmbeddingService:
                     f"Embedding API returned status {response.status_code} for {self.provider_mode} mode: {response.text}"
                 )
                 raise EmbeddingError(
-                    f"Embedding API returned status {response.status_code}"
+                    f"Embedding API returned status {response.status_code}: {response.text}"
                 )
 
             try:
@@ -249,7 +249,7 @@ class EmbeddingService:
                 logger.warning(
                     f"Invalid JSON response from embedding API for {self.provider_mode} mode: {e}, response: {response.text}"
                 )
-                raise EmbeddingError("Invalid response from embedding service")
+                raise EmbeddingError(f"Invalid response from embedding service: {e}")
 
             return self._extract_embedding(data)
             
@@ -349,13 +349,16 @@ class EmbeddingService:
 
     async def embed_multi(self, texts: List[str]) -> List[dict]:
         """
-        Generate tri-vector embeddings (dense + sparse + colbert) for multiple texts.
-        
+        Generate bi-vector embeddings (dense + sparse; colbert reserved for future use) for multiple texts.
+
         Args:
             texts: List of texts to embed
-            
+
         Returns:
-            List of dicts with keys: 'dense' (list), 'sparse' (dict), 'colbert' (None)
+            List of dicts with keys:
+                'dense' (list): Dense embedding vector
+                'sparse' (dict): Sparse embedding dict {token: weight}
+                'colbert' (None): Reserved for future ColBERT implementation; always None currently
             If server doesn't support tri-vector, returns dense-only with sparse=None.
         """
         # Use property to trigger lazy detection if not already done

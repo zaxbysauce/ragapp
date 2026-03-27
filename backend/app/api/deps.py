@@ -156,18 +156,18 @@ async def get_current_active_user(
 
     token = parts[1].strip()
 
+    # SECURITY: Reject the default token unconditionally, before any scope or
+    # mode check, so a caller holding the unchanged default value is denied
+    # immediately regardless of users_enabled or any claimed role/scope.
+    DEFAULT_TOKEN = "admin-secret-token"
+    if secrets.compare_digest(token, DEFAULT_TOKEN):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid credentials - change default admin token",
+        )
+
     # When users are disabled, fall back to admin token authentication
     if not settings.users_enabled:
-        # Default token that must be changed before auth works
-        DEFAULT_TOKEN = "admin-secret-token"
-
-        # SECURITY: Reject default token to prevent auth bypass
-        if secrets.compare_digest(token, DEFAULT_TOKEN):
-            raise HTTPException(
-                status_code=403,
-                detail="Invalid credentials - change default admin token",
-            )
-
         if not secrets.compare_digest(token, settings.admin_secret_token):
             raise HTTPException(status_code=403, detail="Invalid credentials")
 
@@ -432,7 +432,7 @@ async def require_admin_role(user: dict = Depends(get_current_active_user)) -> d
     return user
 
 
-async def get_user_accessible_vault_ids(user: dict, db) -> List[int]:
+async def get_user_accessible_vault_ids(user: dict, db) -> List[int]:  # NOTE: caller must ensure `user` was produced by an authenticated, authorized dependency (e.g. get_current_active_user) — this function does not re-validate identity.
     """
     Get all vault IDs that a user has access to.
 

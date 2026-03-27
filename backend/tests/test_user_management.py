@@ -113,6 +113,12 @@ class TestUserManagementEndpoints(unittest.TestCase):
         """Set up test client and database fixtures."""
         self.client = TestClient(app)
 
+        # Point settings at the test DB so routes using get_pool(settings.sqlite_path) work
+        from app.config import settings as _settings
+        from app.models.database import get_pool as _get_pool
+        _settings.sqlite_path = str(TEST_DB_PATH)
+        _get_pool(str(TEST_DB_PATH))
+
         # Create a connection pool for test data setup
         from app.models.database import SQLiteConnectionPool
 
@@ -142,7 +148,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         # Clean up test data
         conn = sqlite3.connect(str(TEST_DB_PATH))
         try:
-            conn.execute("DELETE FROM user_groups")
+            conn.execute("DELETE FROM group_members")
             conn.execute("DELETE FROM groups")
             conn.execute("DELETE FROM org_members")
             conn.execute("DELETE FROM organizations")
@@ -200,7 +206,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             ]
 
             conn.executemany(
-                "INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)", user_groups
+                "INSERT INTO group_members (user_id, group_id) VALUES (?, ?)", user_groups
             )
 
             # Create some user sessions for last_login_at testing
@@ -244,7 +250,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 3, "username": "member", "role": "member", "is_active": True}
         )
 
-        response = self.client.get("/users/")
+        response = self.client.get("/api/users/")
         self.assertEqual(response.status_code, 403)
         self.assertIn("Insufficient privileges", response.json()["detail"])
 
@@ -255,7 +261,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.get("/users/")
+        response = self.client.get("/api/users/")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -288,7 +294,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.get("/users/?skip=2&limit=2")
+        response = self.client.get("/api/users/?skip=2&limit=2")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -314,7 +320,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.get("/users/")
+        response = self.client.get("/api/users/")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -327,7 +333,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 3, "username": "member", "role": "member", "is_active": True}
         )
 
-        response = self.client.patch("/users/1", json={"username": "newname"})
+        response = self.client.patch("/api/users/1", json={"username": "newname"})
         self.assertEqual(response.status_code, 403)
 
     def test_update_user_username_success(self):
@@ -336,7 +342,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.patch("/users/3", json={"username": "updated_member"})
+        response = self.client.patch("/api/users/3", json={"username": "updated_member"})
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -360,7 +366,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         )
 
         response = self.client.patch(
-            "/users/3",
+            "/api/users/3",
             json={"username": "superadmin"},  # Already exists
         )
 
@@ -374,7 +380,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         )
 
         response = self.client.patch(
-            "/users/4", json={"full_name": "Updated Viewer Name"}
+            "/api/users/4", json={"full_name": "Updated Viewer Name"}
         )
 
         self.assertEqual(response.status_code, 200)
@@ -396,7 +402,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.patch("/users/3", json={})
+        response = self.client.patch("/api/users/3", json={})
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("No fields to update", response.json()["detail"])
@@ -407,7 +413,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.patch("/users/999", json={"username": "nonexistent"})
+        response = self.client.patch("/api/users/999", json={"username": "nonexistent"})
 
         self.assertEqual(response.status_code, 404)
 
@@ -418,7 +424,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         )
 
         response = self.client.patch(
-            "/users/1/password", json={"password": "NewPass123!"}
+            "/api/users/1/password", json={"password": "NewPass123!"}
         )
         self.assertEqual(response.status_code, 403)
 
@@ -429,7 +435,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         )
 
         response = self.client.patch(
-            "/users/3/password",
+            "/api/users/3/password",
             json={"password": "weak"},  # Too short
         )
 
@@ -446,7 +452,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
 
         new_password = "StrongPass123!"
         response = self.client.patch(
-            "/users/3/password", json={"password": new_password}
+            "/api/users/3/password", json={"password": new_password}
         )
 
         self.assertEqual(response.status_code, 200)
@@ -490,7 +496,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         )
 
         response = self.client.patch(
-            "/users/999/password", json={"password": "SomePass123!"}
+            "/api/users/999/password", json={"password": "SomePass123!"}
         )
 
         self.assertEqual(response.status_code, 404)
@@ -501,7 +507,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 3, "username": "member", "role": "member", "is_active": True}
         )
 
-        response = self.client.get("/users/1/groups")
+        response = self.client.get("/api/users/1/groups")
         self.assertEqual(response.status_code, 403)
 
     def test_get_user_groups_returns_groups(self):
@@ -510,7 +516,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.get("/users/1/groups")  # superadmin
+        response = self.client.get("/api/users/1/groups")  # superadmin
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -527,7 +533,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.get("/users/5/groups")  # inactive user has no groups
+        response = self.client.get("/api/users/5/groups")  # inactive user has no groups
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -539,7 +545,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.get("/users/999/groups")
+        response = self.client.get("/api/users/999/groups")
         self.assertEqual(response.status_code, 404)
 
     def test_update_user_groups_requires_admin(self):
@@ -548,7 +554,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 3, "username": "member", "role": "member", "is_active": True}
         )
 
-        response = self.client.put("/users/1/groups", json={"group_ids": [2, 3]})
+        response = self.client.put("/api/users/1/groups", json={"group_ids": [2, 3]})
         self.assertEqual(response.status_code, 403)
 
     def test_update_user_groups_valid(self):
@@ -559,7 +565,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
 
         # member (user_id=3) initially has member-group (id=2)
         # Update to viewer-group (id=3) and admin-group (id=1)
-        response = self.client.put("/users/3/groups", json={"group_ids": [1, 3]})
+        response = self.client.put("/api/users/3/groups", json={"group_ids": [1, 3]})
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -571,7 +577,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         conn = sqlite3.connect(str(TEST_DB_PATH))
         try:
             cursor = conn.execute(
-                "SELECT group_id FROM user_groups WHERE user_id = 3 ORDER BY group_id"
+                "SELECT group_id FROM group_members WHERE user_id = 3 ORDER BY group_id"
             )
             group_ids = [row[0] for row in cursor.fetchall()]
             self.assertEqual(group_ids, [1, 3])
@@ -585,7 +591,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         )
 
         # Clear all groups for member
-        response = self.client.put("/users/3/groups", json={"group_ids": []})
+        response = self.client.put("/api/users/3/groups", json={"group_ids": []})
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -594,7 +600,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         # Verify in database
         conn = sqlite3.connect(str(TEST_DB_PATH))
         try:
-            cursor = conn.execute("SELECT COUNT(*) FROM user_groups WHERE user_id = 3")
+            cursor = conn.execute("SELECT COUNT(*) FROM group_members WHERE user_id = 3")
             count = cursor.fetchone()[0]
             self.assertEqual(count, 0)
         finally:
@@ -607,7 +613,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         )
 
         response = self.client.put(
-            "/users/3/groups",
+            "/api/users/3/groups",
             json={"group_ids": [1, 999]},  # 999 doesn't exist
         )
 
@@ -621,7 +627,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.put("/users/999/groups", json={"group_ids": [1, 2]})
+        response = self.client.put("/api/users/999/groups", json={"group_ids": [1, 2]})
 
         self.assertEqual(response.status_code, 404)
 
@@ -631,7 +637,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 3, "username": "member", "role": "member", "is_active": True}
         )
 
-        response = self.client.get("/groups")
+        response = self.client.get("/api/groups")
         self.assertEqual(response.status_code, 403)
 
     def test_get_groups_returns_groups_with_org_name(self):
@@ -640,7 +646,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.get("/groups")
+        response = self.client.get("/api/groups")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -671,7 +677,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.get("/groups?skip=1&limit=1")
+        response = self.client.get("/api/groups?skip=1&limit=1")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -685,7 +691,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
         # Delete all groups
         conn = sqlite3.connect(str(TEST_DB_PATH))
         try:
-            conn.execute("DELETE FROM user_groups")
+            conn.execute("DELETE FROM group_members")
             conn.execute("DELETE FROM groups")
             conn.commit()
         finally:
@@ -695,7 +701,7 @@ class TestUserManagementEndpoints(unittest.TestCase):
             {"id": 2, "username": "admin", "role": "admin", "is_active": True}
         )
 
-        response = self.client.get("/groups")
+        response = self.client.get("/api/groups")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -709,6 +715,12 @@ class TestAdversarialUserManagement(unittest.TestCase):
     def setUp(self):
         """Set up test client and basic data."""
         self.client = TestClient(app)
+
+        # Point settings at the test DB so routes using get_pool(settings.sqlite_path) work
+        from app.config import settings as _settings
+        from app.models.database import get_pool as _get_pool
+        _settings.sqlite_path = str(TEST_DB_PATH)
+        _get_pool(str(TEST_DB_PATH))
 
         from app.models.database import SQLiteConnectionPool
 
@@ -726,9 +738,60 @@ class TestAdversarialUserManagement(unittest.TestCase):
         app.dependency_overrides[get_db] = override_get_db
         self._get_db = get_db
 
+        # Seed minimal test data needed by adversarial tests
+        from app.services.auth_service import hash_password as _hash_password
+        password_hash = _hash_password("testpassword123")
+        conn = sqlite3.connect(str(TEST_DB_PATH))
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("DELETE FROM group_members")
+            conn.execute("DELETE FROM groups")
+            conn.execute("DELETE FROM org_members")
+            conn.execute("DELETE FROM organizations")
+            conn.execute("DELETE FROM user_sessions")
+            conn.execute("DELETE FROM users")
+            conn.execute(
+                "INSERT INTO organizations (id, name, description) VALUES (1, 'Test Org', 'Test organization')"
+            )
+            conn.executemany(
+                "INSERT INTO groups (id, org_id, name, description) VALUES (?, ?, ?, ?)",
+                [
+                    (1, 1, "admin-group", "Admin group"),
+                    (2, 1, "member-group", "Member group"),
+                    (3, 1, "viewer-group", "Viewer group"),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO users (id, username, hashed_password, full_name, role, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (1, "superadmin", password_hash, "Super Admin", "superadmin", 1),
+                    (2, "admin", password_hash, "Test Admin", "admin", 1),
+                    (3, "member", password_hash, "Test Member", "member", 1),
+                    (4, "viewer", password_hash, "Test Viewer", "viewer", 1),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO group_members (user_id, group_id) VALUES (?, ?)",
+                [(1, 1), (2, 1), (3, 2), (4, 3)],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def tearDown(self):
         """Clean up."""
         app.dependency_overrides.pop(self._get_db, None)
+        # Clean up test data
+        conn = sqlite3.connect(str(TEST_DB_PATH))
+        try:
+            conn.execute("DELETE FROM group_members")
+            conn.execute("DELETE FROM groups")
+            conn.execute("DELETE FROM org_members")
+            conn.execute("DELETE FROM organizations")
+            conn.execute("DELETE FROM users")
+            conn.commit()
+        finally:
+            conn.close()
         self.test_pool.close_all()
 
     def test_update_user_username_oversized(self):
@@ -748,7 +811,7 @@ class TestAdversarialUserManagement(unittest.TestCase):
         app.dependency_overrides[get_current_active_user] = mock_user
 
         long_username = "a" * 1000
-        response = self.client.patch("/users/3", json={"username": long_username})
+        response = self.client.patch("/api/users/3", json={"username": long_username})
 
         # Should either reject or truncate, but not crash
         self.assertIn(response.status_code, [200, 400, 422])
@@ -774,7 +837,7 @@ class TestAdversarialUserManagement(unittest.TestCase):
         ]
 
         for pwd in injection_passwords:
-            response = self.client.patch("/users/3/password", json={"password": pwd})
+            response = self.client.patch("/api/users/3/password", json={"password": pwd})
             # Should reject as weak password or process safely
             self.assertNotEqual(response.status_code, 500)
             if response.status_code == 400:
@@ -790,7 +853,7 @@ class TestAdversarialUserManagement(unittest.TestCase):
 
         app.dependency_overrides[get_current_active_user] = mock_user
 
-        response = self.client.get("/users/?skip=0; DROP TABLE users; --")
+        response = self.client.get("/api/users/?skip=0; DROP TABLE users; --")
 
         # Should handle safely
         self.assertIn(response.status_code, [200, 422, 400])
@@ -813,7 +876,7 @@ class TestAdversarialUserManagement(unittest.TestCase):
         app.dependency_overrides[get_current_active_user] = mock_user
 
         response = self.client.put(
-            "/users/3/groups",
+            "/api/users/3/groups",
             json={"group_ids": [1, 2, 2, 3]},  # duplicate 2
         )
 
@@ -824,7 +887,7 @@ class TestAdversarialUserManagement(unittest.TestCase):
             conn = sqlite3.connect(str(TEST_DB_PATH))
             try:
                 cursor = conn.execute(
-                    "SELECT group_id FROM user_groups WHERE user_id = 3 ORDER BY group_id"
+                    "SELECT group_id FROM group_members WHERE user_id = 3 ORDER BY group_id"
                 )
                 group_ids = [row[0] for row in cursor.fetchall()]
                 self.assertEqual(group_ids, sorted(set([1, 2, 3])))
@@ -840,7 +903,7 @@ class TestAdversarialUserManagement(unittest.TestCase):
 
         app.dependency_overrides[get_current_active_user] = mock_user
 
-        response = self.client.put("/users/3/groups", json={"group_ids": [-1]})
+        response = self.client.put("/api/users/3/groups", json={"group_ids": [-1]})
 
         # Should reject as invalid group ID
         self.assertIn(response.status_code, [400, 404])
@@ -854,7 +917,7 @@ class TestAdversarialUserManagement(unittest.TestCase):
 
         app.dependency_overrides[get_current_active_user] = mock_user
 
-        response = self.client.get("/users/999999999/groups")
+        response = self.client.get("/api/users/999999999/groups")
         self.assertEqual(response.status_code, 404)
 
     def test_reset_password_empty_body(self):
@@ -866,7 +929,7 @@ class TestAdversarialUserManagement(unittest.TestCase):
 
         app.dependency_overrides[get_current_active_user] = mock_user
 
-        response = self.client.patch("/users/3/password", json={})
+        response = self.client.patch("/api/users/3/password", json={})
         self.assertEqual(
             response.status_code, 422
         )  # Unprocessable Entity (validation error)
@@ -888,7 +951,7 @@ class TestAdversarialUserManagement(unittest.TestCase):
         ]
 
         for username in malicious_usernames:
-            response = self.client.patch("/users/3", json={"username": username})
+            response = self.client.patch("/api/users/3", json={"username": username})
             # Should either accept (if allowed by validation) or reject, but not crash
             self.assertIn(response.status_code, [200, 400, 422])
 

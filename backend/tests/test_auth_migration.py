@@ -210,43 +210,56 @@ class TestRollbackAuthExtensions:
     """Test suite for rollback_auth_extensions function."""
 
     def test_removes_must_change_password_column(self, temp_db):
-        """Verify must_change_password column is removed by rollback."""
+        """Verify must_change_password column is preserved by rollback.
+
+        must_change_password is now part of the base schema (init_db), so
+        rollback_auth_extensions intentionally preserves it rather than dropping
+        it — dropping a base-schema column would corrupt a fresh database.
+        """
         migrate_add_auth_extensions(temp_db)
         rollback_auth_extensions(temp_db)
 
         conn = sqlite3.connect(temp_db)
         try:
             columns = get_table_columns(conn, "users")
-            assert "must_change_password" not in columns, (
-                "must_change_password column still exists after rollback"
+            assert "must_change_password" in columns, (
+                "must_change_password column (base schema) was incorrectly removed by rollback"
             )
         finally:
             conn.close()
 
     def test_removes_failed_attempts_column(self, temp_db):
-        """Verify failed_attempts column is removed by rollback."""
+        """Verify failed_attempts column is preserved by rollback.
+
+        failed_attempts is now part of the base schema (init_db), so
+        rollback_auth_extensions intentionally preserves it.
+        """
         migrate_add_auth_extensions(temp_db)
         rollback_auth_extensions(temp_db)
 
         conn = sqlite3.connect(temp_db)
         try:
             columns = get_table_columns(conn, "users")
-            assert "failed_attempts" not in columns, (
-                "failed_attempts column still exists after rollback"
+            assert "failed_attempts" in columns, (
+                "failed_attempts column (base schema) was incorrectly removed by rollback"
             )
         finally:
             conn.close()
 
     def test_removes_locked_until_column(self, temp_db):
-        """Verify locked_until column is removed by rollback."""
+        """Verify locked_until column is preserved by rollback.
+
+        locked_until is now part of the base schema (init_db), so
+        rollback_auth_extensions intentionally preserves it.
+        """
         migrate_add_auth_extensions(temp_db)
         rollback_auth_extensions(temp_db)
 
         conn = sqlite3.connect(temp_db)
         try:
             columns = get_table_columns(conn, "users")
-            assert "locked_until" not in columns, (
-                "locked_until column still exists after rollback"
+            assert "locked_until" in columns, (
+                "locked_until column (base schema) was incorrectly removed by rollback"
             )
         finally:
             conn.close()
@@ -283,23 +296,24 @@ class TestRollbackAuthExtensions:
         """Verify rollback can be run multiple times without errors."""
         migrate_add_auth_extensions(temp_db)
 
-        # Run rollback twice
+        # Run rollback twice — should not raise
         rollback_auth_extensions(temp_db)
-        rollback_auth_extensions(temp_db)  # Should not raise
+        rollback_auth_extensions(temp_db)
 
-        # Verify all columns are removed
+        # Verify that the migration-added indexes are gone
+        # NOTE: must_change_password / failed_attempts / locked_until are now
+        # part of the base schema (init_db), so rollback intentionally preserves
+        # them — they will still be present after rollback.
         conn = sqlite3.connect(temp_db)
         try:
-            columns = get_table_columns(conn, "users")
-            unexpected_columns = {
-                "must_change_password",
-                "failed_attempts",
-                "locked_until",
-            }
-            for col in unexpected_columns:
-                assert col not in columns, (
-                    f"Column {col} still exists after idempotent rollback"
-                )
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' "
+                "AND name IN ('idx_user_sessions_expires', 'idx_users_locked_until')"
+            )
+            remaining_indexes = {row[0] for row in cursor.fetchall()}
+            assert len(remaining_indexes) == 0, (
+                f"Migration indexes still exist after rollback: {remaining_indexes}"
+            )
         finally:
             conn.close()
 

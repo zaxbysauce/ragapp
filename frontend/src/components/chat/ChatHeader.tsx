@@ -25,7 +25,7 @@ export function ChatHeader({
   const { activeVaultId } = useVaultStore();
   const { newChat } = useChatStore();
 
-  const handleVaultChange = (vaultId: number | null) => {
+  const handleVaultChange = (_vaultId: number | null) => {
     // VaultSelector already calls setActiveVault internally
     // Just clear the conversation when vault changes
     newChat();

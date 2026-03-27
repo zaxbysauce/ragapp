@@ -270,6 +270,12 @@ export function MessageBubble({
           </div>
         )}
 
+        {message.interrupted && !message.stopped && !message.error && (
+          <div className="mt-2 text-sm text-muted-foreground italic">
+            ⚠ Response interrupted — the connection was lost mid-generation.
+          </div>
+        )}
+
         {/* Layer 3: Secondary actions */}
         {!isStreaming && !isUser && (
           <SecondaryActions

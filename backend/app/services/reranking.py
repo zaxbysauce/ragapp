@@ -85,8 +85,10 @@ class RerankingService:
                 scored = await self._rerank_via_endpoint(query, texts, n)
             else:
                 scored = await self._rerank_local(query, texts, n)
-        except Exception as e:
-            logger.error(f"Reranking failed, returning original order: {e}")
+        except Exception as exc:
+            logger.warning("Reranking failed, returning unranked results: %s", exc)
+            for chunk in chunks[:n]:
+                chunk["_rerank_failed"] = True
             return chunks[:n]
 
         # Attach score and return top_n

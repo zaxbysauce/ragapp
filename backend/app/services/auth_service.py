@@ -41,6 +41,9 @@ def password_strength_check(plain_password: str) -> None:
     if not plain_password:
         raise ValueError("Password cannot be empty")
 
+    if "\x00" in plain_password:
+        raise ValueError("Password must not contain null bytes")
+
     if len(plain_password) < 8:
         raise ValueError("Password must be at least 8 characters long")
 

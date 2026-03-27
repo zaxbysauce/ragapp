@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { listChatSessions, getChatSession, type ChatSession } from "@/lib/api";
 import { useChatStore, type Message } from "@/stores/useChatStore";
 
@@ -23,6 +23,16 @@ export function useChatHistory(activeVaultId: number | null): UseChatHistoryRetu
   const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(true);
   const [chatHistoryError, setChatHistoryError] = useState<string | null>(null);
+  const prevVaultIdRef = useRef(activeVaultId);
+
+  // Clear cache when vault changes so stale history is not served
+  useEffect(() => {
+    if (prevVaultIdRef.current !== activeVaultId) {
+      const prevKey = prevVaultIdRef.current?.toString() ?? 'default';
+      cache.delete(prevKey);
+      prevVaultIdRef.current = activeVaultId;
+    }
+  }, [activeVaultId]);
 
   const refreshHistory = useCallback(async (force = false) => {
     const cacheKey = activeVaultId?.toString() ?? 'default';

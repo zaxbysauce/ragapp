@@ -105,7 +105,7 @@ export const useAuthStore = create<AuthState>()(
           set({ accessToken: data.access_token });
           return true;
         } catch (error) {
-          console.error('Token refresh failed:', error);
+          console.warn("[Auth] Session refresh failed — user logged out. Reason:", error);
           set({ user: null, accessToken: null, isAuthenticated: false });
           return false;
         }
@@ -165,14 +165,15 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage',
-      partialize: (state) => ({ user: state.user }),
+      partialize: (state) => ({ user: state.user, accessToken: state.accessToken }),
       onRehydrateStorage: () => (state) => {
-        // After hydration, if there's no user, we're not authenticated
-        // Set isLoading to false so ProtectedRoute can redirect
-        if (!state?.user) {
+        if (!state?.user || !state?.accessToken) {
+          // No valid session — not authenticated
           useAuthStore.setState({ isLoading: false, isAuthenticated: false });
+        } else {
+          // Session data present — mark as authenticated but still validate
+          useAuthStore.setState({ isLoading: true, isAuthenticated: true });
         }
-        // If there is a user, checkAuth will validate the session
       },
     }
   )

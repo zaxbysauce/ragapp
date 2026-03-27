@@ -40,7 +40,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
 import { User } from "./UserTable";
 import apiClient from "@/lib/api";
 

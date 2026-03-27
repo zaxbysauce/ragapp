@@ -135,13 +135,21 @@ class TestVaultEndpoints(unittest.TestCase):
         self._mock_vector_store = MagicMock()
         self._mock_vector_store.delete_by_vault = MagicMock(return_value=0)
 
+        from app.api.deps import get_current_active_user
+
+        async def mock_admin_user():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_vector_store] = lambda: self._mock_vector_store
+        app.dependency_overrides[get_current_active_user] = mock_admin_user
+        self._get_current_active_user = get_current_active_user
         self._db_path = db_path
 
     def tearDown(self):
         app.dependency_overrides.pop(get_db, None)
         app.dependency_overrides.pop(get_vector_store, None)
+        app.dependency_overrides.pop(self._get_current_active_user, None)
         if hasattr(self, '_connection_pool'):
             self._connection_pool.close_all()
         import shutil
@@ -569,8 +577,21 @@ class TestVaultScopedRoutes(unittest.TestCase):
         self._mock_vector_store.search = MagicMock(return_value=[])
         self._mock_vector_store.init_table = MagicMock()
 
+        from app.api.deps import get_current_active_user
+        from app.security import require_auth
+
+        async def mock_admin_user():
+            return {"id": 1, "username": "admin", "role": "superadmin", "is_active": True, "must_change_password": False}
+
+        def mock_require_auth():
+            return {"id": 1, "username": "admin", "role": "superadmin"}
+
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_vector_store] = lambda: self._mock_vector_store
+        app.dependency_overrides[get_current_active_user] = mock_admin_user
+        app.dependency_overrides[require_auth] = mock_require_auth
+        self._get_current_active_user = get_current_active_user
+        self._require_auth = require_auth
         self._db_path = db_path
 
     def tearDown(self):
@@ -579,6 +600,8 @@ class TestVaultScopedRoutes(unittest.TestCase):
         app.dependency_overrides.pop(get_memory_store, None)
         app.dependency_overrides.pop(get_rag_engine, None)
         app.dependency_overrides.pop(get_embedding_service, None)
+        app.dependency_overrides.pop(self._get_current_active_user, None)
+        app.dependency_overrides.pop(self._require_auth, None)
         if hasattr(self, '_connection_pool'):
             self._connection_pool.close_all()
         import shutil
@@ -831,7 +854,7 @@ class TestVaultScopedRoutes(unittest.TestCase):
         app.dependency_overrides[get_rag_engine] = lambda: mock_rag
 
         resp = self.client.post(
-            "/api/chat",
+            "/api/chat?vault_id=3",
             json={"message": "hi", "vault_id": 3}
         )
 

@@ -67,6 +67,7 @@ from app.main import app
 from app.config import settings
 from app.models.database import init_db, get_pool
 from app.services.auth_service import hash_password
+from app.api.deps import get_db, get_current_active_user
 
 
 class TestSessionManagement(unittest.TestCase):
@@ -88,14 +89,40 @@ class TestSessionManagement(unittest.TestCase):
 
     def setUp(self):
         """Set up test client and clear tables."""
-        self.client = TestClient(app)
+        # Ensure settings always point to the test DB (prevents pollution from other test modules)
+        settings.sqlite_path = self.db_path  # type: ignore
         pool = get_pool(str(self.db_path))
+
+        # Override get_db so all endpoints use the test pool
+        def override_get_db():
+            conn = pool.get_connection()
+            try:
+                yield conn
+            finally:
+                pool.release_connection(conn)
+
+        app.dependency_overrides[get_db] = override_get_db
+        # Defensively remove any leaked auth overrides from other test modules
+        # (test_sessions tests require real token-based auth, not mocked auth)
+        app.dependency_overrides.pop(get_current_active_user, None)
+
+        self.client = TestClient(app)
         conn = pool.get_connection()
         conn.execute("DELETE FROM user_sessions")
         conn.execute("DELETE FROM users")
         conn.commit()
-        conn.close()
+        pool.release_connection(conn)
         self._user_counter = getattr(self, "_user_counter", 0) + 1
+        # Reset rate limiter to avoid 429 errors across tests
+        from app.limiter import limiter
+        try:
+            limiter.reset()
+        except Exception:
+            pass
+
+    def tearDown(self):
+        """Clean up dependency overrides."""
+        app.dependency_overrides.pop(get_db, None)
 
     def _create_user(self, username=None, password="TestPassword123!"):
         """Helper to create a test user."""
@@ -111,25 +138,35 @@ class TestSessionManagement(unittest.TestCase):
         )
         conn.commit()
         user_id = cursor.lastrowid
-        conn.close()
+        pool.release_connection(conn)
         return {"id": user_id, "username": username, "password": password}
 
     def _login(self, username, password):
-        """Helper to login and return cookies."""
+        """Helper to login and return (access_token, cookie_dict)."""
+        # Reset rate limiter before each login to avoid 429 errors in test suites
+        from app.limiter import limiter
+        try:
+            limiter.reset()
+        except Exception:
+            pass
         resp = self.client.post(
             "/api/auth/login", json={"username": username, "password": password}
         )
         self.assertEqual(resp.status_code, 200, f"Login failed: {resp.text}")
-        return resp.cookies
+        # Extract raw cookie values from the response headers to bypass path restrictions
+        cookie_dict = {}
+        for cookie in resp.cookies.jar:
+            cookie_dict[cookie.name] = cookie.value
+        return resp.json()["access_token"], cookie_dict
 
     # ===== GET /sessions tests =====
 
     def test_list_sessions_with_auth_returns_list(self):
         """GET /sessions with auth returns list of sessions."""
         user = self._create_user()
-        cookies = self._login(user["username"], user["password"])
+        token, cookies = self._login(user["username"], user["password"])
 
-        resp = self.client.get("/api/v1/auth/sessions", cookies=cookies)
+        resp = self.client.get("/api/auth/sessions", headers={"Authorization": f"Bearer {token}"})
 
         self.assertEqual(resp.status_code, 200)
         sessions = resp.json()
@@ -150,7 +187,7 @@ class TestSessionManagement(unittest.TestCase):
 
     def test_list_sessions_without_auth_returns_401(self):
         """GET /sessions without auth returns 401."""
-        resp = self.client.get("/api/v1/auth/sessions")
+        resp = self.client.get("/api/auth/sessions")
         self.assertEqual(resp.status_code, 401)
 
     # ===== DELETE /sessions/{session_id} tests =====
@@ -158,21 +195,21 @@ class TestSessionManagement(unittest.TestCase):
     def test_delete_session_with_valid_id_returns_204(self):
         """DELETE /sessions/{id} with valid id belonging to user returns 204."""
         user = self._create_user()
-        cookies = self._login(user["username"], user["password"])
+        token, cookies = self._login(user["username"], user["password"])
 
         # Get sessions
-        resp = self.client.get("/api/v1/auth/sessions", cookies=cookies)
+        resp = self.client.get("/api/auth/sessions", headers={"Authorization": f"Bearer {token}"})
         sessions = resp.json()
         session_id = sessions[0]["id"]
 
         # Delete the session
         delete_resp = self.client.delete(
-            f"/api/v1/auth/sessions/{session_id}", cookies=cookies
+            f"/api/auth/sessions/{session_id}", headers={"Authorization": f"Bearer {token}"}
         )
         self.assertEqual(delete_resp.status_code, 204)
 
         # Verify session was deleted
-        resp = self.client.get("/api/v1/auth/sessions", cookies=cookies)
+        resp = self.client.get("/api/auth/sessions", headers={"Authorization": f"Bearer {token}"})
         sessions_after = resp.json()
         self.assertEqual(len(sessions_after), 0)
 
@@ -181,27 +218,27 @@ class TestSessionManagement(unittest.TestCase):
         user1 = self._create_user()
         user2 = self._create_user()
 
-        cookies1 = self._login(user1["username"], user1["password"])
-        cookies2 = self._login(user2["username"], user2["password"])
+        token1, cookies1 = self._login(user1["username"], user1["password"])
+        token2, cookies2 = self._login(user2["username"], user2["password"])
 
         # Get user2's session ID
-        resp = self.client.get("/api/v1/auth/sessions", cookies=cookies2)
+        resp = self.client.get("/api/auth/sessions", headers={"Authorization": f"Bearer {token2}"})
         other_session_id = resp.json()[0]["id"]
 
         # Try to delete user2's session as user1
         delete_resp = self.client.delete(
-            f"/api/v1/auth/sessions/{other_session_id}", cookies=cookies1
+            f"/api/auth/sessions/{other_session_id}", headers={"Authorization": f"Bearer {token1}"}
         )
         self.assertEqual(delete_resp.status_code, 404)
 
     def test_delete_session_with_nonexistent_id_returns_404(self):
         """DELETE /sessions/{id} with non-existent id returns 404."""
         user = self._create_user()
-        cookies = self._login(user["username"], user["password"])
+        token, cookies = self._login(user["username"], user["password"])
 
         # Try to delete a non-existent session
         delete_resp = self.client.delete(
-            "/api/v1/auth/sessions/999999", cookies=cookies
+            "/api/auth/sessions/999999", headers={"Authorization": f"Bearer {token}"}
         )
         self.assertEqual(delete_resp.status_code, 404)
 
@@ -210,30 +247,43 @@ class TestSessionManagement(unittest.TestCase):
     def test_delete_all_sessions_except_current(self):
         """DELETE /sessions deletes all except current, user stays logged in."""
         user = self._create_user()
-        cookies = self._login(user["username"], user["password"])
+        token, cookies = self._login(user["username"], user["password"])
 
         # Create additional sessions
         for _ in range(3):
             self._login(user["username"], user["password"])
 
         # Get sessions before deletion
-        resp = self.client.get("/api/v1/auth/sessions", cookies=cookies)
+        resp = self.client.get("/api/auth/sessions", headers={"Authorization": f"Bearer {token}"})
         sessions_before = resp.json()
         initial_count = len(sessions_before)
         self.assertGreaterEqual(initial_count, 4)
 
-        # Delete all except current
-        delete_resp = self.client.delete("/api/v1/auth/sessions", cookies=cookies)
+        # Delete all except current (needs both bearer token + refresh_token cookie)
+        delete_resp = self.client.delete(
+            "/api/auth/sessions",
+            headers={"Authorization": f"Bearer {token}"},
+            cookies=cookies,
+        )
         self.assertEqual(delete_resp.status_code, 200)
         self.assertEqual(delete_resp.json()["message"], "All other sessions revoked")
 
-        # User should still be logged in (can access /me)
-        me_resp = self.client.get("/api/v1/auth/me", cookies=delete_resp.cookies)
+        # User should still be logged in (can access /me) using original token
+        new_cookies = delete_resp.cookies
+        me_resp = self.client.get(
+            "/api/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+            cookies=new_cookies,
+        )
         self.assertEqual(me_resp.status_code, 200)
         self.assertEqual(me_resp.json()["username"], user["username"])
 
         # Should have only 1 session left
-        resp = self.client.get("/api/v1/auth/sessions", cookies=delete_resp.cookies)
+        resp = self.client.get(
+            "/api/auth/sessions",
+            headers={"Authorization": f"Bearer {token}"},
+            cookies=new_cookies,
+        )
         sessions_after = resp.json()
         self.assertEqual(len(sessions_after), 1)
 

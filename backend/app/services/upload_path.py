@@ -105,7 +105,13 @@ def migrate_uploads(dry_run: bool = False) -> MigrationResult:
         # Determine destination
         dest_dir = provider.get_upload_dir(vault_id)
         dest_path = dest_dir / f.name
-        
+        # Validate no traversal
+        try:
+            dest_path.resolve().relative_to(dest_dir.resolve())
+        except ValueError:
+            logger.warning("Skipping file with suspicious name: %s", f.name)
+            continue
+
         if dry_run:
             logger.info(f"[DRY RUN] Would move {f.name} to vault {vault_id}")
             migrated += 1
@@ -119,6 +125,13 @@ def migrate_uploads(dry_run: bool = False) -> MigrationResult:
             if f.stat().st_size == dest_path.stat().st_size:
                 # Rename source instead of deleting - safe backup
                 backup_path = f.with_suffix(f.suffix + ".migrated")
+                if backup_path.exists():
+                    stem = f.stem
+                    suffix = f.suffix
+                    counter = 1
+                    while backup_path.exists():
+                        backup_path = f.parent / f"{stem}.migrated.{counter}{suffix}"
+                        counter += 1
                 f.rename(backup_path)
                 migrated += 1
                 logger.debug(f"Migrated {f.name} to vault {vault_id}")
@@ -208,6 +221,12 @@ def rollback_migration() -> dict:
                     suffix += 1
             
             try:
+                try:
+                    f.resolve().relative_to(old_dir.resolve())
+                    dest.resolve().relative_to(old_dir.resolve())
+                except ValueError:
+                    logger.warning("Skipping rollback: path escapes old_dir — %s", f)
+                    continue
                 shutil.move(str(f), str(dest))
                 results["moved"].append(str(f))
             except Exception as e:
@@ -339,6 +358,16 @@ def migrate_vault_paths(sqlite_path: str, data_dir: Path) -> None:
                 pass
         else:
             # Rename old to new
+            # Validate paths are within vaults_dir before renaming
+            try:
+                old_resolved = old_path.resolve()
+                new_resolved = new_path.resolve()
+                vaults_resolved = vaults_dir.resolve()
+                old_resolved.relative_to(vaults_resolved)  # raises ValueError if outside
+                new_resolved.relative_to(vaults_resolved)  # raises ValueError if outside
+            except ValueError:
+                logger.warning("Skipping rename: path escapes vaults_dir — old=%s new=%s", old_path, new_path)
+                continue
             os.rename(old_path, new_path)
             logger.info(f"Migrated vault {vault_id}: {safe_name} → {vault_id}")
             migrated_count += 1

@@ -45,7 +45,9 @@ class TestEmbeddingBatching:
         self.mock_settings.embedding_batch_size = 512
         self.mock_settings.embedding_batch_max_retries = 3
         self.mock_settings.embedding_batch_min_sub_size = 1
-        
+        self.mock_settings.tri_vector_search_enabled = False
+        self.mock_settings.flag_embedding_url = ""
+
         # Mock the settings for chunk_size_chars
         self.mock_settings.chunk_size_chars = 1200
         self.mock_settings.chunk_overlap_chars = 120
@@ -72,19 +74,16 @@ class TestEmbeddingBatching:
 
     async def test_multi_item_batch_overflow_split_and_retry(self):
         """Test that overflow in multi-item batch triggers split/halving and succeeds."""
-        # Create service
-        service = EmbeddingService()
-        
         # Mock texts - 20 items that will trigger overflow
         texts = [f"test text {i}" for i in range(20)]
-        
+
         # First call (batch of 20) will overflow (retry_count=0)
         # Second call (batch of 10) will overflow (retry_count=1)
         # Third call (batch of 5) will succeed (retry_count=2)
         # The split creates: 20 -> 10+10 -> 5+5+5+5
         # So we need: 1 overflow for 20, 2 overflows for 10s, 4 successes for 5s
         mock_client = MagicMock()
-        
+
         responses = [
             self._create_overflow_error(),  # Batch of 20 overflows
             self._create_overflow_error(),  # First batch of 10 overflows
@@ -102,9 +101,15 @@ class TestEmbeddingBatching:
             return resp
         
         with patch('app.services.embeddings.httpx.AsyncClient') as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client_class.return_value = mock_client
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.post = mock_post
-            
+
+            # Create service inside patch so self._client uses the mock
+            service = EmbeddingService()
+            service._client = mock_client
+
             # This should succeed after splitting
             embeddings = await service.embed_batch(texts, batch_size=20)
             
@@ -123,9 +128,6 @@ class TestEmbeddingBatching:
 
     async def test_single_item_batch_overflow_recovery_with_split(self):
         """Test that overflow with single-item batch triggers split/mean-pool recovery."""
-        # Create service
-        service = EmbeddingService()
-        
         # Long text that can be split - above MIN_SPLIT_CHARS (200 chars)
         texts = ["This is a very long text that will overflow the token limit. " * 50]
         
@@ -159,9 +161,15 @@ class TestEmbeddingBatching:
             return resp
         
         with patch('app.services.embeddings.httpx.AsyncClient') as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client_class.return_value = mock_client
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.post = mock_post
-            
+
+            # Create service inside patch so self._client uses the mock
+            service = EmbeddingService()
+            service._client = mock_client
+
             # This should succeed after splitting and mean-pooling
             embeddings = await service.embed_batch(texts, batch_size=1)
             
@@ -178,29 +186,32 @@ class TestEmbeddingBatching:
 
     async def test_single_item_batch_overflow_hard_failure_for_small_text(self):
         """Test that overflow with single small text raises actionable EmbeddingError."""
-        # Create service
-        service = EmbeddingService()
-        
         # Short text that is below MIN_SPLIT_CHARS (200 chars)
         # This should fail without attempting recovery
         short_text = "Short text that overflows but is too short to split."
         texts = [short_text]
-        
-        assert len(short_text) < service.MIN_SPLIT_CHARS, "Test text should be below MIN_SPLIT_CHARS"
-        
+
         mock_client = MagicMock()
-        
+
         # Always return overflow error
         overflow_error = self._create_overflow_error()
-        
+
         with patch('app.services.embeddings.httpx.AsyncClient') as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client_class.return_value = mock_client
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.post = AsyncMock(side_effect=overflow_error)
-            
+
+            # Create service inside patch so self._client uses the mock
+            service = EmbeddingService()
+            service._client = mock_client
+
+            assert len(short_text) < service.MIN_SPLIT_CHARS, "Test text should be below MIN_SPLIT_CHARS"
+
             # Should raise EmbeddingError with actionable message mentioning the minimum
             with pytest.raises(EmbeddingError) as context:
                 await service.embed_batch(texts, batch_size=1)
-            
+
             # Verify error message is actionable and mentions the threshold
             error_msg = str(context.value)
             assert "single input" in error_msg.lower()
@@ -208,13 +219,11 @@ class TestEmbeddingBatching:
 
     async def test_batch_preserves_order_after_split(self):
         """Test that batch order is preserved after adaptive splitting."""
-        service = EmbeddingService()
-        
         # 15 items that will split into batches of 7 and 8 (midpoint split)
         texts = [f"text_{i}" for i in range(15)]
-        
+
         mock_client = MagicMock()
-        
+
         # First batch of 15 overflows, splits to 7 and 8
         # Both sub-batches succeed
         responses = [
@@ -230,11 +239,17 @@ class TestEmbeddingBatching:
             return resp
         
         with patch('app.services.embeddings.httpx.AsyncClient') as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client_class.return_value = mock_client
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.post = mock_post
-            
+
+            # Create service inside patch so self._client uses the mock
+            service = EmbeddingService()
+            service._client = mock_client
+
             embeddings = await service.embed_batch(texts, batch_size=15)
-            
+
             # Verify order is preserved
             assert len(embeddings) == 15
             for i in range(7):
@@ -244,20 +259,24 @@ class TestEmbeddingBatching:
 
     async def test_no_overflow_returns_immediately(self):
         """Test that successful batch returns without retry."""
-        service = EmbeddingService()
-        
         texts = ["text1", "text2", "text3"]
-        
+
         mock_client = MagicMock()
-        
+
         # Success on first try
         mock_client.post = AsyncMock(return_value=self._create_mock_response(
             [[0.1] * 768, [0.2] * 768, [0.3] * 768]
         ))
-        
+
         with patch('app.services.embeddings.httpx.AsyncClient') as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-            
+            mock_client_class.return_value = mock_client
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+
+            # Create service inside patch so self._client uses the mock
+            service = EmbeddingService()
+            service._client = mock_client
+
             embeddings = await service.embed_batch(texts, batch_size=5)
             
             # Should return immediately without retry
@@ -268,19 +287,23 @@ class TestEmbeddingBatching:
 
     async def test_non_overflow_error_raises_immediately(self):
         """Test that non-token-overflow errors raise immediately."""
-        service = EmbeddingService()
-        
         texts = ["text1"]
-        
+
         mock_client = MagicMock()
-        
+
         # Non-overflow error (e.g., 500 internal server error)
         error = HTTPError("Internal server error")
-        
+
         with patch('app.services.embeddings.httpx.AsyncClient') as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client_class.return_value = mock_client
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.post = AsyncMock(side_effect=error)
-            
+
+            # Create service inside patch so self._client uses the mock
+            service = EmbeddingService()
+            service._client = mock_client
+
             with pytest.raises(EmbeddingError) as context:
                 await service.embed_batch(texts, batch_size=5)
             
@@ -291,20 +314,25 @@ class TestEmbeddingBatching:
         """Test that Ollama mode also handles overflow correctly."""
         # Configure for Ollama mode
         self.mock_settings.ollama_embedding_url = "http://localhost:11434/api/embeddings"
-        service = EmbeddingService()
-        
-        assert service.provider_mode == 'ollama'
-        
+
         texts = ["text1", "text2"]
-        
+
         mock_client = MagicMock()
-        
+
         # Ollama overflow error format
         overflow_error = HTTPError("input (8192 tokens) is too large to process")
-        
+
         with patch('app.services.embeddings.httpx.AsyncClient') as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client_class.return_value = mock_client
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client.post = AsyncMock(side_effect=overflow_error)
+
+            # Create service inside patch so self._client uses the mock
+            service = EmbeddingService()
+            service._client = mock_client
+
+            assert service.provider_mode == 'ollama'
             
             with pytest.raises(EmbeddingError) as context:
                 await service.embed_batch(texts, batch_size=5)
@@ -327,6 +355,8 @@ class TestIsTokenOverflowError:
         self.mock_settings.embedding_batch_size = 512
         self.mock_settings.embedding_batch_max_retries = 3
         self.mock_settings.embedding_batch_min_sub_size = 1
+        self.mock_settings.tri_vector_search_enabled = False
+        self.mock_settings.flag_embedding_url = ""
         self.mock_settings.chunk_size_chars = 1200
         self.mock_settings.chunk_overlap_chars = 120
 

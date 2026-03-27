@@ -32,6 +32,13 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
+import {
+  listOrganizations,
+  getOrganization,
+  createOrganization,
+  updateOrganization,
+  deleteOrganization,
+} from '@/lib/api';
 
 interface Organization {
   id: number;
@@ -75,32 +82,14 @@ export default function OrgsPage() {
   const isAdmin = currentUser?.role === 'superadmin' || currentUser?.role === 'admin';
   const isSuperAdmin = currentUser?.role === 'superadmin';
 
-  // Helper to create auth headers - only includes Authorization when token exists
-  const getAuthHeaders = (): Record<string, string> => {
-    const token = useAuthStore.getState().accessToken;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    return headers;
-  };
-
   useEffect(() => {
     fetchOrganizations();
   }, []);
 
   async function fetchOrganizations() {
     try {
-      const response = await fetch('/api/organizations', {
-        headers: getAuthHeaders(),
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch organizations');
-      }
-      
-      const data = await response.json();
-      setOrganizations(data.organizations || []);
+      const data = await listOrganizations();
+      setOrganizations((data.organizations || []) as Organization[]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load organizations');
     } finally {
@@ -111,15 +100,7 @@ export default function OrgsPage() {
   async function fetchOrgMembers(orgId: number) {
     setLoadingMembers(true);
     try {
-      const response = await fetch(`/api/organizations/${orgId}`, {
-        headers: getAuthHeaders(),
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch organization details');
-      }
-      
-      const data = await response.json();
+      const data = await getOrganization(orgId) as Organization & { members?: OrgMember[] };
       setOrgMembers(data.members || []);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load members');
@@ -165,20 +146,7 @@ export default function OrgsPage() {
 
     setSaving(true);
     try {
-      const response = await fetch('/api/organizations', {
-        method: 'POST',
-headers: getAuthHeaders(),
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim(),
-        }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({ message: 'Failed to create organization' }));
-        throw new Error(data.message);
-      }
-
+      await createOrganization({ name: name.trim(), description: description.trim() });
       toast.success('Organization created successfully');
       setCreateDialogOpen(false);
       fetchOrganizations();
@@ -197,20 +165,7 @@ headers: getAuthHeaders(),
 
     setSaving(true);
     try {
-      const response = await fetch(`/api/organizations/${selectedOrg.id}`, {
-        method: 'PATCH',
-headers: getAuthHeaders(),
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim(),
-        }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({ message: 'Failed to update organization' }));
-        throw new Error(data.message);
-      }
-
+      await updateOrganization(selectedOrg.id, { name: name.trim(), description: description.trim() });
       toast.success('Organization updated successfully');
       setEditDialogOpen(false);
       fetchOrganizations();
@@ -226,16 +181,7 @@ headers: getAuthHeaders(),
 
     setDeleting(true);
     try {
-      const response = await fetch(`/api/organizations/${selectedOrg.id}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders(),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({ message: 'Failed to delete organization' }));
-        throw new Error(data.message);
-      }
-
+      await deleteOrganization(selectedOrg.id);
       toast.success('Organization deleted successfully');
       setDeleteDialogOpen(false);
       fetchOrganizations();
